@@ -90,3 +90,85 @@
     S.start();
   }
 })();
+
+// --- CONFIG : liste des tables à afficher côté Staff ---
+const TABLES = ['T1', 'T2', 'T3', 'T4', 'T5'];
+
+// Assure la présence du conteneur + des tuiles
+function ensureTableTiles() {
+  let grid = document.querySelector('#tables-grid');
+  if (!grid) {
+    // On essaye de créer le conteneur à la volée dans la carte "Tables"
+    // Cherche la première carte "Tables" et mets-y un grid si manquant
+    const tablesCard = document.querySelector('.card, .panel, .box, [data-role="tables"]') || document.querySelector('[data-section="tables"]');
+    if (tablesCard) {
+      grid = document.createElement('div');
+      grid.id = 'tables-grid';
+      tablesCard.innerHTML = '';  // remplace "Aucune table"
+      tablesCard.appendChild(grid);
+    }
+  }
+  if (!grid) return; // on n'a pas trouvé d'endroit où mettre les tuiles
+
+  // Génère les tuiles si elles n'existent pas encore
+  TABLES.forEach(tid => {
+    if (!grid.querySelector(`[data-table-id="${tid}"]`)) {
+      const tile = document.createElement('div');
+      tile.className = 'tile table-tile';
+      tile.setAttribute('data-table-id', tid);
+      tile.innerHTML = `
+        <div class="title">Table ${tid}</div>
+        <div>En attente : <span class="pending-count">0</span></div>
+        <div class="actions">
+          <button class="btn btn-sm btn-outline btn-print" data-action="print">Imprimer maintenant</button>
+          <button class="btn btn-sm btn-outline btn-paid" data-action="paid">Paiement confirmé</button>
+        </div>
+      `;
+      grid.appendChild(tile);
+    }
+  });
+}
+
+// Met à jour les compteurs par table à partir des commandes "pending"
+function updateTableCounters(pendingOrders) {
+  const counts = {};
+  pendingOrders.forEach(o => {
+    const tid = o.tableId || o.table || o.table_id || '??';
+    counts[tid] = (counts[tid] || 0) + 1;
+  });
+
+  document.querySelectorAll('[data-table-id]').forEach(tile => {
+    const tid = tile.getAttribute('data-table-id');
+    const n = counts[tid] || 0;
+    const span = tile.querySelector('.pending-count');
+    if (span) span.textContent = String(n);
+  });
+}
+
+// Si tu as déjà un poll /renderSummary(pendingOrders), appelle ces fonctions :
+async function renderStaffSummaryAndTables(pendingOrders){
+  // 1) on met à jour la colonne de droite comme tu le fais déjà:
+  renderSummary(pendingOrders); // <-- ta fonction existante
+
+  // 2) on s'assure que les tuiles existent
+  ensureTableTiles();
+
+  // 3) on met à jour les compteurs par table
+  updateTableCounters(pendingOrders);
+}
+
+// Et dans ton polling (toutes les 3–4s), au lieu de seulement renderSummary(), fais :
+async function pollOrders() {
+  try {
+    const res = await fetch(`${getBaseUrl()}/orders?status=pending`, { cache: 'no-store' });
+    const pending = await res.json(); // [] si vide
+    renderStaffSummaryAndTables(pending);
+  } catch (e) {
+    console.error('pollOrders failed', e);
+  }
+}
+
+// Démarrage
+pollOrders();
+setInterval(pollOrders, 4000);
+

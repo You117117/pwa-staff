@@ -1,4 +1,4 @@
-/* Staff app – robust version (corrigée) */
+/* Staff app – robust version (corrigée + grille cartes) */
 (() => {
   const $ = sel => document.querySelector(sel);
   const apiInput = $('#apiUrl');
@@ -9,6 +9,13 @@
   const summaryEmpty = $('#summaryEmpty');
   const filterSel = $('#filter');
   const LS_KEY = 'staff_api_url';
+
+  // --- Mise en page en GRILLE pour les tables (sans toucher au CSS global)
+  try {
+    tablesWrap.style.display = 'grid';
+    tablesWrap.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
+    tablesWrap.style.gap = '16px';
+  } catch {}
 
   function getApiBase() { return (localStorage.getItem(LS_KEY)||apiInput.value||'').trim(); }
   function setApiBase(url){ localStorage.setItem(LS_KEY,url.trim()); apiInput.value=url.trim(); }
@@ -45,34 +52,47 @@
   function renderTables(data){
     lastTables=data;
     tablesWrap.innerHTML='';
-    let arr = normalizeTables(data);
+    const arr = normalizeTables(data);
+
+    // Conserver la sélection courante du filtre
+    const prevSel = filterSel.value || 'ALL';
+    const options = ['<option value="ALL">Toutes</option>']
+      .concat(arr.map(t=>`<option value="${t.id}">${t.id}</option>`));
+    filterSel.innerHTML = options.join('');
+    // Restaurer si possible
+    if ([...filterSel.options].some(o => o.value === prevSel)) {
+      filterSel.value = prevSel;
+    }
+
     let shown=0;
-    // remplir le filtre
-    filterSel.innerHTML='<option value="ALL">Toutes</option>'+arr.map(t=>`<option value="${t.id}">${t.id}</option>`).join('');
     arr.forEach(t=>{
-      if(filterSel.value!=='ALL'&&t.id!==filterSel.value) return;
+      if(filterSel.value!=='ALL' && t.id!==filterSel.value) return;
       shown++;
       const el=document.createElement('div');
-      el.className='table';
-      el.innerHTML=`<h3>${t.name||('Table '+t.id)}</h3>
+      el.className='table card'; // -> carte en grille
+      el.innerHTML=`
+        <h3>${t.name || ('Table ' + t.id)}</h3>
         <div class="row">
-          <span class="chip">En attente : <b>${t.pending||0}</b></span>
-          <span class="chip">Dernier ticket : <b>${t.last_ticket||'-'}</b></span>
+          <span class="chip">En attente : <b>${t.pending ?? 0}</b></span>
+          <span class="chip">Dernier ticket : <b>${t.last_ticket ?? '-'}</b></span>
         </div>
         <div class="actions-row">
           <button class="btnPrint" data-table="${t.id}">Imprimer maintenant</button>
           <button class="secondary btnPaid" data-table="${t.id}">Paiement confirmé</button>
-        </div>`;
+        </div>
+      `;
       tablesWrap.appendChild(el);
     });
-    tablesEmpty.style.display=shown?'none':'';
+    tablesEmpty.style.display = shown ? 'none' : '';
+
     bindTableButtons();
   }
 
   function bindTableButtons(){
     tablesWrap.querySelectorAll('.btnPrint').forEach(b=>b.onclick=async e=>{
       const t=e.currentTarget.dataset.table;
-      try{await apiPOST('/staff/print',{table:t});
+      try{
+        await apiPOST('/staff/print',{table:t});
         e.currentTarget.textContent='Imprimé ✓';
         setTimeout(()=>e.currentTarget.textContent='Imprimer maintenant',1500);
         refreshTables();
@@ -81,9 +101,11 @@
         setTimeout(()=>e.currentTarget.textContent='Imprimer maintenant',1500);
       }
     });
+
     tablesWrap.querySelectorAll('.btnPaid').forEach(b=>b.onclick=async e=>{
       const t=e.currentTarget.dataset.table;
-      try{await apiPOST('/staff/confirm',{table:t});
+      try{
+        await apiPOST('/staff/confirm',{table:t});
         e.currentTarget.textContent='Confirmé ✓';
         setTimeout(()=>e.currentTarget.textContent='Paiement confirmé',1500);
         refreshTables();
@@ -95,8 +117,8 @@
   }
 
   async function refreshTables(){try{renderTables(await apiGET('/tables'));}catch{tablesWrap.innerHTML='';tablesEmpty.style.display='';}}
-
   async function refreshSummary(){try{renderSummary(await apiGET('/staff/summary'));}catch{summaryWrap.innerHTML='';summaryEmpty.style.display='';}}
+
   function renderSummary(data){
     const list=(data?.tickets||[]);
     summaryWrap.innerHTML='';
@@ -105,12 +127,14 @@
       const it=document.createElement('div');
       it.className='table';
       const items=(t.items||[]).map(i=>`${i.qty}× ${i.name}`).join(', ');
-      it.innerHTML=`<div class="row">
+      it.innerHTML=`
+        <div class="row">
           <span class="chip"><b>${t.table}</b></span>
           <span class="chip">⏱ ${t.time||''}</span>
           <span class="chip">Total : <b>${t.total} €</b></span>
         </div>
-        <div class="muted" style="margin-top:8px">${items||'—'}</div>`;
+        <div class="muted" style="margin-top:8px">${items || '—'}</div>
+      `;
       summaryWrap.appendChild(it);
     });
   }

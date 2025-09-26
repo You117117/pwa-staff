@@ -3,7 +3,7 @@
  * - Stockage URL API dans localStorage 'api_url' (même clé que le Client)
  * - Chargement /tables (fallback T1..T5 si vide/erreur)
  * - Poll /staff/summary toutes les 5s
- * - Aucun changement d'UI requis
+ * - Aucun changement d’UI requis
  */
 
 (function () {
@@ -15,7 +15,6 @@
 
   // Essaie de trouver l'input URL API le plus probable
   function findApiInput() {
-    // priorités: type=url, id usuels, placeholder avec "http"
     return (
       $('input[type="url"]') ||
       $('#api') || $('#apiUrl') || $('input[name="api"]') ||
@@ -53,7 +52,6 @@
   const tablesBody  = () => ensureBody(tablesPanel(), 'tables-body');
   const summaryBody = () => ensureBody(summaryPanel(), 'summary-body');
 
-  // --------- API URL ---------
   function getApi() {
     const fromInput = (apiInput?.value || '').trim();
     if (fromInput) return fromInput;
@@ -71,7 +69,6 @@
     } catch {}
   }
 
-  // --------- Health badge (optionnel) ---------
   function setHealthBadge(ok) {
     const pill = $('[data-pill="ok"]');
     if (pill) {
@@ -80,7 +77,6 @@
     }
   }
 
-  // --------- Rendu Tables ---------
   const fallbackTables = () => ([
     { id:'T1', pending:0, lastTicket:null },
     { id:'T2', pending:0, lastTicket:null },
@@ -131,7 +127,6 @@
     }
   }
 
-  // --------- Résumé ---------
   function renderSummary(rows) {
     const body = summaryBody();
     body.innerHTML = '';
@@ -166,17 +161,15 @@
     if (!base) return renderSummary([]);
     try {
       const r = await fetch(`${base.replace(/\/+$/,'')}/staff/summary?ts=${Date.now()}`, { cache:'no-store' });
-      if (r.status === 404) return renderSummary([]); // route pas encore implémentée -> vide
+      if (r.status === 404) return renderSummary([]);
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
       renderSummary(data);
     } catch (e) {
-      // silence visuel: on garde "Aucun ticket"
       renderSummary([]);
     }
   }
 
-  // --------- Health ---------
   async function testHealth() {
     const base = getApi();
     if (!base) return setHealthBadge(false);
@@ -189,53 +182,41 @@
     }
   }
 
-  // --------- Délégation d'événements pour les boutons ---------
   document.addEventListener('click', (e) => {
     const t = e.target;
     if (!(t instanceof HTMLElement)) return;
 
     const txt = (t.textContent || '').trim().toLowerCase();
 
-    // Mémoriser
     if (/m[ée]moriser/.test(txt)) {
       const val = (apiInput?.value || '').trim();
       if (val) setApi(val);
-      // après mémorisation, on recharge
       loadTables();
       loadSummary();
       testHealth();
     }
 
-    // Tester /health
     if (/tester/.test(txt) && /health/.test(txt)) {
       testHealth();
     }
 
-    // Rafraîchir (si bouton existe près des tables)
     if (/rafra[îi]chir/.test(txt)) {
-      // on regarde si le bouton est dans le panneau tables ou résumé
       const host = t.closest('section,div');
       if (host && /tables/i.test(host.textContent||'')) {
         loadTables();
       } else if (host && /r[ée]sum[ée]/i.test(host.textContent||'')) {
         loadSummary();
       } else {
-        // bouton global -> recharge tout
         loadTables(); loadSummary();
       }
     }
   }, true);
 
-  // --------- Init ---------
   restoreApiFromLS();
   loadTables();
   loadSummary();
   testHealth();
-
-  // Poll Résumé toutes les 5s
   setInterval(loadSummary, 5000);
-
-  // Hooks pour d'autres scripts si besoin
   window.__RQR_reloadTables = loadTables;
   window.__RQR_reloadSummary = loadSummary;
 })();

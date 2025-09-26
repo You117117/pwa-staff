@@ -40,3 +40,39 @@
   restoreApi();probeHealth();refreshAll();startPolling();
   if('serviceWorker'in navigator)navigator.serviceWorker.register('service-worker.js').catch(()=>{});
 })();
+
+// --- Staff Summary (historique du jour) ---
+// Retourne un tableau de tickets (peut être vide si rien aujourd’hui).
+app.get('/staff/summary', async (req, res) => {
+  try {
+    // Si tu n'as pas encore branché la DB, renvoie un tableau vide :
+    // res.set('Cache-Control', 'no-store');
+    return res.json([]); 
+
+    // Quand tu brancheras la DB, renvoie qqchose comme :
+    /*
+    const { rows } = await pool.query(`
+      SELECT id, table_id, total, created_at
+      FROM orders
+      WHERE created_at >= date_trunc('day', now())
+      ORDER BY created_at DESC
+      LIMIT 50
+    `);
+
+    // Formatage simple attendu par l’UI Staff :
+    const tickets = rows.map(r => ({
+      table: `T${r.table_id}`,
+      total: Number(r.total || 0),
+      time: new Date(r.created_at).toISOString(),
+      status: 'paid',         // à adapter selon ton modèle
+      items: []               // à remplir si tu veux afficher le détail
+    }));
+
+    res.set('Cache-Control', 'no-store');
+    return res.json(tickets);
+    */
+  } catch (err) {
+    console.error('GET /staff/summary error:', err);
+    return res.status(500).json({ ok: false, error: 'summary_failed' });
+  }
+});

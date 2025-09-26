@@ -1,43 +1,76 @@
-/* app.js — staff
-   - Charge l’URL API depuis l’input (mémorisée en localStorage)
-   - Affiche les tables via GET /tables
-   - Si l’API est vide/erreur, fallback sur T1..T5 (pour ne jamais rester “Aucune table”)
-   - Bouton “Tester /health” : affiche OK/KO sans casser l’écran
-   - Bouton “Rafraîchir” : recharge tables + résumé (le résumé est géré dans bridge-orders-staff.js)
+/* app.js — staff (v2)
+   - Trouve de façon robuste le panneau "Tables" et y injecte un body si absent
+   - Affiche un fallback T1..T5 si /tables est vide/erreur
+   - Boutons: Mémoriser, Tester /health, Rafraîchir (inchangés)
 */
 
 (function () {
   const LS_KEY_API = 'RQR_API_URL';
-  const apiInput = document.querySelector('input[type="url"], input#api, input#apiUrl, input[name="api"]');
-  const btnMemoriser = document.querySelector('button[data-action="memoriser"], button:contains("Mémoriser")');
-  const btnHealth = document.querySelector('button[data-action="test-health"], button:contains("Tester /health")');
-  const btnRefreshTables = document.querySelector('button[data-action="refresh-tables"], button:contains("Rafraîchir")');
-  const selectFilter = document.querySelector('select[data-role="tables-filter"]') || document.querySelector('select');
 
-  // Conteneur des cartes de tables (le 1er grand panneau à gauche)
-  const tablesPanel = document.querySelector('[data-panel="tables"]') ||
-                      document.querySelector('.tables-panel') ||
-                      document.querySelectorAll('section,div').item(1);
+  // --- Sélecteurs de base
+  const apiInput =
+    document.querySelector('input[type="url"], input#api, input#apiUrl, input[name="api"]');
+  const btnMemoriser = Array.from(document.querySelectorAll('button'))
+    .find(b => /mémoriser/i.test(b.textContent || ''));
+  const btnHealth = Array.from(document.querySelectorAll('button'))
+    .find(b => /tester\s*\/?health/i.test(b.textContent || ''));
+  const btnRefreshTables = Array.from(document.querySelectorAll('button'))
+    .find(b => /rafraîchir/i.test(b.textContent || '') &&
+               b.closest('section,div') &&
+               /tables/i.test(b.closest('section,div').textContent || ''));
 
-  // Helpers
+  // --- Trouver le panneau "Tables" de façon sûre
+  function findTablesPanel() {
+    // 1) bloc contenant un titre "Tables"
+    const candidates = Array.from(document.querySelectorAll('section,div'));
+    let panel = candidates.find(n => /(^|\s)tables(\s|$)/i.test(n.getAttribute('data-panel') || ''));
+    if (!panel) panel = candidates.find(n => /tables/i.test(n.querySelector('h1,h2,h3,h4,h5,h6')?.textContent || ''));
+    if (!panel) panel = candidates.find(n => /tables/i.test(n.textContent || ''));
+    return panel || document.body;
+  }
+
+  // Corps d’injection : on cherche un body interne, sinon on le crée
+  function getTablesBody() {
+    const panel = findTablesPanel();
+    if (!panel) return null;
+
+    // Cherche un conteneur dédié
+    let body =
+      panel.querySelector('[data-role="tables-body"]') ||
+      panel.querySelector('#tables-body') ||
+      panel.querySelector('.tables-body');
+
+    if (!body) {
+      // Crée un body juste sous le premier titre si possible
+      body = document.createElement('div');
+      body.setAttribute('data-role', 'tables-body');
+      body.style.minHeight = '80px';
+      body.style.padding = '8px 0';
+
+      const heading = panel.querySelector('h1,h2,h3,h4,h5,h6');
+      if (heading && heading.parentNode === panel) {
+        panel.insertBefore(body, heading.nextSibling);
+      } else {
+        panel.appendChild(body);
+      }
+    }
+    return body;
+  }
+
+  // --- Helpers
   const getApi = () => (apiInput?.value || '').trim();
   const setStatusOk = (ok) => {
-    // Petit indicateur vert/rouge (optionnel)
     const pill = document.querySelector('[data-pill="ok"]');
     if (pill) {
       pill.textContent = ok ? 'OK' : 'KO';
       pill.style.background = ok ? '#2ecc71' : '#e74c3c';
     }
   };
-
   const saveApi = () => {
     const url = getApi();
     if (!url) return;
-    try {
-      localStorage.setItem(LS_KEY_API, url);
-    } catch {}
+    try { localStorage.setItem(LS_KEY_API, url); } catch {}
   };
-
   const restoreApi = () => {
     try {
       const saved = localStorage.getItem(LS_KEY_API);
@@ -45,7 +78,7 @@
     } catch {}
   };
 
-  // Fallback tables si l’API ne renvoie rien
+  // Fallback tables
   const fallbackTables = () => ([
     { id: 'T1', pending: 0, lastTicket: null },
     { id: 'T2', pending: 0, lastTicket: null },
@@ -54,16 +87,17 @@
     { id: 'T5', pending: 0, lastTicket: null },
   ]);
 
-  // Rendu ultra simple d’une carte table (on ne touche pas à ton CSS, on laisse le markup générique)
+  // Rendu (sans toucher à ton CSS – markup simple)
   const renderTables = (tables) => {
-    if (!tablesPanel) return;
-    tablesPanel.innerHTML = '';
+    const body = getTablesBody();
+    if (!body) return;
+
+    body.innerHTML = '';
 
     if (!tables || !tables.length) {
-      tablesPanel.innerHTML = `<div class="card empty">Aucune table</div>`;
+      body.innerHTML = `<div class="card empty">Aucune table</div>`;
       return;
     }
-
     for (const t of tables) {
       const card = document.createElement('div');
       card.className = 'card table';
@@ -78,13 +112,15 @@
           <button class="btn" disabled>Imprimer maintenant</button>
         </div>
       `;
-      tablesPanel.appendChild(card);
+      body.appendChild(card);
     }
   };
 
   // Charge /tables (tolérant)
   const loadTables = async () => {
     const base = getApi();
+
+    // Toujours afficher quelque chose (=fallback) si API vide
     if (!base) {
       renderTables(fallbackTables());
       return;
@@ -95,7 +131,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
-      // On peut accepter plusieurs formats:
+      // Formats acceptés:
       // - [{id:"T1", pending:0, lastTicket:null}, ...]
       // - ["T1","T2",...]
       let tables = Array.isArray(data) ? data : [];
@@ -103,7 +139,6 @@
         tables = tables.map(id => ({ id, pending: 0, lastTicket: null }));
       }
 
-      // Si l’API renvoie [], on bascule sur le fallback pour garder l’écran utile
       renderTables(tables.length ? tables : fallbackTables());
     } catch (e) {
       console.warn('Tables: fallback (cause:', e?.message || e, ')');
@@ -111,37 +146,28 @@
     }
   };
 
-  // Test /health
+  // Test /health (facultatif visuel)
   const testHealth = async () => {
     const base = getApi();
     if (!base) return setStatusOk(false);
     try {
       const r = await fetch(`${base.replace(/\/+$/,'')}/health?ts=${Date.now()}`, { cache: 'no-store' });
-      const ok = r.ok;
-      setStatusOk(ok);
-      try {
-        const j = await r.json();
-        console.log('health =>', j);
-      } catch {}
+      setStatusOk(r.ok);
+      try { console.log('health =>', await r.json()); } catch {}
     } catch (e) {
-      console.warn('health error', e);
       setStatusOk(false);
     }
   };
 
-  // Init
+  // --- Init
   restoreApi();
-  // Auto render au premier affichage
-  loadTables();
+  loadTables(); // 1er rendu
 
-  // Écouteurs UI (sans casser ton HTML : on teste la présence avant d’attacher)
-  btnMemoriser?.addEventListener('click', () => { saveApi(); });
-  btnHealth?.addEventListener('click', () => { testHealth(); });
-  btnRefreshTables?.addEventListener('click', () => { loadTables(); });
+  // Boutons
+  btnMemoriser?.addEventListener('click', saveApi);
+  btnHealth?.addEventListener('click', testHealth);
+  btnRefreshTables?.addEventListener('click', loadTables);
 
-  // Filtre (si tu as un select de catégorie — sinon ça n’impacte rien)
-  selectFilter?.addEventListener('change', () => loadTables());
-
-  // Expose pour bridge-orders-staff.js (rafraîchir depuis le bridge)
+  // Pour le bridge: permet de relancer un refresh depuis bridge-orders-staff.js
   window.__RQR_reloadTables = loadTables;
 })();

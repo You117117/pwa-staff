@@ -1,78 +1,78 @@
-/* app.js — PWA Staff (final)
-   - Boutons "Mémoriser" & "Tester /health"
-   - /tables (fallback si vide)
-   - Poll /staff/summary toutes les 5s (bridge client -> staff)
-   - Aucun changement d'UI
-*/
-(function () {
-  const LS_KEY_API = 'RQR_API_URL';
+/* PWA STAFF – app.js (final robust)
+ * - Boutons "Mémoriser" et "Tester /health" via délégation d'événements
+ * - Stockage URL API dans localStorage 'api_url' (même clé que le Client)
+ * - Chargement /tables (fallback T1..T5 si vide/erreur)
+ * - Poll /staff/summary toutes les 5s
+ * - Aucun changement d'UI requis
+ */
 
-  // ------- helpers DOM robustes -------
+(function () {
+  const LS_KEY = 'api_url';
+
+  // --------- Utils DOM ----------
   const $ = (sel, root=document) => root.querySelector(sel);
   const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 
-  const apiInput =
-    $('input[type="url"]') ||
-    $('#api') || $('#apiUrl') || $('input[name="api"]');
+  // Essaie de trouver l'input URL API le plus probable
+  function findApiInput() {
+    // priorités: type=url, id usuels, placeholder avec "http"
+    return (
+      $('input[type="url"]') ||
+      $('#api') || $('#apiUrl') || $('input[name="api"]') ||
+      $$('input').find(i => /https?:\/\//i.test(i.placeholder||'')) ||
+      $$('input').find(i => /api/i.test((i.id||'') + ' ' + (i.name||'')))
+    );
+  }
 
-  // Bouton "Mémoriser"
-  const btnMemoriser = $$('.btn,button').find(b => /m[ée]moriser/i.test(b.textContent||''));
-  // Bouton "Tester /health"
-  const btnHealth = $$('.btn,button').find(b => /tester\s*\/?health/i.test(b.textContent||''));
+  const apiInput = findApiInput();
 
-  // Bouton "Rafraîchir" du panneau Tables
-  const btnRefreshTables = $$('.btn,button').find(b => {
-    if (!/rafra[îi]chir/i.test(b.textContent||'')) return false;
-    const host = b.closest('section,div');
-    return !!host && /tables/i.test(host.textContent||'');
-  });
-
-  // Trouver panneau "Tables" et "Résumé"
-  function findTablesPanel() {
-    const sections = $$('section,div');
-    let p = sections.find(n => /tables/i.test(n.querySelector('h1,h2,h3,h4,h5,h6')?.textContent||''));
-    if (!p) p = sections.find(n => /tables/i.test(n.textContent||''));
+  // Panneaux "Tables" et "Résumé du jour"
+  function findPanelByTitle(word) {
+    const blocks = $$('section,div');
+    let p = blocks.find(n => new RegExp(`\\b${word}\\b`, 'i')
+      .test(n.querySelector('h1,h2,h3,h4,h5,h6')?.textContent||''));
+    if (!p) p = blocks.find(n => new RegExp(`\\b${word}\\b`, 'i').test(n.textContent||''));
     return p || document.body;
   }
-  function findSummaryPanel() {
-    const sections = $$('section,div');
-    let p = sections.find(n => /r[ée]sum[ée]/i.test(n.querySelector('h1,h2,h3,h4,h5,h6')?.textContent||''));
-    if (!p) p = sections.find(n => /r[ée]sum[ée]/i.test(n.textContent||''));
-    return p || document.body;
-  }
-
-  function ensureTablesBody() {
-    const panel = findTablesPanel();
-    let body = $('[data-role="tables-body"]', panel) || $('#tables-body', panel) || $('.tables-body', panel);
+  function ensureBody(panel, attr) {
+    let body = panel.querySelector(`[data-role="${attr}"]`) ||
+               panel.querySelector(`#${attr}`) ||
+               panel.querySelector(`.${attr}`);
     if (!body) {
       body = document.createElement('div');
-      body.setAttribute('data-role', 'tables-body');
-      const h = $('h1,h2,h3,h4,h5,h6', panel);
-      if (h && h.parentNode===panel) panel.insertBefore(body, h.nextSibling);
-      else panel.appendChild(body);
-    }
-    return body;
-  }
-  function ensureSummaryBody() {
-    const panel = findSummaryPanel();
-    let body = $('[data-role="summary-body"]', panel) || $('#summary-body', panel) || $('.summary-body', panel);
-    if (!body) {
-      body = document.createElement('div');
-      body.setAttribute('data-role', 'summary-body');
-      const h = $('h1,h2,h3,h4,h5,h6', panel);
+      body.setAttribute('data-role', attr);
+      const h = panel.querySelector('h1,h2,h3,h4,h5,h6');
       if (h && h.parentNode===panel) panel.insertBefore(body, h.nextSibling);
       else panel.appendChild(body);
     }
     return body;
   }
 
-  // ------- stockage & statut -------
-  const getApi = () => (apiInput?.value || '').trim();
-  const saveApi = () => { const u=getApi(); if(u) try{localStorage.setItem(LS_KEY_API,u);}catch{} };
-  const restoreApi = () => { try{const s=localStorage.getItem(LS_KEY_API); if(s&&apiInput) apiInput.value=s;}catch{} };
+  const tablesPanel = () => findPanelByTitle('Tables');
+  const summaryPanel = () => findPanelByTitle('Résumé');
+  const tablesBody  = () => ensureBody(tablesPanel(), 'tables-body');
+  const summaryBody = () => ensureBody(summaryPanel(), 'summary-body');
 
+  // --------- API URL ---------
+  function getApi() {
+    const fromInput = (apiInput?.value || '').trim();
+    if (fromInput) return fromInput;
+    try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; }
+  }
+  function setApi(url) {
+    if (!url) return;
+    try { localStorage.setItem(LS_KEY, url); } catch {}
+    if (apiInput) apiInput.value = url;
+  }
+  function restoreApiFromLS() {
+    try {
+      const saved = localStorage.getItem(LS_KEY);
+      if (saved && apiInput) apiInput.value = saved;
+    } catch {}
+  }
+
+  // --------- Health badge (optionnel) ---------
   function setHealthBadge(ok) {
-    // si tu as un petit badge "OK/KO" dans l'en-tête, on l'actualise
     const pill = $('[data-pill="ok"]');
     if (pill) {
       pill.textContent = ok ? 'OK' : 'KO';
@@ -80,7 +80,7 @@
     }
   }
 
-  // ------- rendu tables -------
+  // --------- Rendu Tables ---------
   const fallbackTables = () => ([
     { id:'T1', pending:0, lastTicket:null },
     { id:'T2', pending:0, lastTicket:null },
@@ -89,21 +89,24 @@
     { id:'T5', pending:0, lastTicket:null },
   ]);
 
-  function renderTables(tables) {
-    const body = ensureTablesBody();
+  function renderTables(list) {
+    const body = tablesBody();
     body.innerHTML = '';
-    if (!tables || !tables.length) {
-      body.innerHTML = `<div class="card empty">Aucune table</div>`;
-      return;
-    }
+
+    const tables = (Array.isArray(list) && list.length)
+      ? (typeof list[0] === 'string'
+          ? list.map(id => ({ id, pending:0, lastTicket:null }))
+          : list)
+      : fallbackTables();
+
     for (const t of tables) {
       const card = document.createElement('div');
       card.className = 'card table';
       card.innerHTML = `
         <div class="card-title">Table ${t.id || ''}</div>
         <div class="card-meta">
-          <span>En attente&nbsp;: <strong>${t.pending ?? 0}</strong></span>
-          <span style="margin-left:12px">Dernier ticket&nbsp;: <strong>${t.lastTicket ?? '-'}</strong></span>
+          <span>En attente : <strong>${t.pending ?? 0}</strong></span>
+          <span style="margin-left:12px">Dernier ticket : <strong>${t.lastTicket ?? '-'}</strong></span>
         </div>
         <div class="card-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" disabled>Imprimer maintenant</button>
@@ -116,61 +119,64 @@
 
   async function loadTables() {
     const base = getApi();
-    if (!base) { renderTables(fallbackTables()); return; }
+    if (!base) return renderTables(null);
     try {
       const r = await fetch(`${base.replace(/\/+$/,'')}/tables?ts=${Date.now()}`, { cache:'no-store' });
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
-      let tables = Array.isArray(data) ? data : [];
-      if (tables.length && typeof tables[0]==='string') {
-        tables = tables.map(id => ({ id, pending:0, lastTicket:null }));
-      }
-      renderTables(tables.length ? tables : fallbackTables());
+      renderTables(Array.isArray(data) ? data : (data?.tables || data?.data || null));
     } catch (e) {
       console.warn('Tables => fallback', e);
-      renderTables(fallbackTables());
+      renderTables(null);
     }
   }
 
-  // ------- résumé /staff/summary -------
-  function renderSummary(items) {
-    const body = ensureSummaryBody();
+  // --------- Résumé ---------
+  function renderSummary(rows) {
+    const body = summaryBody();
     body.innerHTML = '';
-    if (!items || !items.length) {
+
+    const items = Array.isArray(rows)
+      ? rows
+      : (Array.isArray(rows?.summary) ? rows.summary : (Array.isArray(rows?.data) ? rows.data : []));
+
+    if (!items.length) {
       body.innerHTML = `<div class="muted">Aucun ticket aujourd'hui</div>`;
       return;
     }
-    for (const it of items) {
-      const el = document.createElement('div');
-      el.className = 'summary-item';
-      const lines = [];
-      lines.push(`<div><strong>${it.table || '-'}</strong> — ${it.at || ''}</div>`);
-      if (Array.isArray(it.items) && it.items.length) {
-        const list = it.items.map(x => `${x.qty || x.q || 1}× ${x.title || x.name || x.id || '?'}`).join(', ');
-        lines.push(`<div>${list}</div>`);
-      }
-      if (typeof it.total === 'number') lines.push(`<div>Total: ${it.total.toFixed(2)} €</div>`);
-      el.innerHTML = lines.join('');
-      body.appendChild(el);
+
+    for (const ev of items) {
+      const div = document.createElement('div');
+      div.className = 'summary-item';
+      const lines = ev.lines || ev.items || [];
+      const list  = Array.isArray(lines) ? lines.map(l => `${l.qty || 1}× ${l.name || l.title || '?'}`).join(', ') : '';
+      const tot   = typeof ev.total === 'number' ? ev.total.toFixed(2)+' €' : '';
+      const when  = ev.ts ? new Date(ev.ts).toLocaleTimeString() : (ev.at || '');
+      div.innerHTML = `
+        <div><strong>${ev.table || '-'}</strong> — ${when}</div>
+        <div>${list}</div>
+        <div>${tot}</div>
+      `;
+      body.appendChild(div);
     }
   }
 
   async function loadSummary() {
     const base = getApi();
-    if (!base) { renderSummary([]); return; }
+    if (!base) return renderSummary([]);
     try {
       const r = await fetch(`${base.replace(/\/+$/,'')}/staff/summary?ts=${Date.now()}`, { cache:'no-store' });
+      if (r.status === 404) return renderSummary([]); // route pas encore implémentée -> vide
       if (!r.ok) throw new Error(r.status);
       const data = await r.json();
-      const items = Array.isArray(data) ? data : (data?.orders || []);
-      renderSummary(items);
+      renderSummary(data);
     } catch (e) {
-      // on n'affiche pas d'erreur rouge, on laisse "Aucun ticket"
+      // silence visuel: on garde "Aucun ticket"
       renderSummary([]);
     }
   }
 
-  // ------- health -------
+  // --------- Health ---------
   async function testHealth() {
     const base = getApi();
     if (!base) return setHealthBadge(false);
@@ -183,22 +189,53 @@
     }
   }
 
-  // ------- init -------
-  restoreApi();
-  // lie les boutons (on re-binde même si déjà lié)
-  btnMemoriser?.addEventListener('click', saveApi);
-  btnHealth?.addEventListener('click', testHealth);
-  btnRefreshTables?.addEventListener('click', loadTables);
+  // --------- Délégation d'événements pour les boutons ---------
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement)) return;
 
-  // 1er affichage
+    const txt = (t.textContent || '').trim().toLowerCase();
+
+    // Mémoriser
+    if (/m[ée]moriser/.test(txt)) {
+      const val = (apiInput?.value || '').trim();
+      if (val) setApi(val);
+      // après mémorisation, on recharge
+      loadTables();
+      loadSummary();
+      testHealth();
+    }
+
+    // Tester /health
+    if (/tester/.test(txt) && /health/.test(txt)) {
+      testHealth();
+    }
+
+    // Rafraîchir (si bouton existe près des tables)
+    if (/rafra[îi]chir/.test(txt)) {
+      // on regarde si le bouton est dans le panneau tables ou résumé
+      const host = t.closest('section,div');
+      if (host && /tables/i.test(host.textContent||'')) {
+        loadTables();
+      } else if (host && /r[ée]sum[ée]/i.test(host.textContent||'')) {
+        loadSummary();
+      } else {
+        // bouton global -> recharge tout
+        loadTables(); loadSummary();
+      }
+    }
+  }, true);
+
+  // --------- Init ---------
+  restoreApiFromLS();
   loadTables();
   loadSummary();
   testHealth();
 
-  // poll résumé toutes les 5s
+  // Poll Résumé toutes les 5s
   setInterval(loadSummary, 5000);
 
-  // Expose pour le bridge si besoin
+  // Hooks pour d'autres scripts si besoin
   window.__RQR_reloadTables = loadTables;
   window.__RQR_reloadSummary = loadSummary;
 })();

@@ -1,15 +1,15 @@
-/* table-inline-session.js v3 — PWA Staff (inline session panel + fallback)
- * - Statut "En cours/Vide" en haut
- * - Liste des commandes dans la carte (session si dispo, sinon fallback summary)
- * - Boutons "Imprimer" et "Paiement confirmé"
- * - Auto refresh (10s) + réinjection après "Rafraîchir"
+/* table-inline-session.js v4 — léger & sûr
+ * - Statut + liste dans chaque carte
+ * - 1 seul timer global (15s) pour rafraîchir toutes les cartes
+ * - Fallback /summary si /session est vide
  * Intégration: APRÈS js/app.js
- *   <script src="js/table-inline-session.js?v=3"></script>
+ *   <script src="js/table-inline-session.js?v=4"></script>
  */
 (function(){
   const $  = (s,r=document)=>r.querySelector(s);
   const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 
+  // ---------- API ----------
   function getApiBase(){
     const inp = $('#apiUrl');
     const str = (inp?.value || '').trim().replace(/\/+$/,'');
@@ -24,6 +24,7 @@
   async function apiGET(p){ const r = await fetch(getApiBase()+p, {cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status+' '+p); return r.json(); }
   async function apiPOST(p,b){ const r = await fetch(getApiBase()+p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{})}); if(!r.ok) throw new Error('HTTP '+r.status+' '+p); return r.json().catch(()=>({ok:true})); }
 
+  // ---------- Styles ----------
   function ensureStyles(){
     if ($('#tisStyles')) return;
     const st = document.createElement('style'); st.id='tisStyles';
@@ -45,17 +46,15 @@
     document.head.appendChild(st);
   }
 
-  function getGrid(){
-    return $('#tables') || $('[data-grid="tables"]') || $('.tables') || document;
-  }
+  // ---------- Sélection des cartes ----------
   function getCards(){
-    const grid = getGrid();
+    const grid = $('#tables') || $('[data-grid="tables"]') || document;
     let cards = $$('[data-table]', grid);
     if (!cards.length) cards = $$('.table', grid);
     if (!cards.length) cards = $$('.card', grid);
     return cards;
   }
-  function extractTableId(card){
+  function tableIdFromCard(card){
     let id = card?.dataset?.table || '';
     if (!id){
       const chip = card.querySelector('.chip');
@@ -64,6 +63,7 @@
     return (id||'').replace(/^Table\s*/i,'').trim();
   }
 
+  // ---------- Panneau ----------
   function ensurePanel(card){
     let panel = card.querySelector('.tis');
     if (!panel){
@@ -87,7 +87,6 @@
     return panel;
   }
 
-  // Agrégat simple pour fallback summary
   function aggregateFromTickets(tickets){
     const items = new Map();
     let total = 0, lastTime = '';
@@ -104,24 +103,23 @@
     return { total: Math.round(total*100)/100, items:[...items.values()], lastTime };
   }
 
-  async function loadSessionOrFallback(tableId){
-    // 1) tente /session/:table
+  async function loadData(tableId){
+    // 1) Essaie la session
     try{
-      const j = await apiGET(`/session/${encodeURIComponent(tableId)}`);
-      const orders = j?.orders || [];
-      if (orders.length) return { mode:'session', orders, aggregate: j.aggregate || {items:[], total:0, lastTime:''} };
+      const s = await apiGET(`/session/${encodeURIComponent(tableId)}`);
+      const orders = s?.orders || [];
+      if (orders.length) return { mode:'session', orders, aggregate: s.aggregate || {items:[], total:0, lastTime:''} };
     }catch{}
-    // 2) fallback: /summary filtré par table (affiche quand même quelque chose)
-    const s = await apiGET('/summary');
-    const tickets = (s?.tickets||[]).filter(t=>(t.table||'').toUpperCase()===(tableId||'').toUpperCase());
+    // 2) Fallback: summary du jour
+    const sum = await apiGET('/summary');
+    const tickets = (sum?.tickets||[]).filter(t=>(t.table||'').toUpperCase()===(tableId||'').toUpperCase());
     const agg = aggregateFromTickets(tickets);
-    return { mode:'summary', orders: tickets.map(t=>({ id:t.id, time:t.time, total:t.total, items:t.items })), aggregate: agg };
+    return { mode:'summary', orders: tickets.map(t=>({id:t.id,time:t.time,total:t.total,items:t.items})), aggregate: agg };
   }
 
-  async function refreshPanel(card){
-    const tableId = extractTableId(card);
-    if (!tableId) return;
-
+  async function refreshCard(card){
+    const id = tableIdFromCard(card);
+    if (!id) return;
     const panel = ensurePanel(card);
     const badge = panel.querySelector('#tisBadge');
     const meta  = panel.querySelector('#tisMeta');
@@ -135,29 +133,31 @@
     total.textContent = '';
 
     try{
-      const data = await loadSessionOrFallback(tableId);
+      const data = await loadData(id);
       const orders = data.orders;
       const agg = data.aggregate;
 
       if (orders.length){
-        badge.classList.remove('empty'); badge.classList.add('ok'); badge.textContent = (data.mode==='session'?'En cours':'(Résumé du jour)');
+        badge.classList.remove('empty'); badge.classList.add('ok');
+        badge.textContent = (data.mode==='session' ? 'En cours' : '(Résumé du jour)');
         meta.textContent = `Commandes: ${orders.length} • Dernier: ${agg.lastTime || '--:--'}`;
       } else {
-        badge.classList.remove('ok'); badge.classList.add('empty'); badge.textContent = 'Vide';
+        badge.classList.remove('ok'); badge.classList.add('empty');
+        badge.textContent = 'Vide';
         meta.textContent = 'Aucune commande';
       }
 
       list.innerHTML = '';
       orders.forEach(o=>{
-        const itStr = (o.items||[]).map(i=>`${i.qty}× ${i.name}`).join(', ');
+        const it = (o.items||[]).map(i=>`${i.qty}× ${i.name}`).join(', ');
         const row = document.createElement('div');
         row.className = 'tis-item';
         row.innerHTML = `<span>#${o.id} • ${o.time||''}</span><b>${o.total} €</b>`;
         list.appendChild(row);
-        if (itStr){
+        if (it){
           const sub = document.createElement('div');
           sub.className = 'tis-sub';
-          sub.textContent = itStr;
+          sub.textContent = it;
           list.appendChild(sub);
         }
       });
@@ -165,39 +165,45 @@
       total.textContent = `Total cumulé : ${agg.total.toFixed(2)} €`;
 
       btnPrint.onclick = async ()=>{
-        try { await apiPOST('/print',{table:tableId}); btnPrint.textContent='Imprimé ✓'; }
-        catch (e) { btnPrint.textContent='Erreur'; console.error(e); }
+        try { await apiPOST('/print',{table:id}); btnPrint.textContent='Imprimé ✓'; }
+        catch { btnPrint.textContent='Erreur'; }
         setTimeout(()=> btnPrint.textContent='Imprimer', 1100);
       };
       btnConfirm.onclick = async ()=>{
-        try { await apiPOST('/confirm',{table:tableId}); btnConfirm.textContent='Clôturé ✓'; }
-        catch (e) { btnConfirm.textContent='Erreur'; console.error(e); }
+        try { await apiPOST('/confirm',{table:id}); btnConfirm.textContent='Clôturé ✓'; }
+        catch { btnConfirm.textContent='Erreur'; }
         setTimeout(()=> btnConfirm.textContent='Paiement confirmé', 1100);
-        await refreshPanel(card); // relecture
+        await refreshCard(card);
       };
-      btnRefresh.onclick = ()=> refreshPanel(card);
+      btnRefresh.onclick = ()=> refreshCard(card);
 
     }catch(e){
       list.innerHTML = `<div class="tis-error">Erreur: ${e.message}</div>`;
-      console.error(e);
     }
   }
 
-  function injectAll(){
-    ensureStyles();
-    getCards().forEach(card=>{
-      if (!card.__tisTick){
-        card.__tisTick = setInterval(()=>refreshPanel(card), 10000); // auto-refresh 10s
-      }
-      refreshPanel(card);
-    });
+  // ---------- Rafraîchissement GLOBAL (UN SEUL TIMER) ----------
+  let globalTimer = null;
+  function startGlobalRefresh(){
+    stopGlobalRefresh();
+    const tick = ()=> getCards().forEach(c=> refreshCard(c));
+    tick(); // 1ère passe immédiate
+    globalTimer = setInterval(tick, 15000); // toutes les 15s
   }
-  function observeGrid(){
-    const grid = getGrid(); if (!grid) return;
-    const mo = new MutationObserver(()=> injectAll());
-    mo.observe(grid, {childList:true, subtree:true});
+  function stopGlobalRefresh(){
+    if (globalTimer){ clearInterval(globalTimer); globalTimer = null; }
   }
 
-  injectAll();
-  observeGrid();
+  // ---------- Init ----------
+  ensureStyles();
+  startGlobalRefresh();
+
+  // recâble “Rafraîchir” si présent (après reconstruction DOM)
+  const btn = $('#btnRefreshTables');
+  if (btn){
+    btn.addEventListener('click', ()=>{
+      // petite attente pour laisser l’app reconstruire les cartes
+      setTimeout(()=> startGlobalRefresh(), 200);
+    });
+  }
 })();

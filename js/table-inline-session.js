@@ -1,16 +1,15 @@
-/* table-inline-session.js v2 — PWA Staff (inline session panel)
- * - Statut "En cours/Vide" en haut du cadre
- * - Liste des commandes de la session (tickets + items)
- * - Boutons "Imprimer" et "Paiement confirmé" sous la liste
- * - S’injecte automatiquement dans toutes les cartes, et se ré-attache après "Rafraîchir"
+/* table-inline-session.js v3 — PWA Staff (inline session panel + fallback)
+ * - Statut "En cours/Vide" en haut
+ * - Liste des commandes dans la carte (session si dispo, sinon fallback summary)
+ * - Boutons "Imprimer" et "Paiement confirmé"
+ * - Auto refresh (10s) + réinjection après "Rafraîchir"
  * Intégration: APRÈS js/app.js
- *   <script src="js/table-inline-session.js?v=2"></script>
+ *   <script src="js/table-inline-session.js?v=3"></script>
  */
 (function(){
   const $  = (s,r=document)=>r.querySelector(s);
   const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 
-  // -------- API helpers --------
   function getApiBase(){
     const inp = $('#apiUrl');
     const str = (inp?.value || '').trim().replace(/\/+$/,'');
@@ -22,10 +21,9 @@
       return (ls||'').trim().replace(/\/+$/,'');
     } catch { return ''; }
   }
-  async function apiGET(p){ const r = await fetch(getApiBase()+p, {cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
-  async function apiPOST(p,b){ const r = await fetch(getApiBase()+p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{})}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json().catch(()=>({ok:true})); }
+  async function apiGET(p){ const r = await fetch(getApiBase()+p, {cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status+' '+p); return r.json(); }
+  async function apiPOST(p,b){ const r = await fetch(getApiBase()+p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{})}); if(!r.ok) throw new Error('HTTP '+r.status+' '+p); return r.json().catch(()=>({ok:true})); }
 
-  // -------- Styles --------
   function ensureStyles(){
     if ($('#tisStyles')) return;
     const st = document.createElement('style'); st.id='tisStyles';
@@ -37,22 +35,21 @@
       .tis-badge.empty{background:#374151;color:#e5e7eb}
       .tis-list{max-height:180px;overflow:auto;border-top:1px dashed #374151;margin-top:6px;padding-top:6px}
       .tis-item{display:flex;justify-content:space-between;margin:3px 0}
-      .tis-sub{opacity:.8;font-size:12px;margin:0 0 6px 0}
+      .tis-sub{opacity:.85;font-size:12px;margin:0 0 6px 0}
       .tis-actions{display:flex;gap:8px;margin-top:8px}
       .tis-btn{background:#10b981;border:none;border-radius:10px;padding:8px 12px;color:#042;cursor:pointer;font-weight:700}
       .tis-btn.ghost{background:#1f2937;color:#e5e7eb}
       .tis-total{margin-top:6px;font-weight:700}
+      .tis-error{color:#fca5a5;font-size:12px}
     `;
     document.head.appendChild(st);
   }
 
-  // -------- Sélecteurs robustes --------
   function getGrid(){
     return $('#tables') || $('[data-grid="tables"]') || $('.tables') || document;
   }
   function getCards(){
     const grid = getGrid();
-    // on prend le plus spécifique possible
     let cards = $$('[data-table]', grid);
     if (!cards.length) cards = $$('.table', grid);
     if (!cards.length) cards = $$('.card', grid);
@@ -67,7 +64,6 @@
     return (id||'').replace(/^Table\s*/i,'').trim();
   }
 
-  // -------- Panneau --------
   function ensurePanel(card){
     let panel = card.querySelector('.tis');
     if (!panel){
@@ -91,6 +87,37 @@
     return panel;
   }
 
+  // Agrégat simple pour fallback summary
+  function aggregateFromTickets(tickets){
+    const items = new Map();
+    let total = 0, lastTime = '';
+    tickets.forEach(t=>{
+      total += Number(t.total||0);
+      if (t.time) lastTime = t.time;
+      (t.items||[]).forEach(i=>{
+        const k = i.name || i.id || 'Item';
+        const prev = items.get(k) || {name:k, qty:0};
+        prev.qty += Number(i.qty||1);
+        items.set(k, prev);
+      });
+    });
+    return { total: Math.round(total*100)/100, items:[...items.values()], lastTime };
+  }
+
+  async function loadSessionOrFallback(tableId){
+    // 1) tente /session/:table
+    try{
+      const j = await apiGET(`/session/${encodeURIComponent(tableId)}`);
+      const orders = j?.orders || [];
+      if (orders.length) return { mode:'session', orders, aggregate: j.aggregate || {items:[], total:0, lastTime:''} };
+    }catch{}
+    // 2) fallback: /summary filtré par table (affiche quand même quelque chose)
+    const s = await apiGET('/summary');
+    const tickets = (s?.tickets||[]).filter(t=>(t.table||'').toUpperCase()===(tableId||'').toUpperCase());
+    const agg = aggregateFromTickets(tickets);
+    return { mode:'summary', orders: tickets.map(t=>({ id:t.id, time:t.time, total:t.total, items:t.items })), aggregate: agg };
+  }
+
   async function refreshPanel(card){
     const tableId = extractTableId(card);
     if (!tableId) return;
@@ -108,22 +135,20 @@
     total.textContent = '';
 
     try{
-      const j = await apiGET(`/session/${encodeURIComponent(tableId)}`);
-      const orders = j?.orders || [];
-      const agg = j?.aggregate || { items:[], total:0, lastTime:'' };
+      const data = await loadSessionOrFallback(tableId);
+      const orders = data.orders;
+      const agg = data.aggregate;
 
-      // statut
       if (orders.length){
-        badge.classList.remove('empty'); badge.classList.add('ok'); badge.textContent = 'En cours';
+        badge.classList.remove('empty'); badge.classList.add('ok'); badge.textContent = (data.mode==='session'?'En cours':'(Résumé du jour)');
         meta.textContent = `Commandes: ${orders.length} • Dernier: ${agg.lastTime || '--:--'}`;
       } else {
         badge.classList.remove('ok'); badge.classList.add('empty'); badge.textContent = 'Vide';
         meta.textContent = 'Aucune commande';
       }
 
-      // liste des commandes
       list.innerHTML = '';
-      orders.forEach(o => {
+      orders.forEach(o=>{
         const itStr = (o.items||[]).map(i=>`${i.qty}× ${i.name}`).join(', ');
         const row = document.createElement('div');
         row.className = 'tis-item';
@@ -137,54 +162,42 @@
         }
       });
 
-      // total cumulé
       total.textContent = `Total cumulé : ${agg.total.toFixed(2)} €`;
 
-      // actions
       btnPrint.onclick = async ()=>{
         try { await apiPOST('/print',{table:tableId}); btnPrint.textContent='Imprimé ✓'; }
-        catch { btnPrint.textContent='Erreur'; }
+        catch (e) { btnPrint.textContent='Erreur'; console.error(e); }
         setTimeout(()=> btnPrint.textContent='Imprimer', 1100);
       };
       btnConfirm.onclick = async ()=>{
         try { await apiPOST('/confirm',{table:tableId}); btnConfirm.textContent='Clôturé ✓'; }
-        catch { btnConfirm.textContent='Erreur'; }
+        catch (e) { btnConfirm.textContent='Erreur'; console.error(e); }
         setTimeout(()=> btnConfirm.textContent='Paiement confirmé', 1100);
-        await refreshPanel(card);
+        await refreshPanel(card); // relecture
       };
       btnRefresh.onclick = ()=> refreshPanel(card);
 
     }catch(e){
-      list.innerHTML = `<div class="tis-sub">Erreur: ${e.message}</div>`;
+      list.innerHTML = `<div class="tis-error">Erreur: ${e.message}</div>`;
+      console.error(e);
     }
   }
 
-  // -------- Wiring & réinjection --------
   function injectAll(){
     ensureStyles();
-    getCards().forEach(card => {
-      if (card.__tisWired) return;
-      card.__tisWired = true;
-      // injecte immédiatement
+    getCards().forEach(card=>{
+      if (!card.__tisTick){
+        card.__tisTick = setInterval(()=>refreshPanel(card), 10000); // auto-refresh 10s
+      }
       refreshPanel(card);
     });
   }
-
-  // MutationObserver: si l’app reconstruit les cartes (après “Rafraîchir”), on ré-injecte
   function observeGrid(){
     const grid = getGrid(); if (!grid) return;
-    const mo = new MutationObserver(() => injectAll());
-    mo.observe(grid, { childList:true, subtree:true });
+    const mo = new MutationObserver(()=> injectAll());
+    mo.observe(grid, {childList:true, subtree:true});
   }
 
-  // Bouton "Rafraîchir" (si id inconnu, on tente par texte)
-  function wireRefreshButton(){
-    const btn = $('#btnRefreshTables') || $$('.btn,button').find(b => (b.textContent||'').trim().toLowerCase() === 'rafraîchir');
-    btn && btn.addEventListener('click', () => setTimeout(injectAll, 150));
-  }
-
-  // Init
   injectAll();
   observeGrid();
-  wireRefreshButton();
 })();

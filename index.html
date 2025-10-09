@@ -7,21 +7,13 @@
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#0b1220">
   <link rel="stylesheet" href="style.css">
-  <style>
-    /* Ajout style inline session */
-    .tis-block { border-top:1px solid #ccc; margin-top:5px; padding:5px; font-size:0.9em; }
-    .tis-status { font-weight:bold; margin-bottom:4px; }
-    .tis-orders ul { margin:0; padding-left:15px; }
-    .tis-total { margin-top:4px; font-weight:bold; }
-    .tis-actions button { margin:2px; }
-  </style>
 </head>
 <body>
   <header class="topbar">
     <h1>Resto QR — Staff</h1>
     <div class="api-tools">
       <label for="apiUrl">URL API</label>
-      <input id="apiUrl" type="text" placeholder="https://orders-api-XXXX.onrender.com">
+      <input id="apiUrl" type="text" placeholder="https://qr-api-xxx.onrender.com">
       <button id="btnRemember" class="secondary">Mémoriser</button>
       <button id="btnHealth" class="secondary">Tester /health</button>
       <span id="healthBadge" class="badge"></span>
@@ -33,19 +25,22 @@
       <div class="card-head">
         <h2>Tables</h2>
         <div class="actions">
-          <select id="filter">
-            <option value="ALL">Toutes</option>
-            <option value="T1">T1</option>
-            <option value="T2">T2</option>
-            <option value="T3">T3</option>
-            <option value="T4">T4</option>
-            <option value="T5">T5</option>
-          </select>
           <button id="btnRefresh" class="secondary">Rafraîchir</button>
         </div>
       </div>
-      <div id="tables" class="tables"></div>
-      <p id="tablesEmpty" class="muted" style="display:none">Aucune table</p>
+
+      <div id="tables" class="tables">
+        <!-- EXEMPLE de carte avec slot persistant -->
+        <div class="table" data-table="T1">
+          <div class="head"><span class="chip">T1</span></div>
+          <div class="actions">
+            <button>Imprimer maintenant</button>
+            <button>Paiement confirmé</button>
+          </div>
+          <!-- Slot persistant rempli par table-inline-session.v6.js -->
+          <div class="tis-slot" data-table="T1"></div>
+        </div>
+      </div>
     </section>
 
     <aside class="card" id="summaryCard">
@@ -60,12 +55,10 @@
     </aside>
   </main>
 
-  <footer class="muted small">V1.1 — Cette PWA est un mock fonctionnel (impression à intégrer ePOS côté site).</footer>
+  <footer class="muted small">build-v6 — PWA Staff</footer>
 
-  <!-- Scripts -->
   <script src="js/bridge-orders-staff.js"></script>
   <script src="js/app.js"></script>
-  <!-- Inline session amélioré -->
-  <script src="js/table-inline-session.js?v=5"></script>
+  <script src="js/table-inline-session.v6.js"></script>
 </body>
 </html>

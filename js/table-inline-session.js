@@ -1,15 +1,16 @@
-/* table-inline-session.js — PWA Staff
- * Affiche la session en cours directement DANS la carte de la table :
- * - Statut au-dessus (En cours / Vide)
+/* table-inline-session.js v2 — PWA Staff (inline session panel)
+ * - Statut "En cours/Vide" en haut du cadre
  * - Liste des commandes de la session (tickets + items)
- * - Boutons "Imprimer" et "Paiement confirmé" en dessous
- * Intégration: inclure APRÈS js/app.js dans index.html
- *   <script src="js/table-inline-session.js"></script>
+ * - Boutons "Imprimer" et "Paiement confirmé" sous la liste
+ * - S’injecte automatiquement dans toutes les cartes, et se ré-attache après "Rafraîchir"
+ * Intégration: APRÈS js/app.js
+ *   <script src="js/table-inline-session.js?v=2"></script>
  */
 (function(){
-  const $ = (s,r=document)=>r.querySelector(s);
+  const $  = (s,r=document)=>r.querySelector(s);
   const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 
+  // -------- API helpers --------
   function getApiBase(){
     const inp = $('#apiUrl');
     const str = (inp?.value || '').trim().replace(/\/+$/,'');
@@ -24,6 +25,7 @@
   async function apiGET(p){ const r = await fetch(getApiBase()+p, {cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
   async function apiPOST(p,b){ const r = await fetch(getApiBase()+p, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{})}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json().catch(()=>({ok:true})); }
 
+  // -------- Styles --------
   function ensureStyles(){
     if ($('#tisStyles')) return;
     const st = document.createElement('style'); st.id='tisStyles';
@@ -44,15 +46,28 @@
     document.head.appendChild(st);
   }
 
-  function parseTableIdFromCard(card){
+  // -------- Sélecteurs robustes --------
+  function getGrid(){
+    return $('#tables') || $('[data-grid="tables"]') || $('.tables') || document;
+  }
+  function getCards(){
+    const grid = getGrid();
+    // on prend le plus spécifique possible
+    let cards = $$('[data-table]', grid);
+    if (!cards.length) cards = $$('.table', grid);
+    if (!cards.length) cards = $$('.card', grid);
+    return cards;
+  }
+  function extractTableId(card){
     let id = card?.dataset?.table || '';
     if (!id){
-      const chip = card?.querySelector('.chip');
+      const chip = card.querySelector('.chip');
       if (chip) id = (chip.textContent||'').trim();
     }
-    return (id||'').replace(/^Table\\s*/i,'').trim();
+    return (id||'').replace(/^Table\s*/i,'').trim();
   }
 
+  // -------- Panneau --------
   function ensurePanel(card){
     let panel = card.querySelector('.tis');
     if (!panel){
@@ -77,14 +92,15 @@
   }
 
   async function refreshPanel(card){
-    const tableId = parseTableIdFromCard(card);
+    const tableId = extractTableId(card);
     if (!tableId) return;
+
     const panel = ensurePanel(card);
     const badge = panel.querySelector('#tisBadge');
     const meta  = panel.querySelector('#tisMeta');
     const list  = panel.querySelector('#tisList');
     const total = panel.querySelector('#tisTotal');
-    const btnPrint = panel.querySelector('#tisPrint');
+    const btnPrint   = panel.querySelector('#tisPrint');
     const btnConfirm = panel.querySelector('#tisConfirm');
     const btnRefresh = panel.querySelector('#tisRefresh');
 
@@ -108,10 +124,10 @@
       // liste des commandes
       list.innerHTML = '';
       orders.forEach(o => {
-        const itStr = (o.items||[]).map(i=>\`\${i.qty}× \${i.name}\`).join(', ');
+        const itStr = (o.items||[]).map(i=>`${i.qty}× ${i.name}`).join(', ');
         const row = document.createElement('div');
         row.className = 'tis-item';
-        row.innerHTML = \`<span>#\${o.id} • \${o.time||''}</span><b>\${o.total} €</b>\`;
+        row.innerHTML = `<span>#${o.id} • ${o.time||''}</span><b>${o.total} €</b>`;
         list.appendChild(row);
         if (itStr){
           const sub = document.createElement('div');
@@ -122,7 +138,7 @@
       });
 
       // total cumulé
-      total.textContent = \`Total cumulé : \${agg.total.toFixed(2)} €\`;
+      total.textContent = `Total cumulé : ${agg.total.toFixed(2)} €`;
 
       // actions
       btnPrint.onclick = async ()=>{
@@ -134,29 +150,41 @@
         try { await apiPOST('/confirm',{table:tableId}); btnConfirm.textContent='Clôturé ✓'; }
         catch { btnConfirm.textContent='Erreur'; }
         setTimeout(()=> btnConfirm.textContent='Paiement confirmé', 1100);
-        // refresh local card + global lists si présents
         await refreshPanel(card);
-        try { document.getElementById('btnRefreshTables')?.click(); } catch {}
-        try { document.getElementById('btnRefreshSummary')?.click(); } catch {}
       };
       btnRefresh.onclick = ()=> refreshPanel(card);
 
     }catch(e){
-      list.innerHTML = \`<div class="tis-sub">Erreur: \${e.message}</div>\`;
+      list.innerHTML = `<div class="tis-sub">Erreur: ${e.message}</div>`;
     }
   }
 
-  function wireCards(){
+  // -------- Wiring & réinjection --------
+  function injectAll(){
     ensureStyles();
-    const grid = $('#tables'); if (!grid) return;
-    grid.addEventListener('click', e => {
-      // si clic sur les boutons d'origine, on ne fait rien
-      if (e.target.closest('button')) return;
-      const card = e.target.closest('.table'); if (!card) return;
+    getCards().forEach(card => {
+      if (card.__tisWired) return;
+      card.__tisWired = true;
+      // injecte immédiatement
       refreshPanel(card);
     });
   }
 
-  // init
-  wireCards();
+  // MutationObserver: si l’app reconstruit les cartes (après “Rafraîchir”), on ré-injecte
+  function observeGrid(){
+    const grid = getGrid(); if (!grid) return;
+    const mo = new MutationObserver(() => injectAll());
+    mo.observe(grid, { childList:true, subtree:true });
+  }
+
+  // Bouton "Rafraîchir" (si id inconnu, on tente par texte)
+  function wireRefreshButton(){
+    const btn = $('#btnRefreshTables') || $$('.btn,button').find(b => (b.textContent||'').trim().toLowerCase() === 'rafraîchir');
+    btn && btn.addEventListener('click', () => setTimeout(injectAll, 150));
+  }
+
+  // Init
+  injectAll();
+  observeGrid();
+  wireRefreshButton();
 })();

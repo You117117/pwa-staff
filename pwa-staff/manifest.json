@@ -1,9 +1,0 @@
-{
-  "name": "Resto QR — Staff",
-  "short_name": "Staff",
-  "start_url": ".",
-  "display": "standalone",
-  "theme_color": "#0b1220",
-  "background_color": "#0b1220",
-  "icons": []
-}

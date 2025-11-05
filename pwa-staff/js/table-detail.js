@@ -1,10 +1,12 @@
 // pwa-staff/js/table-detail.js
-// Rend chaque carte de table cliquable et affiche un panneau de détail à droite
+// Rend les tables cliquables et affiche un panneau de détail
 (function () {
+  console.log('[table-detail] ready');
+
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
-  // -------- API helpers ----------
+  // ---------- API ----------
   function getApiBase() {
     const inp = $('#apiUrl');
     const str = (inp?.value || '').trim().replace(/\/+$/, '');
@@ -35,7 +37,7 @@
     return r.json().catch(() => ({ ok: true }));
   }
 
-  // -------- panneau latéral ----------
+  // ---------- UI panneau ----------
   function ensurePanel() {
     let panel = document.getElementById('tableDetailPanel');
     if (!panel) {
@@ -56,43 +58,24 @@
       const st = document.createElement('style');
       st.textContent = `
         #tableDetailPanel{
-          position:fixed;
-          top:0; right:0;
-          width:360px;
-          height:100vh;
-          background:#0f172a;
-          border-left:1px solid #1f2937;
+          position:fixed;top:0;right:0;width:360px;height:100vh;
+          background:#0f172a;border-left:1px solid #1f2937;
           box-shadow:-12px 0 25px rgba(0,0,0,.35);
-          z-index:999;
-          display:none;
-          flex-direction:column;
+          z-index:9999;display:none;flex-direction:column;
         }
         #tableDetailPanel.open{display:flex;}
-        .tdp-head{
-          display:flex;align-items:center;justify-content:space-between;
-          padding:16px;border-bottom:1px solid #1f2937;
-        }
+        .tdp-head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #1f2937;}
         .tdp-head h3{margin:0;font-size:16px;}
-        #tdpClose{
-          background:transparent;border:none;color:#e2e8f0;
-          font-size:20px;cursor:pointer;
-        }
+        #tdpClose{background:transparent;border:none;color:#e2e8f0;font-size:20px;cursor:pointer;}
         .tdp-body{padding:16px;overflow:auto;flex:1;}
-        .tdp-badge{
-          display:inline-block;
-          padding:3px 10px;
-          border-radius:999px;
-          font-size:11px;
-          font-weight:600;
-          margin-bottom:8px;
-        }
+        .tdp-badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;margin-bottom:8px;}
         .tdp-badge.ok{background:#10b9811a;color:#34d399;border:1px solid #34d39933;}
         .tdp-badge.empty{background:#1f2937;color:#e2e8f0;}
         .tdp-order{background:#111827;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;}
         .tdp-order h4{margin:0 0 4px 0;font-size:13px;}
         .tdp-items{margin:0;padding-left:16px;font-size:13px;}
         .tdp-total{margin-top:10px;font-weight:700;}
-        .tdp-actions{display:flex;gap:8px;margin-top:14px;}
+        .tdp-actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
         .tdp-btn{background:#10b981;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;color:#042f2e;font-weight:600;}
         .tdp-btn.secondary{background:#1f2937;color:#e2e8f0;}
       `;
@@ -105,18 +88,19 @@
     return panel;
   }
 
-  function getTableIdFromCard(card) {
-    let id = card?.dataset?.table || '';
-    if (!id) {
-      const chip = card.querySelector('.chip');
-      if (chip) id = (chip.textContent || '').trim();
+  function getTableIdFromElement(el) {
+    // 1) data-table
+    if (el.dataset && el.dataset.table) {
+      return el.dataset.table;
     }
-    return (id || '').replace(/^Table\s*/i, '').trim();
+    // 2) badge .chip "T3"
+    const chip = el.querySelector('.chip');
+    if (chip) return chip.textContent.trim();
+    return '';
   }
 
-  // récup session OU résumé du jour
   async function loadTableData(tableId) {
-    // 1) essaie la session
+    // 1) session
     try {
       const s = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = s?.orders || [];
@@ -127,7 +111,7 @@
           aggregate: s.aggregate || { total: 0, lastTime: '' },
         };
     } catch {}
-    // 2) fallback résumé du jour
+    // 2) résumé du jour
     const sum = await apiGET('/summary');
     const tickets = (sum?.tickets || []).filter(
       (t) => (t.table || '').toUpperCase() === tableId.toUpperCase()
@@ -195,22 +179,23 @@
     }
   }
 
-  // clic sur les cartes
-  function wireCards() {
-    const container = $('#tables') || document;
-    container.addEventListener('click', (e) => {
-      const btn = e.target.closest('button');
-      if (btn) return; // on ne bloque pas les boutons d’origine
+  // ---------- Délégation de clic ----------
+  document.addEventListener('click', (e) => {
+    // si on clique dans le panneau, on laisse faire
+    if (e.target.closest('#tableDetailPanel')) return;
 
-      const card = e.target.closest('[data-table], .table');
-      if (!card) return;
-      const tableId = getTableIdFromCard(card);
-      if (!tableId) return;
-      openTableDetail(tableId);
-    });
-  }
+    // on évite de casser les vrais boutons "imprimer" des cartes
+    if (e.target.closest('button')) return;
 
-  // actions dans le panneau
+    // on cherche une carte table
+    const card = e.target.closest('[data-table], .table');
+    if (!card) return;
+    const tableId = getTableIdFromElement(card);
+    if (!tableId) return;
+    openTableDetail(tableId);
+  });
+
+  // actions du panneau
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('#tableDetailPanel .tdp-btn[data-act]');
     if (!btn) return;
@@ -222,7 +207,7 @@
       try {
         await apiPOST('/print', { table });
         btn.textContent = 'Imprimé ✓';
-      } catch (e) {
+      } catch {
         btn.textContent = 'Erreur';
       }
       setTimeout(() => (btn.textContent = 'Imprimer'), 1000);
@@ -230,7 +215,7 @@
       try {
         await apiPOST('/confirm', { table });
         btn.textContent = 'Clôturé ✓';
-      } catch (e) {
+      } catch {
         btn.textContent = 'Erreur';
       }
       setTimeout(() => (btn.textContent = 'Paiement confirmé'), 1000);
@@ -238,7 +223,4 @@
       openTableDetail(table);
     }
   });
-
-  // init
-  wireCards();
 })();

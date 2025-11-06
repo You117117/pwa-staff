@@ -4,7 +4,10 @@ console.log("[table-detail] initialisé ✅");
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // --- récupérer la bonne base API ---
+  // on garde ici les timers "15 minutes → Doit payer"
+  const paymentTimers = {}; // { T1: timeoutId, ... }
+
+  // --- récupérer la bonne base API (comme le staff) ---
   function getApiBase() {
     const input = $("#apiUrl");
     const val = (input?.value || "").trim();
@@ -26,6 +29,99 @@ console.log("[table-detail] initialisé ✅");
     const res = await fetch(base + path, { cache: "no-store" });
     if (!res.ok) throw new Error(res.status + " " + res.statusText);
     return res.json();
+  }
+
+  // --- styles pour le badge sur la carte ---
+  function ensureStatusStyles() {
+    if (document.getElementById("td-card-status-style")) return;
+    const st = document.createElement("style");
+    st.id = "td-card-status-style";
+    st.textContent = `
+      .table .td-card-status {
+        display:inline-block;
+        border-radius:999px;
+        padding:2px 10px;
+        font-size:11px;
+        margin-bottom:6px;
+        font-weight:600;
+      }
+      .table .td-card-status.status-vide{
+        background:rgba(148,163,184,.12);
+        color:#e2e8f0;
+        border:1px solid rgba(148,163,184,.35);
+      }
+      .table .td-card-status.status-commande{
+        background:rgba(254,240,138,.12);
+        color:#fef3c7;
+        border:1px solid rgba(250,204,21,.35);
+      }
+      .table .td-card-status.status-prepa{
+        background:rgba(59,130,246,.12);
+        color:#dbeafe;
+        border:1px solid rgba(59,130,246,.35);
+      }
+      .table .td-card-status.status-doitpayer{
+        background:rgba(249,115,22,.12);
+        color:#ffedd5;
+        border:1px solid rgba(249,115,22,.35);
+      }
+      .table .td-card-status.status-payee{
+        background:rgba(16,185,129,.12);
+        color:#ecfdf5;
+        border:1px solid rgba(16,185,129,.35);
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  // --- trouver une carte dans la grille ---
+  function findTableCard(tableId) {
+    // d'abord data-table
+    let card = document.querySelector(`[data-table="${tableId}"]`);
+    if (card) return card;
+    // sinon .table + .chip
+    const all = document.querySelectorAll(".table");
+    for (const c of all) {
+      const chip = c.querySelector(".chip");
+      if (chip && chip.textContent.trim() === tableId) return c;
+    }
+    return null;
+  }
+
+  // --- appliquer un statut sur une carte ---
+  // statusKey ∈ ["vide","commande","prepa","doitpayer","payee"]
+  function setTableStatus(tableId, statusKey, label) {
+    ensureStatusStyles();
+    const card = findTableCard(tableId);
+    if (!card) return;
+
+    let badge = card.querySelector(".td-card-status");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "td-card-status";
+      card.insertBefore(badge, card.firstElementChild || null);
+    }
+    badge.textContent = label;
+    badge.className = "td-card-status status-" + statusKey;
+  }
+
+  // --- démarrer le timer "15 min → doit payer" ---
+  function startDoitPayerTimer(tableId) {
+    // on nettoie l'ancien
+    if (paymentTimers[tableId]) {
+      clearTimeout(paymentTimers[tableId]);
+    }
+    paymentTimers[tableId] = setTimeout(() => {
+      setTableStatus(tableId, "doitpayer", "Doit payer");
+    }, 15 * 60 * 1000); // 15 minutes
+  }
+
+  // --- annuler le timer si payé ---
+  function clearDoitPayerTimer(tableId) {
+    if (paymentTimers[tableId]) {
+      clearTimeout(paymentTimers[tableId]);
+      delete paymentTimers[tableId];
+    }
   }
 
   // --- panneau latéral ---
@@ -57,7 +153,7 @@ console.log("[table-detail] initialisé ✅");
     panel.style.right = "-420px";
   };
 
-  // on garde en mémoire le dernier affichage pour pouvoir "annuler"
+  // on garde le dernier affichage pour "annuler"
   let lastRendered = {
     tableId: null,
     html: "",
@@ -122,60 +218,61 @@ console.log("[table-detail] initialisé ✅");
       const data = await loadTableData(tableId);
       const orders = data.orders || [];
 
-      status.textContent =
-        orders.length > 0
-          ? data.mode === "session"
-            ? "En cours"
-            : "Commandes du jour"
-          : "Vide";
-
       if (!orders.length) {
+        status.textContent = "Vide";
         content.innerHTML = `<p>Aucune commande pour cette table.</p>`;
-      } else {
-        let html = "";
-        orders.forEach((o) => {
-          const items = (o.items || [])
-            .map((it) => `<li>${it.qty || 1}× ${it.name || ""}</li>`)
-            .join("");
-          html += `
-            <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
-              <h4 style="margin:0 0 4px 0;font-size:13px;">#${o.id || ""} ${
-            o.time ? "• " + o.time : ""
-          }</h4>
-              <ul style="margin:0;padding-left:16px;">${items}</ul>
-              ${
-                o.total
-                  ? `<div style="margin-top:4px;">Sous-total : ${o.total} €</div>`
-                  : ""
-              }
-            </div>
-          `;
-        });
-        html += `<p style="margin-top:8px;font-weight:700;">Total cumulé : ${Number(
-          data.total || 0
-        ).toFixed(2)} €</p>`;
+        setTableStatus(tableId, "vide", "Vide");
+        lastRendered = { tableId, html: content.innerHTML, status: status.textContent };
+        return;
+      }
+
+      // s'il y a des commandes on met "Commandée"
+      status.textContent =
+        data.mode === "session" ? "Commandée" : "Commandée";
+      setTableStatus(tableId, "commande", "Commandée");
+
+      let html = "";
+      orders.forEach((o) => {
+        const items = (o.items || [])
+          .map((it) => `<li>${it.qty || 1}× ${it.name || ""}</li>`)
+          .join("");
         html += `
-          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-            <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
-            <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
+          <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
+            <h4 style="margin:0 0 4px 0;font-size:13px;">#${o.id || ""} ${
+          o.time ? "• " + o.time : ""
+        }</h4>
+            <ul style="margin:0;padding-left:16px;">${items}</ul>
+            ${
+              o.total
+                ? `<div style="margin-top:4px;">Sous-total : ${o.total} €</div>`
+                : ""
+            }
           </div>
         `;
-        content.innerHTML = html;
+      });
+      html += `<p style="margin-top:8px;font-weight:700;">Total cumulé : ${Number(
+        data.total || 0
+      ).toFixed(2)} €</p>`;
+      html += `
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
+          <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
+        </div>
+      `;
+      content.innerHTML = html;
 
-        // on sauvegarde cet état pour un éventuel "annuler"
-        lastRendered = {
-          tableId,
-          html: content.innerHTML,
-          status: status.textContent,
-        };
-      }
+      lastRendered = {
+        tableId,
+        html: content.innerHTML,
+        status: status.textContent,
+      };
     } catch (err) {
       status.textContent = "Erreur de chargement";
       content.innerHTML = `<p style="color:#ef4444;">${err.message}</p>`;
     }
   }
 
-  // --- clic sur les tables ---
+  // --- clic sur les tables (ouvrir panneau) ---
   document.addEventListener("click", (e) => {
     // ne pas intercepter les vrais boutons verts
     if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
@@ -191,7 +288,7 @@ console.log("[table-detail] initialisé ✅");
 
   // --- actions dans le panneau ---
   document.addEventListener("click", async (e) => {
-    // imprimer (illimité)
+    // imprimer (illimité) depuis le panneau
     const printBtn = e.target.closest("#btnPrint");
     if (printBtn) {
       const tableId = printBtn.dataset.table;
@@ -201,14 +298,17 @@ console.log("[table-detail] initialisé ✅");
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ table: tableId }),
         });
-        // on ne change PAS le texte → cliquable à l'infini
+        // passage en "En préparation"
+        setTableStatus(tableId, "prepa", "En préparation");
+        // lancer le compte à rebours de 15 minutes
+        startDoitPayerTimer(tableId);
       } catch (err) {
         console.error(err);
       }
       return;
     }
 
-    // paiement confirmé (avec possibilité d'annuler affichage)
+    // paiement confirmé depuis le panneau
     const paidBtn = e.target.closest("#btnPaid");
     if (paidBtn) {
       const tableId = paidBtn.dataset.table;
@@ -225,28 +325,64 @@ console.log("[table-detail] initialisé ✅");
       const content = $("#panelContent");
       const status = $("#panelStatus");
 
-      const prev = { ...lastRendered }; // on garde ce qu'il y avait
+      const prev = { ...lastRendered };
 
-      // on affiche l'état "payé" + bouton annuler
       content.innerHTML = `
         <p>La table ${tableId} a été marquée comme <strong>payée</strong>.</p>
         <button id="btnUndoPaid" style="background:#FBBF24;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;">Annuler</button>
       `;
-      status.textContent = "Clôturée";
+      status.textContent = "Payée";
+      setTableStatus(tableId, "payee", "Payée");
+      clearDoitPayerTimer(tableId);
 
-      // bouton annuler → on remet l'affichage précédent
       const undo = $("#btnUndoPaid");
       if (undo) {
         undo.onclick = () => {
           if (prev.tableId === tableId) {
             $("#panelContent").innerHTML = prev.html;
             $("#panelStatus").textContent = prev.status;
+            // remettre le badge précédent
+            if (prev.status === "Vide") {
+              setTableStatus(tableId, "vide", "Vide");
+            } else {
+              setTableStatus(tableId, "commande", "Commandée");
+            }
           } else {
-            // cas où on n'a pas de précédent pour cette table
             openTablePanel(tableId);
           }
         };
       }
+    }
+  });
+
+  // --- capter aussi les boutons verts de la grille ---
+  // "Imprimer maintenant" et "Paiement confirmé" déjà présents
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+
+    const txt = btn.textContent.trim().toLowerCase();
+    // on remonte à la carte pour savoir quelle table
+    const card = btn.closest("[data-table], .table");
+    if (!card) return;
+    const tableId =
+      card.dataset.table ||
+      (card.querySelector(".chip")?.textContent || "").trim();
+    if (!tableId) return;
+
+    // bouton vert "Imprimer maintenant"
+    if (txt.includes("imprimer maintenant")) {
+      // on met direct le statut
+      setTableStatus(tableId, "prepa", "En préparation");
+      startDoitPayerTimer(tableId);
+      return;
+    }
+
+    // bouton vert "Paiement confirmé"
+    if (txt.includes("paiement confirmé")) {
+      setTableStatus(tableId, "payee", "Payée");
+      clearDoitPayerTimer(tableId);
+      return;
     }
   });
 })();

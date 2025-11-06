@@ -4,10 +4,10 @@ console.log("[table-detail] initialisé ✅");
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // on garde ici les timers "15 minutes → Doit payer"
-  const paymentTimers = {}; // { T1: timeoutId, ... }
+  // timers pour "15 min → doit payer"
+  const paymentTimers = {};
 
-  // --- récupérer la bonne base API (comme le staff) ---
+  // --- récupérer la bonne base API ---
   function getApiBase() {
     const input = $("#apiUrl");
     const val = (input?.value || "").trim();
@@ -31,7 +31,7 @@ console.log("[table-detail] initialisé ✅");
     return res.json();
   }
 
-  // --- styles pour le badge sur la carte ---
+  // --- styles pour le badge (on garde) ---
   function ensureStatusStyles() {
     if (document.getElementById("td-card-status-style")) return;
     const st = document.createElement("style");
@@ -74,12 +74,10 @@ console.log("[table-detail] initialisé ✅");
     document.head.appendChild(st);
   }
 
-  // --- trouver une carte dans la grille ---
+  // --- trouver la carte de la table ---
   function findTableCard(tableId) {
-    // d'abord data-table
     let card = document.querySelector(`[data-table="${tableId}"]`);
     if (card) return card;
-    // sinon .table + .chip
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
@@ -88,13 +86,28 @@ console.log("[table-detail] initialisé ✅");
     return null;
   }
 
-  // --- appliquer un statut sur une carte ---
-  // statusKey ∈ ["vide","commande","prepa","doitpayer","payee"]
+  // --- NOUVEAU : remplacer "En attente : 0" par le statut ---
+  function replaceInlineStatus(card, label) {
+    if (!card) return;
+    // on cherche un petit élément qui contient "En attente"
+    const candidates = card.querySelectorAll("span, div, p, small");
+    for (const el of candidates) {
+      const txt = (el.textContent || "").trim();
+      if (/^en attente/i.test(txt)) {
+        el.textContent = label;
+        return;
+      }
+    }
+    // si on ne l'a pas trouvé, on ne fait rien (layout différent)
+  }
+
+  // --- appliquer un statut sur la carte + ligne "en attente" ---
   function setTableStatus(tableId, statusKey, label) {
     ensureStatusStyles();
     const card = findTableCard(tableId);
     if (!card) return;
 
+    // 1. badge (qu’on avait déjà)
     let badge = card.querySelector(".td-card-status");
     if (!badge) {
       badge = document.createElement("span");
@@ -103,20 +116,18 @@ console.log("[table-detail] initialisé ✅");
     }
     badge.textContent = label;
     badge.className = "td-card-status status-" + statusKey;
+
+    // 2. on remplace la ligne "En attente : 0" par le statut
+    replaceInlineStatus(card, label);
   }
 
-  // --- démarrer le timer "15 min → doit payer" ---
+  // --- timer 15 min ---
   function startDoitPayerTimer(tableId) {
-    // on nettoie l'ancien
-    if (paymentTimers[tableId]) {
-      clearTimeout(paymentTimers[tableId]);
-    }
+    if (paymentTimers[tableId]) clearTimeout(paymentTimers[tableId]);
     paymentTimers[tableId] = setTimeout(() => {
       setTableStatus(tableId, "doitpayer", "Doit payer");
-    }, 15 * 60 * 1000); // 15 minutes
+    }, 15 * 60 * 1000);
   }
-
-  // --- annuler le timer si payé ---
   function clearDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) {
       clearTimeout(paymentTimers[tableId]);
@@ -153,16 +164,15 @@ console.log("[table-detail] initialisé ✅");
     panel.style.right = "-420px";
   };
 
-  // on garde le dernier affichage pour "annuler"
+  // pour "Annuler"
   let lastRendered = {
     tableId: null,
     html: "",
     status: "",
   };
 
-  // --- charger les données d'une table ---
+  // --- charger la table ---
   async function loadTableData(tableId) {
-    // 1) essayer la session
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
@@ -184,10 +194,9 @@ console.log("[table-detail] initialisé ✅");
         };
       }
     } catch (e) {
-      // on tentera summary
+      // on tombera sur summary
     }
 
-    // 2) fallback résumé du jour
     const summary = await apiGET(`/summary`);
     const tickets = (summary.tickets || []).filter(
       (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
@@ -203,7 +212,7 @@ console.log("[table-detail] initialisé ✅");
     };
   }
 
-  // --- afficher dans le panneau ---
+  // --- ouvrir panneau ---
   async function openTablePanel(tableId) {
     const title = $("#panelTitle");
     const status = $("#panelStatus");
@@ -226,9 +235,7 @@ console.log("[table-detail] initialisé ✅");
         return;
       }
 
-      // s'il y a des commandes on met "Commandée"
-      status.textContent =
-        data.mode === "session" ? "Commandée" : "Commandée";
+      status.textContent = "Commandée";
       setTableStatus(tableId, "commande", "Commandée");
 
       let html = "";
@@ -272,11 +279,9 @@ console.log("[table-detail] initialisé ✅");
     }
   }
 
-  // --- clic sur les tables (ouvrir panneau) ---
+  // --- clic sur les tables ---
   document.addEventListener("click", (e) => {
-    // ne pas intercepter les vrais boutons verts
     if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
-
     const card = e.target.closest("[data-table], .table");
     if (!card) return;
     const id =
@@ -288,7 +293,6 @@ console.log("[table-detail] initialisé ✅");
 
   // --- actions dans le panneau ---
   document.addEventListener("click", async (e) => {
-    // imprimer (illimité) depuis le panneau
     const printBtn = e.target.closest("#btnPrint");
     if (printBtn) {
       const tableId = printBtn.dataset.table;
@@ -298,9 +302,7 @@ console.log("[table-detail] initialisé ✅");
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ table: tableId }),
         });
-        // passage en "En préparation"
         setTableStatus(tableId, "prepa", "En préparation");
-        // lancer le compte à rebours de 15 minutes
         startDoitPayerTimer(tableId);
       } catch (err) {
         console.error(err);
@@ -308,7 +310,6 @@ console.log("[table-detail] initialisé ✅");
       return;
     }
 
-    // paiement confirmé depuis le panneau
     const paidBtn = e.target.closest("#btnPaid");
     if (paidBtn) {
       const tableId = paidBtn.dataset.table;
@@ -324,7 +325,6 @@ console.log("[table-detail] initialisé ✅");
 
       const content = $("#panelContent");
       const status = $("#panelStatus");
-
       const prev = { ...lastRendered };
 
       content.innerHTML = `
@@ -341,7 +341,7 @@ console.log("[table-detail] initialisé ✅");
           if (prev.tableId === tableId) {
             $("#panelContent").innerHTML = prev.html;
             $("#panelStatus").textContent = prev.status;
-            // remettre le badge précédent
+            // remettre le statut précédent dans la carte
             if (prev.status === "Vide") {
               setTableStatus(tableId, "vide", "Vide");
             } else {
@@ -356,13 +356,11 @@ console.log("[table-detail] initialisé ✅");
   });
 
   // --- capter aussi les boutons verts de la grille ---
-  // "Imprimer maintenant" et "Paiement confirmé" déjà présents
-  document.addEventListener("click", async (e) => {
+  document.addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
 
     const txt = btn.textContent.trim().toLowerCase();
-    // on remonte à la carte pour savoir quelle table
     const card = btn.closest("[data-table], .table");
     if (!card) return;
     const tableId =
@@ -370,15 +368,12 @@ console.log("[table-detail] initialisé ✅");
       (card.querySelector(".chip")?.textContent || "").trim();
     if (!tableId) return;
 
-    // bouton vert "Imprimer maintenant"
     if (txt.includes("imprimer maintenant")) {
-      // on met direct le statut
       setTableStatus(tableId, "prepa", "En préparation");
       startDoitPayerTimer(tableId);
       return;
     }
 
-    // bouton vert "Paiement confirmé"
     if (txt.includes("paiement confirmé")) {
       setTableStatus(tableId, "payee", "Payée");
       clearDoitPayerTimer(tableId);

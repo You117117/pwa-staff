@@ -1,40 +1,65 @@
 // pwa-staff/js/table-detail.js
-console.log("[table-detail] initialisé ✅ (version complète + suppression 'En attente')");
+console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En attente')");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
   const paymentTimers = {};
 
   // --------------------------------------------------
-  // 0. SUPPRIMER tous les "En attente : ..." dès qu'on les voit
+  // 0. Nettoyage + badge par défaut
   // --------------------------------------------------
   function removeWaitingLabels() {
     const els = document.querySelectorAll(".table span, .table small, .table div");
-    let removed = 0;
     els.forEach((el) => {
       const txt = (el.textContent || "").trim().toLowerCase();
-      // on ne touche pas "Dernier :"
       if (txt.startsWith("dernier")) return;
       if (txt.startsWith("en attente")) {
         el.remove();
-        removed++;
       }
     });
-    if (removed) {
-      console.log("🧹 [table-detail] supprimé", removed, "label(s) 'En attente'");
-    }
   }
 
-  // lancer au chargement
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", removeWaitingLabels);
-  } else {
+  // crée un petit badge "Vide" à côté de T1/T2...
+  function ensureDefaultStatusOnAllTables() {
+    const cards = document.querySelectorAll(".table");
+    cards.forEach((card) => {
+      let span = card.querySelector(".table-status-inline");
+      if (!span) {
+        const chip = card.querySelector(".chip");
+        span = document.createElement("span");
+        span.className = "table-status-inline";
+        span.style.display = "inline-block";
+        span.style.marginLeft = "6px";
+        span.style.fontSize = "12px";
+        span.style.padding = "2px 8px";
+        span.style.borderRadius = "999px";
+        span.style.background = "#1f2937";
+        span.style.color = "#fff";
+        span.textContent = "Vide";               // <-- état initial
+        if (chip && chip.parentNode) {
+          chip.parentNode.insertBefore(span, chip.nextSibling);
+        } else {
+          card.prepend(span);
+        }
+      }
+    });
+  }
+
+  function initialPass() {
     removeWaitingLabels();
+    ensureDefaultStatusOnAllTables();
   }
 
-  // surveiller les changements (quand ton app recharge les tables)
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initialPass);
+  } else {
+    initialPass();
+  }
+
+  // observer pour que ça marche même après "Rafraîchir"
   const observer = new MutationObserver(() => {
     removeWaitingLabels();
+    ensureDefaultStatusOnAllTables();
   });
   observer.observe(document.body, { childList: true, subtree: true });
 
@@ -65,7 +90,7 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   }
 
   // --------------------------------------------------
-  // 2. Retrouver une carte de table
+  // 2. Retrouver une carte
   // --------------------------------------------------
   function findTableCard(tableId) {
     let card = document.querySelector(`[data-table="${tableId}"]`);
@@ -79,17 +104,15 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   }
 
   // --------------------------------------------------
-  // 3. Afficher un statut dans la carte (sans remettre "En attente")
+  // 3. Appliquer un statut (liste complète)
   // --------------------------------------------------
-  // on ne réinsère pas l'ancien chip; si tu veux le mettre à côté du titre plus tard, on pourra
+  // statusKey ∈ ["vide", "commande", "prepa", "doitpayer", "payee"]
   function setTableStatus(tableId, statusKey, label) {
     const card = findTableCard(tableId);
     if (!card) return;
 
-    // on essaie de trouver un span qu'on a déjà créé
     let span = card.querySelector(".table-status-inline");
     if (!span) {
-      // on le crée juste après la puce "T1"
       const chip = card.querySelector(".chip");
       span = document.createElement("span");
       span.className = "table-status-inline";
@@ -109,21 +132,30 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
 
     span.textContent = label;
 
-    // couleurs simples par statut
-    span.style.background =
-      statusKey === "payee"
-        ? "#15803d"
-        : statusKey === "doitpayer"
-        ? "#b45309"
-        : statusKey === "prepa"
-        ? "#1d4ed8"
-        : statusKey === "commande"
-        ? "#334155"
-        : "#1f2937";
+    // couleur selon le statut
+    switch (statusKey) {
+      case "vide":
+        span.style.background = "#1f2937";
+        break;
+      case "commande": // "Commandée"
+        span.style.background = "#334155";
+        break;
+      case "prepa": // "En préparation"
+        span.style.background = "#1d4ed8";
+        break;
+      case "doitpayer": // "Doit payer"
+        span.style.background = "#b45309";
+        break;
+      case "payee": // "Payée"
+        span.style.background = "#15803d";
+        break;
+      default:
+        span.style.background = "#1f2937";
+    }
   }
 
   // --------------------------------------------------
-  // 4. timers 15 minutes → "Doit payer"
+  // 4. timers 15 min → "Doit payer"
   // --------------------------------------------------
   function startDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) clearTimeout(paymentTimers[tableId]);
@@ -139,7 +171,7 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   }
 
   // --------------------------------------------------
-  // 5. Panneau latéral (comme avant)
+  // 5. panneau latéral
   // --------------------------------------------------
   const panel = document.createElement("div");
   panel.id = "tablePanel";
@@ -168,10 +200,10 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
   // --------------------------------------------------
-  // 6. Charger les données d'une table
+  // 6. charger les données d'une table
   // --------------------------------------------------
   async function loadTableData(tableId) {
-    // essayer la session
+    // 1) essai /session/:id
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
@@ -193,10 +225,10 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
         };
       }
     } catch (_) {
-      // on passera sur summary
+      // on passe au résumé
     }
 
-    // sinon résumé du jour
+  // 2) fallback /summary
     const summary = await apiGET(`/summary`);
     const tickets = (summary.tickets || []).filter(
       (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
@@ -267,7 +299,7 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   }
 
   // --------------------------------------------------
-  // 8. clic sur une carte → ouvrir panneau
+  // 8. clic sur une carte
   // --------------------------------------------------
   document.addEventListener("click", (e) => {
     if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
@@ -281,22 +313,20 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   });
 
   // --------------------------------------------------
-  // 9. actions dans le panneau (imprimer / payé)
+  // 9. actions dans le panneau
   // --------------------------------------------------
   document.addEventListener("click", async (e) => {
     const printBtn = e.target.closest("#btnPrint");
     if (printBtn) {
       const tableId = printBtn.dataset.table;
-      // appel API d'impression si tu l'as, sinon on met juste le statut
+      // appel API impression (mock si absent)
       try {
         await fetch(getApiBase() + "/print", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ table: tableId }),
         });
-      } catch (err) {
-        console.warn("[print] erreur (mock)", err.message);
-      }
+      } catch (_) {}
       setTableStatus(tableId, "prepa", "En préparation");
       startDoitPayerTimer(tableId);
       return;
@@ -311,9 +341,7 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ table: tableId }),
         });
-      } catch (err) {
-        console.warn("[confirm] erreur (mock)", err.message);
-      }
+      } catch (_) {}
       setTableStatus(tableId, "payee", "Payée");
       clearDoitPayerTimer(tableId);
       return;
@@ -321,7 +349,7 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
   });
 
   // --------------------------------------------------
-  // 10. boutons verts dans la grille
+  // 10. boutons de la grille (verts)
   // --------------------------------------------------
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("button");
@@ -336,14 +364,14 @@ console.log("[table-detail] initialisé ✅ (version complète + suppression 'En
       (card.querySelector(".chip")?.textContent || "").trim();
     if (!tableId) return;
 
-    // bouton "Imprimer maintenant"
+    // "Imprimer maintenant" → En préparation
     if (txt.includes("imprimer maintenant")) {
       setTableStatus(tableId, "prepa", "En préparation");
       startDoitPayerTimer(tableId);
       return;
     }
 
-    // bouton "Paiement confirmé"
+    // "Paiement confirmé" → Payée
     if (txt.includes("paiement confirmé")) {
       setTableStatus(tableId, "payee", "Payée");
       clearDoitPayerTimer(tableId);

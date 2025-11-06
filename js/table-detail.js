@@ -3,9 +3,11 @@ console.log("[table-detail] initialisé ✅");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
-  const paymentTimers = {};
 
-  // --- API ---
+  // on garde ici les timers "15 minutes → Doit payer"
+  const paymentTimers = {}; // { T1: timeoutId, ... }
+
+  // --- récupérer la bonne base API (comme le staff) ---
   function getApiBase() {
     const input = $("#apiUrl");
     const val = (input?.value || "").trim();
@@ -29,10 +31,55 @@ console.log("[table-detail] initialisé ✅");
     return res.json();
   }
 
-  // --- Trouver la carte ---
+  // --- styles pour le badge sur la carte ---
+  function ensureStatusStyles() {
+    if (document.getElementById("td-card-status-style")) return;
+    const st = document.createElement("style");
+    st.id = "td-card-status-style";
+    st.textContent = `
+      .table .td-card-status {
+        display:inline-block;
+        border-radius:999px;
+        padding:2px 10px;
+        font-size:11px;
+        margin-bottom:6px;
+        font-weight:600;
+      }
+      .table .td-card-status.status-vide{
+        background:rgba(148,163,184,.12);
+        color:#e2e8f0;
+        border:1px solid rgba(148,163,184,.35);
+      }
+      .table .td-card-status.status-commande{
+        background:rgba(254,240,138,.12);
+        color:#fef3c7;
+        border:1px solid rgba(250,204,21,.35);
+      }
+      .table .td-card-status.status-prepa{
+        background:rgba(59,130,246,.12);
+        color:#dbeafe;
+        border:1px solid rgba(59,130,246,.35);
+      }
+      .table .td-card-status.status-doitpayer{
+        background:rgba(249,115,22,.12);
+        color:#ffedd5;
+        border:1px solid rgba(249,115,22,.35);
+      }
+      .table .td-card-status.status-payee{
+        background:rgba(16,185,129,.12);
+        color:#ecfdf5;
+        border:1px solid rgba(16,185,129,.35);
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  // --- trouver une carte dans la grille ---
   function findTableCard(tableId) {
+    // d'abord data-table
     let card = document.querySelector(`[data-table="${tableId}"]`);
     if (card) return card;
+    // sinon .table + .chip
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
@@ -41,54 +88,35 @@ console.log("[table-detail] initialisé ✅");
     return null;
   }
 
-  // --- Insérer le statut directement à la place de "En attente : 0" ---
-  function insertStatusLabel(card, label) {
-    if (!card) return;
-    // Supprimer toute ligne contenant "En attente"
-    const spans = card.querySelectorAll("span, small, div");
-    for (const el of spans) {
-      const txt = (el.textContent || "").toLowerCase();
-      if (txt.includes("en attente")) {
-        el.remove();
-      }
-    }
-
-    // Vérifier si le statut existe déjà
-    let statusEl = card.querySelector(".table-status");
-    if (!statusEl) {
-      statusEl = document.createElement("span");
-      statusEl.className = "table-status";
-      const chip = card.querySelector(".chip");
-      if (chip && chip.parentNode) {
-        chip.parentNode.insertBefore(statusEl, chip.nextSibling);
-      } else {
-        card.prepend(statusEl);
-      }
-    }
-    statusEl.textContent = label;
-    statusEl.style.display = "inline-block";
-    statusEl.style.fontSize = "12px";
-    statusEl.style.marginLeft = "6px";
-    statusEl.style.color = "#fff";
-    statusEl.style.background = "#1e40af";
-    statusEl.style.borderRadius = "8px";
-    statusEl.style.padding = "1px 6px";
-  }
-
-  // --- Gérer le statut ---
+  // --- appliquer un statut sur une carte ---
+  // statusKey ∈ ["vide","commande","prepa","doitpayer","payee"]
   function setTableStatus(tableId, statusKey, label) {
+    ensureStatusStyles();
     const card = findTableCard(tableId);
     if (!card) return;
-    insertStatusLabel(card, label);
+
+    let badge = card.querySelector(".td-card-status");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "td-card-status";
+      card.insertBefore(badge, card.firstElementChild || null);
+    }
+    badge.textContent = label;
+    badge.className = "td-card-status status-" + statusKey;
   }
 
-  // --- Timer 15 min ---
+  // --- démarrer le timer "15 min → doit payer" ---
   function startDoitPayerTimer(tableId) {
-    if (paymentTimers[tableId]) clearTimeout(paymentTimers[tableId]);
+    // on nettoie l'ancien
+    if (paymentTimers[tableId]) {
+      clearTimeout(paymentTimers[tableId]);
+    }
     paymentTimers[tableId] = setTimeout(() => {
       setTableStatus(tableId, "doitpayer", "Doit payer");
-    }, 15 * 60 * 1000);
+    }, 15 * 60 * 1000); // 15 minutes
   }
+
+  // --- annuler le timer si payé ---
   function clearDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) {
       clearTimeout(paymentTimers[tableId]);
@@ -96,7 +124,7 @@ console.log("[table-detail] initialisé ✅");
     }
   }
 
-  // --- Panneau latéral ---
+  // --- panneau latéral ---
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -121,12 +149,20 @@ console.log("[table-detail] initialisé ✅");
     <div id="panelContent" style="padding:1rem;">Sélectionnez une table…</div>
   `;
   document.body.appendChild(panel);
-  $("#panelClose").onclick = () => (panel.style.right = "-420px");
+  $("#panelClose").onclick = () => {
+    panel.style.right = "-420px";
+  };
 
-  let lastRendered = { tableId: null, html: "", status: "" };
+  // on garde le dernier affichage pour "annuler"
+  let lastRendered = {
+    tableId: null,
+    html: "",
+    status: "",
+  };
 
-  // --- Charger données ---
+  // --- charger les données d'une table ---
   async function loadTableData(tableId) {
+    // 1) essayer la session
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
@@ -147,23 +183,35 @@ console.log("[table-detail] initialisé ✅");
             ),
         };
       }
-    } catch (_) {}
+    } catch (e) {
+      // on tentera summary
+    }
+
+    // 2) fallback résumé du jour
     const summary = await apiGET(`/summary`);
     const tickets = (summary.tickets || []).filter(
       (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
     );
-    const total = tickets.reduce((sum, t) => sum + Number(t.total || 0), 0);
-    return { mode: "summary", orders: tickets, total };
+    const total = tickets.reduce(
+      (sum, t) => sum + Number(t.total || 0),
+      0
+    );
+    return {
+      mode: "summary",
+      orders: tickets,
+      total,
+    };
   }
 
-  // --- Ouvrir panneau ---
+  // --- afficher dans le panneau ---
   async function openTablePanel(tableId) {
     const title = $("#panelTitle");
     const status = $("#panelStatus");
     const content = $("#panelContent");
+
     title.textContent = "Table " + tableId;
     status.textContent = "Chargement…";
-    content.innerHTML = "<p>Chargement…</p>";
+    content.innerHTML = "<p>Chargement en cours…</p>";
     panel.style.right = "0";
 
     try {
@@ -174,10 +222,13 @@ console.log("[table-detail] initialisé ✅");
         status.textContent = "Vide";
         content.innerHTML = `<p>Aucune commande pour cette table.</p>`;
         setTableStatus(tableId, "vide", "Vide");
+        lastRendered = { tableId, html: content.innerHTML, status: status.textContent };
         return;
       }
 
-      status.textContent = "Commandée";
+      // s'il y a des commandes on met "Commandée"
+      status.textContent =
+        data.mode === "session" ? "Commandée" : "Commandée";
       setTableStatus(tableId, "commande", "Commandée");
 
       let html = "";
@@ -206,17 +257,26 @@ console.log("[table-detail] initialisé ✅");
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
           <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
           <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
-        </div>`;
+        </div>
+      `;
       content.innerHTML = html;
+
+      lastRendered = {
+        tableId,
+        html: content.innerHTML,
+        status: status.textContent,
+      };
     } catch (err) {
       status.textContent = "Erreur de chargement";
       content.innerHTML = `<p style="color:#ef4444;">${err.message}</p>`;
     }
   }
 
-  // --- Clic sur carte ---
+  // --- clic sur les tables (ouvrir panneau) ---
   document.addEventListener("click", (e) => {
+    // ne pas intercepter les vrais boutons verts
     if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
+
     const card = e.target.closest("[data-table], .table");
     if (!card) return;
     const id =
@@ -226,44 +286,102 @@ console.log("[table-detail] initialisé ✅");
     openTablePanel(id);
   });
 
-  // --- Actions panneau ---
+  // --- actions dans le panneau ---
   document.addEventListener("click", async (e) => {
+    // imprimer (illimité) depuis le panneau
     const printBtn = e.target.closest("#btnPrint");
     if (printBtn) {
-      const id = printBtn.dataset.table;
-      setTableStatus(id, "prepa", "En préparation");
-      startDoitPayerTimer(id);
+      const tableId = printBtn.dataset.table;
+      try {
+        await fetch(getApiBase() + "/print", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: tableId }),
+        });
+        // passage en "En préparation"
+        setTableStatus(tableId, "prepa", "En préparation");
+        // lancer le compte à rebours de 15 minutes
+        startDoitPayerTimer(tableId);
+      } catch (err) {
+        console.error(err);
+      }
       return;
     }
 
+    // paiement confirmé depuis le panneau
     const paidBtn = e.target.closest("#btnPaid");
     if (paidBtn) {
-      const id = paidBtn.dataset.table;
-      setTableStatus(id, "payee", "Payée");
-      clearDoitPayerTimer(id);
-      return;
+      const tableId = paidBtn.dataset.table;
+      try {
+        await fetch(getApiBase() + "/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: tableId }),
+        });
+      } catch (err) {
+        console.error(err);
+      }
+
+      const content = $("#panelContent");
+      const status = $("#panelStatus");
+
+      const prev = { ...lastRendered };
+
+      content.innerHTML = `
+        <p>La table ${tableId} a été marquée comme <strong>payée</strong>.</p>
+        <button id="btnUndoPaid" style="background:#FBBF24;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;">Annuler</button>
+      `;
+      status.textContent = "Payée";
+      setTableStatus(tableId, "payee", "Payée");
+      clearDoitPayerTimer(tableId);
+
+      const undo = $("#btnUndoPaid");
+      if (undo) {
+        undo.onclick = () => {
+          if (prev.tableId === tableId) {
+            $("#panelContent").innerHTML = prev.html;
+            $("#panelStatus").textContent = prev.status;
+            // remettre le badge précédent
+            if (prev.status === "Vide") {
+              setTableStatus(tableId, "vide", "Vide");
+            } else {
+              setTableStatus(tableId, "commande", "Commandée");
+            }
+          } else {
+            openTablePanel(tableId);
+          }
+        };
+      }
     }
   });
 
-  // --- Boutons grille ---
-  document.addEventListener("click", (e) => {
+  // --- capter aussi les boutons verts de la grille ---
+  // "Imprimer maintenant" et "Paiement confirmé" déjà présents
+  document.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
+
     const txt = btn.textContent.trim().toLowerCase();
+    // on remonte à la carte pour savoir quelle table
     const card = btn.closest("[data-table], .table");
     if (!card) return;
-    const id =
+    const tableId =
       card.dataset.table ||
       (card.querySelector(".chip")?.textContent || "").trim();
+    if (!tableId) return;
 
+    // bouton vert "Imprimer maintenant"
     if (txt.includes("imprimer maintenant")) {
-      setTableStatus(id, "prepa", "En préparation");
-      startDoitPayerTimer(id);
+      // on met direct le statut
+      setTableStatus(tableId, "prepa", "En préparation");
+      startDoitPayerTimer(tableId);
       return;
     }
+
+    // bouton vert "Paiement confirmé"
     if (txt.includes("paiement confirmé")) {
-      setTableStatus(id, "payee", "Payée");
-      clearDoitPayerTimer(id);
+      setTableStatus(tableId, "payee", "Payée");
+      clearDoitPayerTimer(tableId);
       return;
     }
   });

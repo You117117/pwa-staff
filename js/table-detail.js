@@ -1,17 +1,19 @@
 // pwa-staff/js/table-detail.js
-// v7 — utiliser la pastille d’origine ("Vide") et la mettre à jour
-console.log("[table-detail] v7 chargé ✅");
+// v8 — met à jour la pastille .status-chip créée par app.js
+console.log("[table-detail] v8 chargé ✅");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
-  const paymentTimers = {};
+  const paymentTimers = {}; // pour "Doit payer" après 15 min
 
+  // --------------------- helpers API ---------------------
   function getApiBase() {
     const input = $("#apiUrl");
     const val = (input && input.value.trim()) || "";
     if (val) return val.replace(/\/+$/, "");
     try {
       const ls =
+        localStorage.getItem("staff_api_url") ||
         localStorage.getItem("orders_api_url_v11") ||
         localStorage.getItem("api_url") ||
         localStorage.getItem("API_URL") ||
@@ -30,15 +32,14 @@ console.log("[table-detail] v7 chargé ✅");
     return res.json();
   }
 
-  // ------------------- tables -------------------
-
+  // --------------------- trouver les cartes ---------------------
   function findTableCard(tableId) {
     if (!tableId) return null;
     tableId = tableId.toUpperCase();
-
+    // d’abord data-table
     let card = document.querySelector(`[data-table="${tableId}"]`);
     if (card) return card;
-
+    // sinon .table avec chip
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
@@ -57,34 +58,29 @@ console.log("[table-detail] v7 chargé ✅");
     return null;
   }
 
-  /**
-   * Dans ta structure actuelle, c’est:
-   * <div class="head">
-   *   <span class="chip">T8</span>
-   *   <span class="chip">Vide</span>  <-- c’est CELUI-LÀ
-   *   <span class="chip">Dernier : ...</span>
-   * </div>
-   *
-   * Donc on récupère le 2ᵉ .chip et on le modifie.
-   */
+  // --------------------- pastille de statut ---------------------
   function getStatusChip(card) {
     if (!card) return null;
+    // priorité à la classe ajoutée par notre app.js
+    let chip = card.querySelector(".status-chip");
+    if (chip) return chip;
+
+    // fallback : 2e .chip
     const chips = card.querySelectorAll(".chip");
-    // 0 = T1, 1 = statut, 2 = dernier
     if (chips.length >= 2) return chips[1];
     return null;
   }
 
-  function setStatusOnCard(tableId, statusKey) {
+  function setStatus(tableId, state) {
     const card = findTableCard(tableId);
     if (!card) return;
     const chip = getStatusChip(card);
     if (!chip) return;
 
-    switch (statusKey) {
+    switch (state) {
       case "empty":
         chip.textContent = "Vide";
-        chip.style.background = ""; // garder style par défaut
+        chip.style.background = ""; // style par défaut
         break;
       case "ordered":
         chip.textContent = "Commandée";
@@ -108,19 +104,20 @@ console.log("[table-detail] v7 chargé ✅");
     }
   }
 
-  function getStatusFromCard(tableId) {
+  function getStatus(tableId) {
     const card = findTableCard(tableId);
     if (!card) return null;
     const chip = getStatusChip(card);
     if (!chip) return null;
-    return chip.textContent.trim();
+    return (chip.textContent || "").trim();
   }
 
   function startToPayTimer(tableId) {
     clearToPayTimer(tableId);
     paymentTimers[tableId] = setTimeout(() => {
-      if (getStatusFromCard(tableId) !== "Payée") {
-        setStatusOnCard(tableId, "toPay");
+      // ne pas écraser un "Payée"
+      if (getStatus(tableId) !== "Payée") {
+        setStatus(tableId, "toPay");
       }
     }, 15 * 60 * 1000);
   }
@@ -132,8 +129,7 @@ console.log("[table-detail] v7 chargé ✅");
     }
   }
 
-  // ------------------- panneau latéral (identique à avant) -------------------
-
+  // --------------------- panneau latéral (comme avant) ---------------------
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -160,6 +156,15 @@ console.log("[table-detail] v7 chargé ✅");
   document.body.appendChild(panel);
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
+  function buttonsHtml(tableId) {
+    return `
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
+        <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
+      </div>
+    `;
+  }
+
   async function loadTablePanel(tableId) {
     const title = $("#panelTitle");
     const status = $("#panelStatus");
@@ -169,14 +174,13 @@ console.log("[table-detail] v7 chargé ✅");
     content.innerHTML = "<p>Chargement…</p>";
     panel.style.right = "0";
 
-    // 1. essayer /session
+    // 1. essayer /session/<table>
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
       if (orders.length) {
         status.textContent = "Commandée";
-        setStatusOnCard(tableId, "ordered");
-
+        setStatus(tableId, "ordered");
         let html = "";
         orders.forEach((o) => {
           const items = (o.items || [])
@@ -193,11 +197,11 @@ console.log("[table-detail] v7 chargé ✅");
         content.innerHTML = html;
         return;
       }
-    } catch (e) {
-      // on tente summary après
+    } catch {
+      // on tente summary ensuite
     }
 
-    // 2. fallback /summary
+  // 2. fallback /summary
     try {
       const summary = await apiGET("/summary");
       const tickets = (summary.tickets || []).filter(
@@ -205,12 +209,12 @@ console.log("[table-detail] v7 chargé ✅");
       );
       if (!tickets.length) {
         status.textContent = "Vide";
-        setStatusOnCard(tableId, "empty");
+        setStatus(tableId, "empty");
         content.innerHTML = "<p>Aucune commande pour cette table.</p>";
         return;
       }
       status.textContent = "Commandée";
-      setStatusOnCard(tableId, "ordered");
+      setStatus(tableId, "ordered");
 
       let html = "";
       tickets.forEach((t) => {
@@ -233,19 +237,9 @@ console.log("[table-detail] v7 chargé ✅");
     }
   }
 
-  function buttonsHtml(tableId) {
-    return `
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
-        <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
-      </div>
-    `;
-  }
-
-  // ------------------- clics -------------------
-
+  // --------------------- clics ---------------------
   document.addEventListener("click", (e) => {
-    // clic sur carte
+    // clic sur une table
     const card = e.target.closest(".table, [data-table]");
     if (card && !e.target.closest("#tablePanel")) {
       const id = getTableIdFromCard(card);
@@ -253,23 +247,23 @@ console.log("[table-detail] v7 chargé ✅");
       return;
     }
 
-    // boutons du panneau
+    // clic dans le panneau
     const btnPrint = e.target.closest("#btnPrint");
     if (btnPrint) {
       const tableId = btnPrint.dataset.table;
-      setStatusOnCard(tableId, "preparing");
+      setStatus(tableId, "preparing");
       startToPayTimer(tableId);
       return;
     }
     const btnPaid = e.target.closest("#btnPaid");
     if (btnPaid) {
       const tableId = btnPaid.dataset.table;
-      setStatusOnCard(tableId, "paid");
+      setStatus(tableId, "paid");
       clearToPayTimer(tableId);
       return;
     }
 
-    // boutons verts sur la carte
+    // clic sur bouton vert de la carte
     const btn = e.target.closest("button");
     if (btn) {
       const txt = btn.textContent.trim().toLowerCase();
@@ -279,56 +273,55 @@ console.log("[table-detail] v7 chargé ✅");
       if (!tableId) return;
 
       if (txt.includes("imprimer")) {
-        setStatusOnCard(tableId, "preparing");
+        setStatus(tableId, "preparing");
         startToPayTimer(tableId);
       } else if (txt.includes("paiement")) {
-        setStatusOnCard(tableId, "paid");
+        setStatus(tableId, "paid");
         clearToPayTimer(tableId);
       }
     }
   });
 
-  // ------------------- sync /summary régulièrement -------------------
-
+  // --------------------- sync /summary toutes les 8s ---------------------
   async function syncFromSummary() {
     try {
       const data = await apiGET("/summary");
       const tickets = data.tickets || [];
+
       const tablesWithOrders = new Set(
         tickets
           .map((t) => (t.table || "").toUpperCase())
-          .filter((t) => t.length > 0)
+          .filter(Boolean)
       );
 
-      // celles qui ont un ticket
+      // tables qui ont des commandes → "Commandée" si pas déjà plus avancé
       tablesWithOrders.forEach((tid) => {
-        const cur = getStatusFromCard(tid);
+        const cur = getStatus(tid);
         if (!cur || cur === "Vide") {
-          setStatusOnCard(tid, "ordered");
+          setStatus(tid, "ordered");
         }
       });
 
-      // celles qui n’en ont plus → si elles étaient "Commandée" on les remet "Vide"
-      const cards = document.querySelectorAll(".table");
-      cards.forEach((card) => {
+      // tables sans commandes → si elles étaient "Commandée" on remet "Vide"
+      document.querySelectorAll(".table").forEach((card) => {
         const tid = getTableIdFromCard(card);
         if (!tid) return;
         if (!tablesWithOrders.has(tid)) {
-          const cur = getStatusFromCard(tid);
+          const cur = getStatus(tid);
           if (cur === "Commandée") {
-            setStatusOnCard(tid, "empty");
+            setStatus(tid, "empty");
           }
         }
       });
     } catch (err) {
-      // on ignore
+      // on ignore, on réessaiera
     }
   }
 
+  // lancer après que app.js ait affiché les cartes
   window.addEventListener("load", () => {
-    // laisser app.js créer les cartes
     setTimeout(() => {
-      // première passe : s'assurer qu’on pointe bien sur la 2e chip
+      // première passe : s'assurer que chaque table a un statut (si jamais)
       document.querySelectorAll(".table").forEach((card) => {
         const chip = getStatusChip(card);
         if (chip && !chip.textContent.trim()) {

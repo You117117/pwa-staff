@@ -4,10 +4,10 @@ console.log("[table-detail] initialisé ✅");
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // timers pour "15 min → doit payer"
+  // timers "15 min → doit payer"
   const paymentTimers = {};
 
-  // --- récupérer la bonne base API ---
+  // ------------ API helpers ------------
   function getApiBase() {
     const input = $("#apiUrl");
     const val = (input?.value || "").trim();
@@ -31,7 +31,7 @@ console.log("[table-detail] initialisé ✅");
     return res.json();
   }
 
-  // --- styles pour le badge (on garde) ---
+  // ------------ styles pour badge (on garde même si on ne s’en sert plus trop) ------------
   function ensureStatusStyles() {
     if (document.getElementById("td-card-status-style")) return;
     const st = document.createElement("style");
@@ -74,10 +74,11 @@ console.log("[table-detail] initialisé ✅");
     document.head.appendChild(st);
   }
 
-  // --- trouver la carte de la table ---
+  // ------------ trouver la carte d’une table ------------
   function findTableCard(tableId) {
     let card = document.querySelector(`[data-table="${tableId}"]`);
     if (card) return card;
+    // fallback sur .table + .chip
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
@@ -86,28 +87,33 @@ console.log("[table-detail] initialisé ✅");
     return null;
   }
 
-  // --- NOUVEAU : remplacer "En attente : 0" par le statut ---
+  // ------------ NOUVEAU : remplacer le petit texte "En attente : 0" ------------
   function replaceInlineStatus(card, label) {
     if (!card) return;
-    // on cherche un petit élément qui contient "En attente"
-    const candidates = card.querySelectorAll("span, div, p, small");
+    // on cible en priorité les petits badges de ta capture
+    const candidates = card.querySelectorAll("span, small, div");
+    const targetTexts = ["en attente", "en attente :", "en attente:"]; // variantes
     for (const el of candidates) {
-      const txt = (el.textContent || "").trim();
-      if (/^en attente/i.test(txt)) {
+      const txt = (el.textContent || "").trim().toLowerCase();
+      // on ne veut pas toucher "Dernier :"
+      if (txt.startsWith("dernier")) continue;
+
+      // si le texte contient "en attente" (avec ou sans nombre) → on remplace
+      if (targetTexts.some((t) => txt.startsWith(t)) || txt === "vide") {
         el.textContent = label;
         return;
       }
     }
-    // si on ne l'a pas trouvé, on ne fait rien (layout différent)
   }
 
-  // --- appliquer un statut sur la carte + ligne "en attente" ---
+  // ------------ appliquer un statut partout ------------
+  // statusKey ∈ ["vide","commande","prepa","doitpayer","payee"]
   function setTableStatus(tableId, statusKey, label) {
     ensureStatusStyles();
     const card = findTableCard(tableId);
     if (!card) return;
 
-    // 1. badge (qu’on avait déjà)
+    // (1) badge interne (on le laisse, ça peut servir)
     let badge = card.querySelector(".td-card-status");
     if (!badge) {
       badge = document.createElement("span");
@@ -117,11 +123,11 @@ console.log("[table-detail] initialisé ✅");
     badge.textContent = label;
     badge.className = "td-card-status status-" + statusKey;
 
-    // 2. on remplace la ligne "En attente : 0" par le statut
+    // (2) remplacer la ligne "En attente : 0"
     replaceInlineStatus(card, label);
   }
 
-  // --- timer 15 min ---
+  // ------------ timers 15 min ------------
   function startDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) clearTimeout(paymentTimers[tableId]);
     paymentTimers[tableId] = setTimeout(() => {
@@ -135,7 +141,7 @@ console.log("[table-detail] initialisé ✅");
     }
   }
 
-  // --- panneau latéral ---
+  // ------------ panneau latéral ------------
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -164,15 +170,11 @@ console.log("[table-detail] initialisé ✅");
     panel.style.right = "-420px";
   };
 
-  // pour "Annuler"
-  let lastRendered = {
-    tableId: null,
-    html: "",
-    status: "",
-  };
+  let lastRendered = { tableId: null, html: "", status: "" };
 
-  // --- charger la table ---
+  // ------------ charger les données d’une table ------------
   async function loadTableData(tableId) {
+    // essai session
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
@@ -193,10 +195,9 @@ console.log("[table-detail] initialisé ✅");
             ),
         };
       }
-    } catch (e) {
-      // on tombera sur summary
-    }
+    } catch (_) {}
 
+    // fallback summary
     const summary = await apiGET(`/summary`);
     const tickets = (summary.tickets || []).filter(
       (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
@@ -205,14 +206,10 @@ console.log("[table-detail] initialisé ✅");
       (sum, t) => sum + Number(t.total || 0),
       0
     );
-    return {
-      mode: "summary",
-      orders: tickets,
-      total,
-    };
+    return { mode: "summary", orders: tickets, total };
   }
 
-  // --- ouvrir panneau ---
+  // ------------ ouvrir panneau ------------
   async function openTablePanel(tableId) {
     const title = $("#panelTitle");
     const status = $("#panelStatus");
@@ -279,7 +276,7 @@ console.log("[table-detail] initialisé ✅");
     }
   }
 
-  // --- clic sur les tables ---
+  // ------------ clic sur une carte ------------
   document.addEventListener("click", (e) => {
     if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
     const card = e.target.closest("[data-table], .table");
@@ -291,8 +288,9 @@ console.log("[table-detail] initialisé ✅");
     openTablePanel(id);
   });
 
-  // --- actions dans le panneau ---
+  // ------------ actions dans le panneau ------------
   document.addEventListener("click", async (e) => {
+    // imprimer
     const printBtn = e.target.closest("#btnPrint");
     if (printBtn) {
       const tableId = printBtn.dataset.table;
@@ -310,6 +308,7 @@ console.log("[table-detail] initialisé ✅");
       return;
     }
 
+    // payé
     const paidBtn = e.target.closest("#btnPaid");
     if (paidBtn) {
       const tableId = paidBtn.dataset.table;
@@ -341,7 +340,6 @@ console.log("[table-detail] initialisé ✅");
           if (prev.tableId === tableId) {
             $("#panelContent").innerHTML = prev.html;
             $("#panelStatus").textContent = prev.status;
-            // remettre le statut précédent dans la carte
             if (prev.status === "Vide") {
               setTableStatus(tableId, "vide", "Vide");
             } else {
@@ -355,7 +353,7 @@ console.log("[table-detail] initialisé ✅");
     }
   });
 
-  // --- capter aussi les boutons verts de la grille ---
+  // ------------ capter aussi les boutons de la grille ------------
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;

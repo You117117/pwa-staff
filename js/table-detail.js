@@ -1,12 +1,12 @@
 // pwa-staff/js/table-detail.js
-console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En attente')");
+console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En attente' + sync /summary)");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
   const paymentTimers = {};
 
   // --------------------------------------------------
-  // 0. Nettoyage + badge par défaut
+  // 0. nettoyage + badge "Vide"
   // --------------------------------------------------
   function removeWaitingLabels() {
     const els = document.querySelectorAll(".table span, .table small, .table div");
@@ -19,7 +19,6 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
     });
   }
 
-  // crée un petit badge "Vide" à côté de T1/T2...
   function ensureDefaultStatusOnAllTables() {
     const cards = document.querySelectorAll(".table");
     cards.forEach((card) => {
@@ -35,7 +34,7 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
         span.style.borderRadius = "999px";
         span.style.background = "#1f2937";
         span.style.color = "#fff";
-        span.textContent = "Vide";               // <-- état initial
+        span.textContent = "Vide";
         if (chip && chip.parentNode) {
           chip.parentNode.insertBefore(span, chip.nextSibling);
         } else {
@@ -56,7 +55,7 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
     initialPass();
   }
 
-  // observer pour que ça marche même après "Rafraîchir"
+  // observer pour le rafraîchissement de la grille
   const observer = new MutationObserver(() => {
     removeWaitingLabels();
     ensureDefaultStatusOnAllTables();
@@ -64,7 +63,7 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
   observer.observe(document.body, { childList: true, subtree: true });
 
   // --------------------------------------------------
-  // 1. Helpers API
+  // 1. helpers API
   // --------------------------------------------------
   function getApiBase() {
     const input = $("#apiUrl");
@@ -90,7 +89,7 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
   }
 
   // --------------------------------------------------
-  // 2. Retrouver une carte
+  // 2. retrouver une carte
   // --------------------------------------------------
   function findTableCard(tableId) {
     let card = document.querySelector(`[data-table="${tableId}"]`);
@@ -98,15 +97,16 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
-      if (chip && chip.textContent.trim() === tableId) return c;
+      if (chip && chip.textContent.trim().toUpperCase() === tableId.toUpperCase())
+        return c;
     }
     return null;
   }
 
   // --------------------------------------------------
-  // 3. Appliquer un statut (liste complète)
+  // 3. appliquer un statut
   // --------------------------------------------------
-  // statusKey ∈ ["vide", "commande", "prepa", "doitpayer", "payee"]
+  // statusKey ∈ ["vide","commande","prepa","doitpayer","payee"]
   function setTableStatus(tableId, statusKey, label) {
     const card = findTableCard(tableId);
     if (!card) return;
@@ -132,21 +132,20 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
 
     span.textContent = label;
 
-    // couleur selon le statut
     switch (statusKey) {
       case "vide":
         span.style.background = "#1f2937";
         break;
-      case "commande": // "Commandée"
+      case "commande":
         span.style.background = "#334155";
         break;
-      case "prepa": // "En préparation"
+      case "prepa":
         span.style.background = "#1d4ed8";
         break;
-      case "doitpayer": // "Doit payer"
+      case "doitpayer":
         span.style.background = "#b45309";
         break;
-      case "payee": // "Payée"
+      case "payee":
         span.style.background = "#15803d";
         break;
       default:
@@ -154,8 +153,17 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
     }
   }
 
+  // helper pour lire le statut actuel d'une carte
+  function getTableStatus(tableId) {
+    const card = findTableCard(tableId);
+    if (!card) return null;
+    const span = card.querySelector(".table-status-inline");
+    if (!span) return null;
+    return (span.textContent || "").trim();
+  }
+
   // --------------------------------------------------
-  // 4. timers 15 min → "Doit payer"
+  // 4. timers 15 min
   // --------------------------------------------------
   function startDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) clearTimeout(paymentTimers[tableId]);
@@ -163,6 +171,7 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
       setTableStatus(tableId, "doitpayer", "Doit payer");
     }, 15 * 60 * 1000);
   }
+
   function clearDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) {
       clearTimeout(paymentTimers[tableId]);
@@ -200,10 +209,9 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
   // --------------------------------------------------
-  // 6. charger les données d'une table
+  // 6. charger données d'une table
   // --------------------------------------------------
   async function loadTableData(tableId) {
-    // 1) essai /session/:id
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
@@ -224,11 +232,8 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
             ),
         };
       }
-    } catch (_) {
-      // on passe au résumé
-    }
+    } catch (_) {}
 
-  // 2) fallback /summary
     const summary = await apiGET(`/summary`);
     const tickets = (summary.tickets || []).filter(
       (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
@@ -270,15 +275,9 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
           .join("");
         html += `
           <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
-            <h4 style="margin:0 0 4px 0;font-size:13px;">#${o.id || ""} ${
-          o.time ? "• " + o.time : ""
-        }</h4>
+            <h4 style="margin:0 0 4px 0;font-size:13px;">#${o.id || ""} ${o.time ? "• " + o.time : ""}</h4>
             <ul style="margin:0;padding-left:16px;">${items}</ul>
-            ${
-              o.total
-                ? `<div style="margin-top:4px;">Sous-total : ${o.total} €</div>`
-                : ""
-            }
+            ${o.total ? `<div style="margin-top:4px;">Sous-total : ${o.total} €</div>` : ""}
           </div>
         `;
       });
@@ -289,8 +288,7 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
           <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
           <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
-        </div>
-      `;
+        </div>`;
       content.innerHTML = html;
     } catch (err) {
       status.textContent = "Erreur de chargement";
@@ -313,13 +311,12 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
   });
 
   // --------------------------------------------------
-  // 9. actions dans le panneau
+  // 9. actions panneau
   // --------------------------------------------------
   document.addEventListener("click", async (e) => {
     const printBtn = e.target.closest("#btnPrint");
     if (printBtn) {
       const tableId = printBtn.dataset.table;
-      // appel API impression (mock si absent)
       try {
         await fetch(getApiBase() + "/print", {
           method: "POST",
@@ -349,33 +346,84 @@ console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En 
   });
 
   // --------------------------------------------------
-  // 10. boutons de la grille (verts)
+  // 10. boutons verts dans la grille
   // --------------------------------------------------
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-
     const txt = btn.textContent.trim().toLowerCase();
     const card = btn.closest("[data-table], .table");
     if (!card) return;
-
     const tableId =
       card.dataset.table ||
       (card.querySelector(".chip")?.textContent || "").trim();
     if (!tableId) return;
 
-    // "Imprimer maintenant" → En préparation
     if (txt.includes("imprimer maintenant")) {
       setTableStatus(tableId, "prepa", "En préparation");
       startDoitPayerTimer(tableId);
       return;
     }
-
-    // "Paiement confirmé" → Payée
     if (txt.includes("paiement confirmé")) {
       setTableStatus(tableId, "payee", "Payée");
       clearDoitPayerTimer(tableId);
       return;
     }
   });
+
+  // --------------------------------------------------
+  // 11. 🔁 synchronisation automatique depuis /summary
+  //     → pour mettre "Commandée" sans que le serveur clique
+  // --------------------------------------------------
+  async function syncStatusesFromSummary() {
+    try {
+      const data = await apiGET("/summary");
+      const tickets = data.tickets || [];
+
+      // tables qui ont un ticket
+      const tablesWithOrders = new Set(
+        tickets
+          .map((t) => (t.table || "").toUpperCase())
+          .filter((t) => t.length > 0)
+      );
+
+      // 11.a marquer "Commandée" celles qui ont un ticket mais sont encore "Vide"
+      tablesWithOrders.forEach((tableId) => {
+        const current = getTableStatus(tableId);
+        // ne pas écraser les états plus avancés
+        if (
+          !current ||
+          current === "Vide"
+        ) {
+          setTableStatus(tableId, "commande", "Commandée");
+        }
+      });
+
+      // 11.b éventuellement remettre "Vide" les tables sans ticket
+      // mais seulement si elles ne sont pas en prépa/doit payer/payée
+      const allCards = document.querySelectorAll(".table");
+      allCards.forEach((card) => {
+        const chip = card.querySelector(".chip");
+        if (!chip) return;
+        const tableId = chip.textContent.trim().toUpperCase();
+        if (!tableId) return;
+
+        if (!tablesWithOrders.has(tableId)) {
+          const current = getTableStatus(tableId);
+          if (
+            current === "Commandée" // seulement cet état-là
+          ) {
+            setTableStatus(tableId, "vide", "Vide");
+          }
+        }
+      });
+    } catch (err) {
+      // pas grave, on réessaiera
+      console.warn("[table-detail] sync summary échoué:", err.message);
+    }
+  }
+
+  // lancer tout de suite puis toutes les 8s
+  syncStatusesFromSummary();
+  setInterval(syncStatusesFromSummary, 8000);
 })();

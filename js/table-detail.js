@@ -4,7 +4,7 @@ console.log("[table-detail] initialisé ✅");
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // --- 1. récupérer la bonne base API (comme le staff fait déjà) ---
+  // --- récupérer la bonne base API ---
   function getApiBase() {
     const input = $("#apiUrl");
     const val = (input?.value || "").trim();
@@ -21,16 +21,14 @@ console.log("[table-detail] initialisé ✅");
     }
   }
 
-  // --- 2. petit helper fetch ---
   async function apiGET(path) {
     const base = getApiBase();
-    const url = base + path;
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(base + path, { cache: "no-store" });
     if (!res.ok) throw new Error(res.status + " " + res.statusText);
     return res.json();
   }
 
-  // --- 3. construire le panneau ---
+  // --- panneau latéral ---
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -59,9 +57,16 @@ console.log("[table-detail] initialisé ✅");
     panel.style.right = "-420px";
   };
 
-  // --- 4. charger les infos pour une table ---
+  // on garde en mémoire le dernier affichage pour pouvoir "annuler"
+  let lastRendered = {
+    tableId: null,
+    html: "",
+    status: "",
+  };
+
+  // --- charger les données d'une table ---
   async function loadTableData(tableId) {
-    // 4a. on tente d'abord /session/TX
+    // 1) essayer la session
     try {
       const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
       const orders = session?.orders || [];
@@ -83,10 +88,10 @@ console.log("[table-detail] initialisé ✅");
         };
       }
     } catch (e) {
-      // on passe au fallback
+      // on tentera summary
     }
 
-    // 4b. fallback sur /summary
+    // 2) fallback résumé du jour
     const summary = await apiGET(`/summary`);
     const tickets = (summary.tickets || []).filter(
       (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
@@ -102,7 +107,7 @@ console.log("[table-detail] initialisé ✅");
     };
   }
 
-  // --- 5. afficher dans le panneau ---
+  // --- afficher dans le panneau ---
   async function openTablePanel(tableId) {
     const title = $("#panelTitle");
     const status = $("#panelStatus");
@@ -129,7 +134,6 @@ console.log("[table-detail] initialisé ✅");
       } else {
         let html = "";
         orders.forEach((o) => {
-          // format session (app client) -> o.items
           const items = (o.items || [])
             .map((it) => `<li>${it.qty || 1}× ${it.name || ""}</li>`)
             .join("");
@@ -151,12 +155,19 @@ console.log("[table-detail] initialisé ✅");
           data.total || 0
         ).toFixed(2)} €</p>`;
         html += `
-          <div style="display:flex;gap:8px;margin-top:12px;">
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
             <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
             <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
           </div>
         `;
         content.innerHTML = html;
+
+        // on sauvegarde cet état pour un éventuel "annuler"
+        lastRendered = {
+          tableId,
+          html: content.innerHTML,
+          status: status.textContent,
+        };
       }
     } catch (err) {
       status.textContent = "Erreur de chargement";
@@ -164,10 +175,10 @@ console.log("[table-detail] initialisé ✅");
     }
   }
 
-  // --- 6. clic sur les tables ---
+  // --- clic sur les tables ---
   document.addEventListener("click", (e) => {
-    // éviter de capter les vrais boutons "Imprimer maintenant"
-    if (e.target.closest("button")) return;
+    // ne pas intercepter les vrais boutons verts
+    if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
 
     const card = e.target.closest("[data-table], .table");
     if (!card) return;
@@ -178,34 +189,64 @@ console.log("[table-detail] initialisé ✅");
     openTablePanel(id);
   });
 
-  // --- 7. actions dans le panneau (imprimer / payer) ---
+  // --- actions dans le panneau ---
   document.addEventListener("click", async (e) => {
+    // imprimer (illimité)
     const printBtn = e.target.closest("#btnPrint");
-    const paidBtn = e.target.closest("#btnPaid");
-    const tableId =
-      printBtn?.dataset.table || paidBtn?.dataset.table || null;
-    if (!tableId) return;
+    if (printBtn) {
+      const tableId = printBtn.dataset.table;
+      try {
+        await fetch(getApiBase() + "/print", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: tableId }),
+        });
+        // on ne change PAS le texte → cliquable à l'infini
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
 
-    const base = getApiBase();
-    try {
-      if (printBtn) {
-        await fetch(base + "/print", {
+    // paiement confirmé (avec possibilité d'annuler affichage)
+    const paidBtn = e.target.closest("#btnPaid");
+    if (paidBtn) {
+      const tableId = paidBtn.dataset.table;
+      try {
+        await fetch(getApiBase() + "/confirm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ table: tableId }),
         });
-        printBtn.textContent = "Imprimé ✅";
+      } catch (err) {
+        console.error(err);
       }
-      if (paidBtn) {
-        await fetch(base + "/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ table: tableId }),
-        });
-        paidBtn.textContent = "Clôturé ✅";
+
+      const content = $("#panelContent");
+      const status = $("#panelStatus");
+
+      const prev = { ...lastRendered }; // on garde ce qu'il y avait
+
+      // on affiche l'état "payé" + bouton annuler
+      content.innerHTML = `
+        <p>La table ${tableId} a été marquée comme <strong>payée</strong>.</p>
+        <button id="btnUndoPaid" style="background:#FBBF24;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;">Annuler</button>
+      `;
+      status.textContent = "Clôturée";
+
+      // bouton annuler → on remet l'affichage précédent
+      const undo = $("#btnUndoPaid");
+      if (undo) {
+        undo.onclick = () => {
+          if (prev.tableId === tableId) {
+            $("#panelContent").innerHTML = prev.html;
+            $("#panelStatus").textContent = prev.status;
+          } else {
+            // cas où on n'a pas de précédent pour cette table
+            openTablePanel(tableId);
+          }
+        };
       }
-    } catch (err) {
-      console.error(err);
     }
   });
 })();

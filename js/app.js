@@ -1,5 +1,5 @@
 // pwa-staff/js/app.js
-// version avec persistance locale des statuts
+// version stabilisée : 1er rendu complet, ensuite MAJ sans toucher au statut
 
 const API_INPUT = document.querySelector('#apiUrl');
 const btnMemorize = document.querySelector('#btnMemorize');
@@ -13,10 +13,11 @@ const summaryContainer = document.querySelector('#summary');
 const summaryEmpty = document.querySelector('#summaryEmpty');
 const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
-// 🔴 c’est le petit stockage local des statuts de table
-// on ne le vide pas quand on rafraîchit
-// { "T1": "Commandée", "T5": "Doit payer" }
+// stockage local des statuts (ce qu’on affiche dans le badge du milieu)
 window.tableStatus = window.tableStatus || {};
+
+// on se souvient si on a déjà dessiné les cartes une fois
+let tablesAlreadyRendered = false;
 
 // intervalle de refresh (ms)
 const REFRESH_MS = 5000;
@@ -37,7 +38,7 @@ function formatTime(dateString) {
 }
 
 // =========================
-// rendu des tables
+// rendu COMPLET (1ère fois)
 // =========================
 function renderTables(tables) {
   tablesContainer.innerHTML = '';
@@ -48,19 +49,15 @@ function renderTables(tables) {
   }
   tablesEmpty.style.display = 'none';
 
-  const filter = filterSelect.value; // "Toutes" ou "T1", "T2"...
+  const filter = filterSelect.value;
 
   tables.forEach((table) => {
-    const id = table.id; // ex: "T1"
-    if (filter !== 'Toutes' && filter !== id) {
-      return;
-    }
+    const id = table.id;
+    if (filter !== 'Toutes' && filter !== id) return;
 
-    // heure du dernier ticket
     const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-    // ⚠️ récupérer le statut que NOUS avons conservé
-    // sinon on affiche "Vide" par défaut
+    // on prend le statut qu’on a en mémoire, sinon “Vide”
     const statusLabel = window.tableStatus[id] || 'Vide';
 
     const card = document.createElement('div');
@@ -79,9 +76,8 @@ function renderTables(tables) {
       </div>
     `;
 
-    // clic sur la carte → ouvrir le panneau latéral
+    // clic sur la carte = ouvrir le détail
     card.addEventListener('click', (e) => {
-      // éviter que le clic sur le bouton imprime/paid ouvre aussi le panneau
       if (e.target.closest('button')) return;
       openTableDetail(id);
     });
@@ -89,16 +85,13 @@ function renderTables(tables) {
     // bouton imprimer
     card.querySelector('.btn-print').addEventListener('click', (e) => {
       e.stopPropagation();
-      // ici ton code d’impression (mock)
       alert(`Impression pour ${id}`);
     });
 
-    // bouton paiement confirmé
+    // bouton paiement confirmé → on change le statut seulement ici
     card.querySelector('.btn-paid').addEventListener('click', (e) => {
       e.stopPropagation();
-      // quand on confirme le paiement → on peut mettre le statut ici
       window.tableStatus[id] = 'Payé';
-      // on met à jour juste ce chip-là
       const chip = card.querySelector('.chip-status');
       if (chip) chip.textContent = window.tableStatus[id];
     });
@@ -108,7 +101,32 @@ function renderTables(tables) {
 }
 
 // =========================
-// rendu du résumé du jour
+// mise à jour LÉGÈRE (toutes les 5s)
+// =========================
+function updateTables(tables) {
+  const filter = filterSelect.value;
+
+  tables.forEach((table) => {
+    const id = table.id;
+    if (filter !== 'Toutes' && filter !== id) return;
+
+    const card = tablesContainer.querySelector(`[data-table="${id}"]`);
+    if (!card) return; // si nouvelle table on l’ignore pour rester simple
+
+    // mettre à jour seulement l’heure du dernier ticket
+    const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
+    const lastChip = card.querySelector('.chip-last');
+    if (lastChip) {
+      lastChip.textContent = `Dernier : ${last}`;
+    }
+
+    // 🔴 on NE TOUCHE PAS au badge de statut ici
+    // il reste ce qu’il était (“Commandée”, “Doit payer”, “Payé”…)
+  });
+}
+
+// =========================
+// résumé du jour
 // =========================
 function renderSummary(tickets) {
   summaryContainer.innerHTML = '';
@@ -144,10 +162,14 @@ async function refreshTables() {
   try {
     const res = await fetch(`${base}/tables`);
     const data = await res.json();
-    // data.tables = [{id:"T1", lastTicketAt: "..."}]
+    const list = data.tables || [];
 
-    // 👉 on rend en réutilisant les statuts déjà connus
-    renderTables(data.tables || []);
+    if (!tablesAlreadyRendered) {
+      renderTables(list);
+      tablesAlreadyRendered = true;
+    } else {
+      updateTables(list);
+    }
   } catch (err) {
     console.error('[STAFF] erreur tables', err);
   }
@@ -171,9 +193,7 @@ async function refreshSummary() {
 // =========================
 // panneau latéral
 // =========================
-async function openTableDetail(tableId) {
-  // ce fichier est déjà inclus dans ton index.html
-  // et c’est lui qui s’occupe d’aller chercher /table/TX/session
+function openTableDetail(tableId) {
   if (window.showTableDetail) {
     window.showTableDetail(tableId);
   }
@@ -200,16 +220,20 @@ btnHealth.addEventListener('click', async () => {
 });
 
 btnRefreshTables.addEventListener('click', () => {
+  // forcer un vrai refresh visuel si tu appuies
+  tablesAlreadyRendered = false;
   refreshTables();
 });
 btnRefreshSummary.addEventListener('click', () => {
   refreshSummary();
 });
 filterSelect.addEventListener('change', () => {
+  // quand on filtre on veut un rendu complet
+  tablesAlreadyRendered = false;
   refreshTables();
 });
 
-// charger URL mémorisée
+// recharger l’URL mémorisée
 const saved = localStorage.getItem('staff-api');
 if (saved) {
   API_INPUT.value = saved;
@@ -219,7 +243,7 @@ if (saved) {
 refreshTables();
 refreshSummary();
 
-// rafraîchissement périodique
+// rafraîchissement périodique (ne fait que updateTables)
 setInterval(() => {
   refreshTables();
   refreshSummary();

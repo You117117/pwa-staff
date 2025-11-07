@@ -1,6 +1,6 @@
-// pwa-staff/js/app.js
-// version stabilisée : 1er rendu complet, ensuite MAJ sans toucher au statut
+// === PWA STAFF - app.js (version stable avant modification) ===
 
+// Sélecteurs principaux
 const API_INPUT = document.querySelector('#apiUrl');
 const btnMemorize = document.querySelector('#btnMemorize');
 const btnHealth = document.querySelector('#btnHealth');
@@ -8,23 +8,14 @@ const tablesContainer = document.querySelector('#tables');
 const tablesEmpty = document.querySelector('#tablesEmpty');
 const btnRefreshTables = document.querySelector('#btnRefresh');
 const filterSelect = document.querySelector('#filterTables');
-
 const summaryContainer = document.querySelector('#summary');
 const summaryEmpty = document.querySelector('#summaryEmpty');
 const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
-// stockage local des statuts (ce qu’on affiche dans le badge du milieu)
-window.tableStatus = window.tableStatus || {};
-
-// on se souvient si on a déjà dessiné les cartes une fois
-let tablesAlreadyRendered = false;
-
-// intervalle de refresh (ms)
+// Intervalle de rafraîchissement (ms)
 const REFRESH_MS = 5000;
 
-// =========================
-// utilitaires
-// =========================
+// Utilitaires
 function getApiBase() {
   return API_INPUT.value.trim();
 }
@@ -37,9 +28,7 @@ function formatTime(dateString) {
   return `${h}:${m}`;
 }
 
-// =========================
-// rendu COMPLET (1ère fois)
-// =========================
+// === Rendu des tables ===
 function renderTables(tables) {
   tablesContainer.innerHTML = '';
 
@@ -47,8 +36,8 @@ function renderTables(tables) {
     tablesEmpty.style.display = 'block';
     return;
   }
-  tablesEmpty.style.display = 'none';
 
+  tablesEmpty.style.display = 'none';
   const filter = filterSelect.value;
 
   tables.forEach((table) => {
@@ -56,9 +45,7 @@ function renderTables(tables) {
     if (filter !== 'Toutes' && filter !== id) return;
 
     const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
-
-    // on prend le statut qu’on a en mémoire, sinon “Vide”
-    const statusLabel = window.tableStatus[id] || 'Vide';
+    const status = table.status || 'Vide'; // statut de base
 
     const card = document.createElement('div');
     card.className = 'tableCard';
@@ -67,7 +54,7 @@ function renderTables(tables) {
     card.innerHTML = `
       <div class="card-head">
         <span class="chip chip-id">${id}</span>
-        <span class="chip chip-status">${statusLabel}</span>
+        <span class="chip chip-status">${status}</span>
         <span class="chip chip-last">Dernier : ${last}</span>
       </div>
       <div class="card-actions">
@@ -76,58 +63,29 @@ function renderTables(tables) {
       </div>
     `;
 
-    // clic sur la carte = ouvrir le détail
+    // clic sur une table = ouvre le détail
     card.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
       openTableDetail(id);
     });
 
-    // bouton imprimer
+    // bouton "Imprimer maintenant"
     card.querySelector('.btn-print').addEventListener('click', (e) => {
       e.stopPropagation();
       alert(`Impression pour ${id}`);
     });
 
-    // bouton paiement confirmé → on change le statut seulement ici
+    // bouton "Paiement confirmé"
     card.querySelector('.btn-paid').addEventListener('click', (e) => {
       e.stopPropagation();
-      window.tableStatus[id] = 'Payé';
-      const chip = card.querySelector('.chip-status');
-      if (chip) chip.textContent = window.tableStatus[id];
+      alert(`Paiement confirmé pour ${id}`);
     });
 
     tablesContainer.appendChild(card);
   });
 }
 
-// =========================
-// mise à jour LÉGÈRE (toutes les 5s)
-// =========================
-function updateTables(tables) {
-  const filter = filterSelect.value;
-
-  tables.forEach((table) => {
-    const id = table.id;
-    if (filter !== 'Toutes' && filter !== id) return;
-
-    const card = tablesContainer.querySelector(`[data-table="${id}"]`);
-    if (!card) return; // si nouvelle table on l’ignore pour rester simple
-
-    // mettre à jour seulement l’heure du dernier ticket
-    const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
-    const lastChip = card.querySelector('.chip-last');
-    if (lastChip) {
-      lastChip.textContent = `Dernier : ${last}`;
-    }
-
-    // 🔴 on NE TOUCHE PAS au badge de statut ici
-    // il reste ce qu’il était (“Commandée”, “Doit payer”, “Payé”…)
-  });
-}
-
-// =========================
-// résumé du jour
-// =========================
+// === Rendu du résumé ===
 function renderSummary(tickets) {
   summaryContainer.innerHTML = '';
 
@@ -135,6 +93,7 @@ function renderSummary(tickets) {
     summaryEmpty.style.display = 'block';
     return;
   }
+
   summaryEmpty.style.display = 'none';
 
   tickets.forEach((t) => {
@@ -152,9 +111,7 @@ function renderSummary(tickets) {
   });
 }
 
-// =========================
-// fetch tables
-// =========================
+// === Rafraîchissement tables ===
 async function refreshTables() {
   const base = getApiBase();
   if (!base) return;
@@ -162,22 +119,13 @@ async function refreshTables() {
   try {
     const res = await fetch(`${base}/tables`);
     const data = await res.json();
-    const list = data.tables || [];
-
-    if (!tablesAlreadyRendered) {
-      renderTables(list);
-      tablesAlreadyRendered = true;
-    } else {
-      updateTables(list);
-    }
+    renderTables(data.tables || []);
   } catch (err) {
     console.error('[STAFF] erreur tables', err);
   }
 }
 
-// =========================
-// fetch summary
-// =========================
+// === Rafraîchissement résumé ===
 async function refreshSummary() {
   const base = getApiBase();
   if (!base) return;
@@ -190,18 +138,14 @@ async function refreshSummary() {
   }
 }
 
-// =========================
-// panneau latéral
-// =========================
+// === Panneau latéral (détail table) ===
 function openTableDetail(tableId) {
   if (window.showTableDetail) {
     window.showTableDetail(tableId);
   }
 }
 
-// =========================
-// init
-// =========================
+// === Boutons de contrôle ===
 btnMemorize.addEventListener('click', () => {
   const url = getApiBase();
   localStorage.setItem('staff-api', url);
@@ -220,30 +164,27 @@ btnHealth.addEventListener('click', async () => {
 });
 
 btnRefreshTables.addEventListener('click', () => {
-  // forcer un vrai refresh visuel si tu appuies
-  tablesAlreadyRendered = false;
-  refreshTables();
-});
-btnRefreshSummary.addEventListener('click', () => {
-  refreshSummary();
-});
-filterSelect.addEventListener('change', () => {
-  // quand on filtre on veut un rendu complet
-  tablesAlreadyRendered = false;
   refreshTables();
 });
 
-// recharger l’URL mémorisée
+btnRefreshSummary.addEventListener('click', () => {
+  refreshSummary();
+});
+
+filterSelect.addEventListener('change', () => {
+  refreshTables();
+});
+
+// === Initialisation ===
 const saved = localStorage.getItem('staff-api');
 if (saved) {
   API_INPUT.value = saved;
 }
 
-// premier chargement
 refreshTables();
 refreshSummary();
 
-// rafraîchissement périodique (ne fait que updateTables)
+// Rafraîchissement périodique
 setInterval(() => {
   refreshTables();
   refreshSummary();

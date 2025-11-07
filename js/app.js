@@ -1,4 +1,4 @@
-/* Staff app – version sans pastille statut */
+/* Staff app – version stable + ajout du badge de statut */
 (() => {
   const $ = sel => document.querySelector(sel);
 
@@ -113,6 +113,18 @@
     return [];
   }
 
+  // calcule le statut d’une table localement (simplifié)
+  function computeStatus(t) {
+    const pending = Number(t.pending || 0);
+    if (t.closed || t.paid) return 'Payée';
+    if (pending > 0) return 'Commandée';
+    if (t.lastTicket) {
+      const age = Date.now() - new Date(t.lastTicket.at).getTime();
+      if (age > 15 * 60 * 1000) return 'Doit payer';
+    }
+    return 'Vide';
+  }
+
   function renderTables(data){
     const list = normalizeTables(data);
     lastTables = list;
@@ -140,10 +152,13 @@
         ? lt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
         : '--:--';
 
-      // ⬇️ plus de pastille "Vide" ici
+      const status = computeStatus(t);
+
+      // ✅ badge ajouté entre T1 et Dernier
       el.innerHTML = `
         <div class="row">
           <span class="chip"><b>${t.id}</b></span>
+          <span class="chip chip-status">${status}</span>
           <span class="chip">Dernier : ${last}</span>
         </div>
         <div class="row" style="margin-top:8px">

@@ -1,8 +1,8 @@
 // js/table-detail.js
-// Ouvre un panneau à droite et affiche les tickets de la table
-// en lisant ce qu'il y a déjà dans le DOM (colonne "Résumé du jour").
+// Panneau latéral qui affiche le récap d'une table
+// + calcule le total cumulé à partir de la colonne "Résumé du jour"
 
-console.log("[table-detail] panneau latéral (DOM only)");
+console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
@@ -51,16 +51,22 @@ console.log("[table-detail] panneau latéral (DOM only)");
       const chipTable = card.querySelector(".chip");
       const txt = chipTable ? chipTable.textContent.trim() : "";
       if (txt === tableId) {
-        // on prend tout le reste du contenu
-        const content = card.innerHTML;
-        matches.push({
-          raw: content,
-          el: card.cloneNode(true),
-        });
+        matches.push(card);
       }
     });
 
     return matches;
+  }
+
+  // extrait le total "Total : 52.8 €" d'une carte du résumé
+  function extractTotalFromCard(card) {
+    // dans tes captures c'est le 3ème chip
+    const chips = [...card.querySelectorAll(".chip")];
+    const totalChip = chips.find((c) => c.textContent.includes("Total"));
+    if (!totalChip) return 0;
+    const txt = totalChip.textContent; // "Total : 52.8 €"
+    const m = txt.replace(",", ".").match(/([\d.]+)\s*€?/);
+    return m ? parseFloat(m[1]) : 0;
   }
 
   function openPanelForTable(tableId) {
@@ -71,26 +77,37 @@ console.log("[table-detail] panneau latéral (DOM only)");
     title.textContent = "Table " + tableId;
     panel.style.right = "0";
 
-    const tickets = getTicketsForTable(tableId);
+    const cards = getTicketsForTable(tableId);
 
-    if (!tickets.length) {
+    if (!cards.length) {
       sub.textContent = "Aucune commande pour cette table";
       content.innerHTML = `<p style="color:#9CA3AF;">Cette table n'a pas de ticket dans le résumé du jour.</p>`;
       return;
     }
 
-    sub.textContent = tickets.length + " ticket(s)";
-    // on reconstruit un petit affichage propre
-    content.innerHTML = tickets
-      .map((t) => {
-        // on essaie de récupérer la ligne des produits
-        const products = t.el.querySelector(".muted")?.textContent?.trim() || "";
-        const chips = [...t.el.querySelectorAll(".chip")]
+    // calcul du total cumulé
+    let total = 0;
+    cards.forEach((c) => {
+      total += extractTotalFromCard(c);
+    });
+
+    sub.textContent = `${cards.length} ticket(s) • Total cumulé : ${total.toFixed(2)} €`;
+
+    // on reconstruit un affichage propre
+    content.innerHTML = cards
+      .map((card) => {
+        const chips = [...card.querySelectorAll(".chip")]
           .map((c) => c.textContent.trim())
           .join(" • ");
+
+        const products =
+          card.querySelector(".muted")?.textContent?.trim() ||
+          card.querySelector("p")?.textContent?.trim() ||
+          "";
+
         return `
           <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
-            <div style="font-size:.75rem;color:#9CA3AF;margin-bottom:4px;">${chips}</div>
+            <div style="font-size:.7rem;color:#9CA3AF;margin-bottom:4px;">${chips}</div>
             <div>${products || "—"}</div>
           </div>
         `;

@@ -1,33 +1,34 @@
 // pwa-staff/js/table-status.js
-// Gestion simple des statuts de table (Vide → Commandée → En préparation → Doit payer → Payée)
-
-console.log("[table-status] chargé ✅");
+// version corrigée — lit aussi 'staff_api_url' et met bien à jour les badges
+console.log("[table-status] loaded ✅ (sync sur /summary + suppression 'En attente')");
 
 (function () {
-  // états qu'on veut
+  // états possibles
   const STATUS = {
-    empty: { label: "Vide", color: "#1f2937" },
-    ordered: { label: "Commandée", color: "#334155" },
-    preparing: { label: "En préparation", color: "#1d4ed8" },
-    toPay: { label: "Doit payer", color: "#b45309" },
-    paid: { label: "Payée", color: "#15803d" },
+    empty:      { label: "Vide",          color: "#1f2937" },
+    ordered:    { label: "Commandée",     color: "#334155" },
+    preparing:  { label: "En préparation",color: "#1d4ed8" },
+    toPay:      { label: "Doit payer",    color: "#b45309" },
+    paid:       { label: "Payée",         color: "#15803d" },
   };
 
-  // on mémorise le dernier état connu pour chaque table
-  const tableState = {};
-  const toPayTimers = {};
-
-  // -------------------- helpers --------------------
+  // mémoire locale
+  const tableState   = {};
+  const toPayTimers  = {};
 
   const $ = (s, r = document) => r.querySelector(s);
 
+  // -------- 1. récupérer l’URL API --------
   function getApiBase() {
-    // même logique que ton staff : input en haut ou localStorage
-    const input = $("#apiUrl");
-    const v = (input && input.value.trim()) || "";
+    // 1) input de la page
+    const inp = $("#apiUrl");
+    const v = (inp?.value || "").trim();
     if (v) return v.replace(/\/+$/, "");
+
+    // 2) les différentes clés qu’on utilise dans le projet
     try {
       const fromLS =
+        localStorage.getItem("staff_api_url") ||               // 👈 c’est celle-ci qui manquait
         localStorage.getItem("orders_api_url_v11") ||
         localStorage.getItem("api_url") ||
         localStorage.getItem("API_URL") ||
@@ -38,20 +39,21 @@ console.log("[table-status] chargé ✅");
     }
   }
 
+  // -------- 2. helpers DOM --------
   function findTableCard(tableId) {
     if (!tableId) return null;
-    tableId = tableId.toUpperCase();
+    const id = tableId.toUpperCase();
 
     // essayer data-table
-    let card = document.querySelector(`[data-table="${tableId}"]`);
+    let card = document.querySelector(`[data-table="${id}"]`);
     if (card) return card;
 
-    // sinon chercher .table et lire .chip
+    // sinon via la 1re .chip
     const all = document.querySelectorAll(".table");
-    for (const t of all) {
-      const chip = t.querySelector(".chip");
-      if (chip && chip.textContent.trim().toUpperCase() === tableId) {
-        return t;
+    for (const c of all) {
+      const chip = c.querySelector(".chip");
+      if (chip && chip.textContent.trim().toUpperCase() === id) {
+        return c;
       }
     }
     return null;
@@ -65,10 +67,11 @@ console.log("[table-status] chargé ✅");
     return null;
   }
 
-  // crée / récupère la pastille juste après le nom de table
+  // crée/récupère la pastille juste après le n° de table
   function ensureBadge(card) {
     if (!card) return null;
-    // on supprime les anciens "En attente : 0"
+
+    // on enlève les vieux "En attente : 0"
     card.querySelectorAll("span, small").forEach((el) => {
       const txt = (el.textContent || "").trim().toLowerCase();
       if (txt.startsWith("en attente")) el.remove();
@@ -97,151 +100,130 @@ console.log("[table-status] chargé ✅");
     return badge;
   }
 
+  // applique un état visible
   function applyStatus(tableId, statusKey) {
-    const st = STATUS[statusKey] || STATUS.empty;
-    tableState[tableId] = statusKey;
+    const def = STATUS[statusKey] || STATUS.empty;
+    const id = tableId.toUpperCase();
+    tableState[id] = statusKey;
 
-    const card = findTableCard(tableId);
-    if (!card) return;
-
-    const badge = ensureBadge(card);
+    const card  = findTableCard(id);
+    const badge = card ? ensureBadge(card) : null;
     if (!badge) return;
 
-    badge.textContent = st.label;
-    badge.style.background = st.color;
+    badge.textContent = def.label;
+    badge.style.background = def.color;
   }
 
-  // timer 15 minutes après "En préparation"
+  // -------- 3. timer "doit payer" --------
   function startToPayTimer(tableId) {
-    clearToPayTimer(tableId);
-    toPayTimers[tableId] = setTimeout(() => {
-      // si pas déjà payée
-      if (tableState[tableId] !== "paid") {
-        applyStatus(tableId, "toPay");
+    const id = tableId.toUpperCase();
+    clearToPayTimer(id);
+    toPayTimers[id] = setTimeout(() => {
+      if (tableState[id] !== "paid") {
+        applyStatus(id, "toPay");
       }
     }, 15 * 60 * 1000);
   }
-
   function clearToPayTimer(tableId) {
-    if (toPayTimers[tableId]) {
-      clearTimeout(toPayTimers[tableId]);
-      delete toPayTimers[tableId];
+    const id = tableId.toUpperCase();
+    if (toPayTimers[id]) {
+      clearTimeout(toPayTimers[id]);
+      delete toPayTimers[id];
     }
   }
 
-  // -------------------- 1. initialiser les cartes à Vide --------------------
-  function initAllTables() {
+  // -------- 4. init à l’affichage --------
+  function initTablesOnce() {
     const cards = document.querySelectorAll(".table");
+    if (!cards.length) return false;
     cards.forEach((card) => {
       const id = getTableIdFromCard(card);
       const badge = ensureBadge(card);
-      // si on n'a rien en mémoire → Vide
       if (!id) return;
-      const saved = tableState[id];
-      if (!saved) {
+      if (tableState[id]) {
+        applyStatus(id, tableState[id]);
+      } else {
         badge.textContent = STATUS.empty.label;
         badge.style.background = STATUS.empty.color;
         tableState[id] = "empty";
-      } else {
-        // on réapplique le statut connu (utile après rafraîchissement)
-        applyStatus(id, saved);
       }
     });
+    return true;
   }
 
-  // -------------------- 2. sync avec /summary --------------------
+  // -------- 5. synchronisation /summary --------
   async function syncFromSummary() {
+    const base = getApiBase();
+    if (!base) return;
     try {
-      const base = getApiBase();
-      if (!base) return;
       const res = await fetch(base + "/summary", { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       const tickets = data.tickets || [];
 
-      // tables qui ont un ticket
+      // tables qui ont actuellement une commande
       const tablesWithOrders = new Set(
         tickets
           .map((t) => (t.table || "").toUpperCase())
-          .filter((t) => t.length > 0)
+          .filter((x) => x.length > 0)
       );
 
-      // 2a. celles qui ont un ticket → si elles sont "empty" on les passe en "ordered"
-      tablesWithOrders.forEach((tableId) => {
-        const cur = tableState[tableId];
+      // celles qui ont une commande → "Commandée" (si elles étaient vides)
+      tablesWithOrders.forEach((tid) => {
+        const cur = tableState[tid];
         if (!cur || cur === "empty") {
-          applyStatus(tableId, "ordered");
+          applyStatus(tid, "ordered");
         }
       });
 
-      // 2b. celles qu'on avait marquées "ordered" mais qui n'ont plus de ticket
-      Object.keys(tableState).forEach((tableId) => {
-        const cur = tableState[tableId];
-        if (cur === "ordered" && !tablesWithOrders.has(tableId)) {
-          applyStatus(tableId, "empty");
+      // celles qui n'en ont plus → on les remet "Vide" seulement si elles étaient "Commandée"
+      Object.keys(tableState).forEach((tid) => {
+        if (tableState[tid] === "ordered" && !tablesWithOrders.has(tid)) {
+          applyStatus(tid, "empty");
         }
       });
     } catch (err) {
-      console.warn("[table-status] sync error:", err.message);
+      console.warn("[table-status] sync erreur:", err.message);
     }
   }
 
-  // -------------------- 3. écouter les boutons de la grille --------------------
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
+  // -------- 6. clic sur les boutons verts --------
+  function setupButtonListeners() {
+    document.addEventListener("click", (e) => {
+      const btn  = e.target.closest("button");
+      if (!btn) return;
+      const txt  = btn.textContent.trim().toLowerCase();
+      const card = btn.closest(".table, [data-table]");
+      if (!card) return;
+      const tableId = getTableIdFromCard(card);
+      if (!tableId) return;
 
-    const text = btn.textContent.trim().toLowerCase();
-    const card = btn.closest(".table, [data-table]");
-    if (!card) return;
-    const tableId = getTableIdFromCard(card);
-    if (!tableId) return;
-
-    // "Imprimer maintenant" → En préparation + timer 15min
-    if (text.includes("imprimer")) {
-      applyStatus(tableId, "preparing");
-      startToPayTimer(tableId);
-      return;
-    }
-
-    // "Paiement confirmé" → Payée
-    if (text.includes("paiement")) {
-      applyStatus(tableId, "paid");
-      clearToPayTimer(tableId);
-      return;
-    }
-  });
-
-  // -------------------- 4. écouter les boutons du panneau (si tu l'as) --------------------
-  document.addEventListener("click", (e) => {
-    const printBtn = e.target.closest("#btnPrint"); // panneau latéral
-    if (printBtn) {
-      const tableId = printBtn.dataset.table;
-      if (tableId) {
-        applyStatus(tableId.toUpperCase(), "preparing");
-        startToPayTimer(tableId.toUpperCase());
+      if (txt.includes("imprimer")) {
+        applyStatus(tableId, "preparing");
+        startToPayTimer(tableId);
+        return;
       }
-    }
-    const paidBtn = e.target.closest("#btnPaid");
-    if (paidBtn) {
-      const tableId = paidBtn.dataset.table;
-      if (tableId) {
-        applyStatus(tableId.toUpperCase(), "paid");
-        clearToPayTimer(tableId.toUpperCase());
+      if (txt.includes("paiement")) {
+        applyStatus(tableId, "paid");
+        clearToPayTimer(tableId);
+        // on laisse au staff le temps de voir "Payée", puis on repasse à "Vide"
+        setTimeout(() => {
+          applyStatus(tableId, "empty");
+        }, 2000);
+        return;
       }
-    }
-  });
+    });
+  }
 
-  // -------------------- 5. observer le DOM (car ta page rafraîchit les tables) --------------------
-  const obs = new MutationObserver(() => {
-    // à chaque réinjection, on repose la pastille au bon endroit
-    initAllTables();
+  // -------- 7. démarrage --------
+  window.addEventListener("load", () => {
+    // on laisse le temps à app.js de dessiner les cartes
+    setTimeout(() => {
+      initTablesOnce();
+      setupButtonListeners();
+      syncFromSummary();
+      // toutes les 8 secondes → on recalcule
+      setInterval(syncFromSummary, 8000);
+    }, 500);
   });
-  obs.observe(document.body, { childList: true, subtree: true });
-
-  // démarrage
-  initAllTables();
-  syncFromSummary();
-  // toutes les 8 secondes on regarde si de nouvelles commandes arrivent
-  setInterval(syncFromSummary, 8000);
 })();

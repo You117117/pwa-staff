@@ -1,19 +1,76 @@
 // pwa-staff/js/table-detail.js
-// v8 — met à jour la pastille .status-chip créée par app.js
-console.log("[table-detail] v8 chargé ✅");
+console.log("[table-detail] initialisé ✅ (statuts complets + suppression 'En attente' + sync /summary)");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
-  const paymentTimers = {}; // pour "Doit payer" après 15 min
+  const paymentTimers = {};
 
-  // --------------------- helpers API ---------------------
+  // --------------------------------------------------
+  // 0. nettoyage + badge "Vide"
+  // --------------------------------------------------
+  function removeWaitingLabels() {
+    const els = document.querySelectorAll(".table span, .table small, .table div");
+    els.forEach((el) => {
+      const txt = (el.textContent || "").trim().toLowerCase();
+      if (txt.startsWith("dernier")) return;
+      if (txt.startsWith("en attente")) {
+        el.remove();
+      }
+    });
+  }
+
+  function ensureDefaultStatusOnAllTables() {
+    const cards = document.querySelectorAll(".table");
+    cards.forEach((card) => {
+      let span = card.querySelector(".table-status-inline");
+      if (!span) {
+        const chip = card.querySelector(".chip");
+        span = document.createElement("span");
+        span.className = "table-status-inline";
+        span.style.display = "inline-block";
+        span.style.marginLeft = "6px";
+        span.style.fontSize = "12px";
+        span.style.padding = "2px 8px";
+        span.style.borderRadius = "999px";
+        span.style.background = "#1f2937";
+        span.style.color = "#fff";
+        span.textContent = "Vide";
+        if (chip && chip.parentNode) {
+          chip.parentNode.insertBefore(span, chip.nextSibling);
+        } else {
+          card.prepend(span);
+        }
+      }
+    });
+  }
+
+  function initialPass() {
+    removeWaitingLabels();
+    ensureDefaultStatusOnAllTables();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initialPass);
+  } else {
+    initialPass();
+  }
+
+  // observer pour le rafraîchissement de la grille
+  const observer = new MutationObserver(() => {
+    removeWaitingLabels();
+    ensureDefaultStatusOnAllTables();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // --------------------------------------------------
+  // 1. helpers API
+  // --------------------------------------------------
   function getApiBase() {
     const input = $("#apiUrl");
-    const val = (input && input.value.trim()) || "";
+    const val = (input?.value || "").trim();
     if (val) return val.replace(/\/+$/, "");
     try {
       const ls =
-        localStorage.getItem("staff_api_url") ||
         localStorage.getItem("orders_api_url_v11") ||
         localStorage.getItem("api_url") ||
         localStorage.getItem("API_URL") ||
@@ -26,110 +83,105 @@ console.log("[table-detail] v8 chargé ✅");
 
   async function apiGET(path) {
     const base = getApiBase();
-    if (!base) throw new Error("API non définie");
     const res = await fetch(base + path, { cache: "no-store" });
     if (!res.ok) throw new Error(res.status + " " + res.statusText);
     return res.json();
   }
 
-  // --------------------- trouver les cartes ---------------------
+  // --------------------------------------------------
+  // 2. retrouver une carte
+  // --------------------------------------------------
   function findTableCard(tableId) {
-    if (!tableId) return null;
-    tableId = tableId.toUpperCase();
-    // d’abord data-table
     let card = document.querySelector(`[data-table="${tableId}"]`);
     if (card) return card;
-    // sinon .table avec chip
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
-      if (chip && chip.textContent.trim().toUpperCase() === tableId) {
+      if (chip && chip.textContent.trim().toUpperCase() === tableId.toUpperCase())
         return c;
-      }
     }
     return null;
   }
 
-  function getTableIdFromCard(card) {
-    if (!card) return null;
-    if (card.dataset.table) return card.dataset.table.toUpperCase();
-    const chip = card.querySelector(".chip");
-    if (chip) return chip.textContent.trim().toUpperCase();
-    return null;
-  }
-
-  // --------------------- pastille de statut ---------------------
-  function getStatusChip(card) {
-    if (!card) return null;
-    // priorité à la classe ajoutée par notre app.js
-    let chip = card.querySelector(".status-chip");
-    if (chip) return chip;
-
-    // fallback : 2e .chip
-    const chips = card.querySelectorAll(".chip");
-    if (chips.length >= 2) return chips[1];
-    return null;
-  }
-
-  function setStatus(tableId, state) {
+  // --------------------------------------------------
+  // 3. appliquer un statut
+  // --------------------------------------------------
+  // statusKey ∈ ["vide","commande","prepa","doitpayer","payee"]
+  function setTableStatus(tableId, statusKey, label) {
     const card = findTableCard(tableId);
     if (!card) return;
-    const chip = getStatusChip(card);
-    if (!chip) return;
 
-    switch (state) {
-      case "empty":
-        chip.textContent = "Vide";
-        chip.style.background = ""; // style par défaut
+    let span = card.querySelector(".table-status-inline");
+    if (!span) {
+      const chip = card.querySelector(".chip");
+      span = document.createElement("span");
+      span.className = "table-status-inline";
+      span.style.display = "inline-block";
+      span.style.marginLeft = "6px";
+      span.style.fontSize = "12px";
+      span.style.padding = "2px 8px";
+      span.style.borderRadius = "999px";
+      span.style.background = "#1f2937";
+      span.style.color = "#fff";
+      if (chip && chip.parentNode) {
+        chip.parentNode.insertBefore(span, chip.nextSibling);
+      } else {
+        card.prepend(span);
+      }
+    }
+
+    span.textContent = label;
+
+    switch (statusKey) {
+      case "vide":
+        span.style.background = "#1f2937";
         break;
-      case "ordered":
-        chip.textContent = "Commandée";
-        chip.style.background = "#334155";
+      case "commande":
+        span.style.background = "#334155";
         break;
-      case "preparing":
-        chip.textContent = "En préparation";
-        chip.style.background = "#1d4ed8";
+      case "prepa":
+        span.style.background = "#1d4ed8";
         break;
-      case "toPay":
-        chip.textContent = "Doit payer";
-        chip.style.background = "#b45309";
+      case "doitpayer":
+        span.style.background = "#b45309";
         break;
-      case "paid":
-        chip.textContent = "Payée";
-        chip.style.background = "#15803d";
+      case "payee":
+        span.style.background = "#15803d";
         break;
       default:
-        chip.textContent = "Vide";
-        chip.style.background = "";
+        span.style.background = "#1f2937";
     }
   }
 
-  function getStatus(tableId) {
+  // helper pour lire le statut actuel d'une carte
+  function getTableStatus(tableId) {
     const card = findTableCard(tableId);
     if (!card) return null;
-    const chip = getStatusChip(card);
-    if (!chip) return null;
-    return (chip.textContent || "").trim();
+    const span = card.querySelector(".table-status-inline");
+    if (!span) return null;
+    return (span.textContent || "").trim();
   }
 
-  function startToPayTimer(tableId) {
-    clearToPayTimer(tableId);
+  // --------------------------------------------------
+  // 4. timers 15 min
+  // --------------------------------------------------
+  function startDoitPayerTimer(tableId) {
+    if (paymentTimers[tableId]) clearTimeout(paymentTimers[tableId]);
     paymentTimers[tableId] = setTimeout(() => {
-      // ne pas écraser un "Payée"
-      if (getStatus(tableId) !== "Payée") {
-        setStatus(tableId, "toPay");
-      }
+      setTableStatus(tableId, "doitpayer", "Doit payer");
     }, 15 * 60 * 1000);
   }
 
-  function clearToPayTimer(tableId) {
+  function clearDoitPayerTimer(tableId) {
     if (paymentTimers[tableId]) {
       clearTimeout(paymentTimers[tableId]);
       delete paymentTimers[tableId];
     }
   }
 
-  // --------------------- panneau latéral (comme avant) ---------------------
+  // --------------------------------------------------
+  // 5. panneau latéral
+  // --------------------------------------------------
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -147,25 +199,53 @@ console.log("[table-detail] v8 chargé ✅");
   });
   panel.innerHTML = `
     <div style="padding:1rem;border-bottom:1px solid #1f2937;">
-      <h2 id="panelTitle" style="margin:0;font-size:1.3rem;">Table</h2>
-      <p id="panelStatus" style="margin:.25rem 0 0 0;color:#9CA3AF;">Sélectionnez une table…</p>
+      <h2 id="panelTitle" style="margin:0;font-size:1.4rem;">Table</h2>
+      <p id="panelStatus" style="margin:.25rem 0 0 0;color:#9CA3AF;">Chargement...</p>
       <button id="panelClose" style="margin-top:.5rem;background:#374151;border:none;color:white;padding:4px 10px;border-radius:4px;cursor:pointer;">Fermer</button>
     </div>
-    <div id="panelContent" style="padding:1rem;"></div>
+    <div id="panelContent" style="padding:1rem;">Sélectionnez une table…</div>
   `;
   document.body.appendChild(panel);
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
-  function buttonsHtml(tableId) {
-    return `
-      <div style="display:flex;gap:8px;margin-top:12px;">
-        <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
-        <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
-      </div>
-    `;
+  // --------------------------------------------------
+  // 6. charger données d'une table
+  // --------------------------------------------------
+  async function loadTableData(tableId) {
+    try {
+      const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
+      const orders = session?.orders || [];
+      if (orders.length) {
+        return {
+          mode: "session",
+          orders,
+          total:
+            session.aggregate?.total ??
+            orders.reduce(
+              (sum, o) =>
+                sum +
+                (o.items || []).reduce(
+                  (s, it) => s + (it.qty || 1) * (it.price || 0),
+                  0
+                ),
+              0
+            ),
+        };
+      }
+    } catch (_) {}
+
+    const summary = await apiGET(`/summary`);
+    const tickets = (summary.tickets || []).filter(
+      (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
+    );
+    const total = tickets.reduce((sum, t) => sum + Number(t.total || 0), 0);
+    return { mode: "summary", orders: tickets, total };
   }
 
-  async function loadTablePanel(tableId) {
+  // --------------------------------------------------
+  // 7. ouvrir panneau
+  // --------------------------------------------------
+  async function openTablePanel(tableId) {
     const title = $("#panelTitle");
     const status = $("#panelStatus");
     const content = $("#panelContent");
@@ -174,163 +254,176 @@ console.log("[table-detail] v8 chargé ✅");
     content.innerHTML = "<p>Chargement…</p>";
     panel.style.right = "0";
 
-    // 1. essayer /session/<table>
     try {
-      const session = await apiGET(`/session/${encodeURIComponent(tableId)}`);
-      const orders = session?.orders || [];
-      if (orders.length) {
-        status.textContent = "Commandée";
-        setStatus(tableId, "ordered");
-        let html = "";
-        orders.forEach((o) => {
-          const items = (o.items || [])
-            .map((it) => `<li>${it.qty || 1}× ${it.name || ""}</li>`)
-            .join("");
-          html += `
-            <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
-              <h4 style="margin:0 0 4px 0;">Ticket ${o.id || ""}</h4>
-              <ul style="margin:0;padding-left:16px;">${items}</ul>
-            </div>
-          `;
-        });
-        html += buttonsHtml(tableId);
-        content.innerHTML = html;
-        return;
-      }
-    } catch {
-      // on tente summary ensuite
-    }
+      const data = await loadTableData(tableId);
+      const orders = data.orders || [];
 
-  // 2. fallback /summary
-    try {
-      const summary = await apiGET("/summary");
-      const tickets = (summary.tickets || []).filter(
-        (t) => (t.table || "").toUpperCase() === tableId.toUpperCase()
-      );
-      if (!tickets.length) {
+      if (!orders.length) {
         status.textContent = "Vide";
-        setStatus(tableId, "empty");
-        content.innerHTML = "<p>Aucune commande pour cette table.</p>";
+        content.innerHTML = `<p>Aucune commande pour cette table.</p>`;
+        setTableStatus(tableId, "vide", "Vide");
         return;
       }
+
       status.textContent = "Commandée";
-      setStatus(tableId, "ordered");
+      setTableStatus(tableId, "commande", "Commandée");
 
       let html = "";
-      tickets.forEach((t) => {
-        const items = (t.items || [])
+      orders.forEach((o) => {
+        const items = (o.items || [])
           .map((it) => `<li>${it.qty || 1}× ${it.name || ""}</li>`)
           .join("");
         html += `
           <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
-            <h4 style="margin:0 0 4px 0;">Ticket ${t.id || ""} ${t.time ? "• " + t.time : ""}</h4>
+            <h4 style="margin:0 0 4px 0;font-size:13px;">#${o.id || ""} ${o.time ? "• " + o.time : ""}</h4>
             <ul style="margin:0;padding-left:16px;">${items}</ul>
-            ${t.total ? `<p style="margin-top:4px;">Sous-total : ${t.total} €</p>` : ""}
+            ${o.total ? `<div style="margin-top:4px;">Sous-total : ${o.total} €</div>` : ""}
           </div>
         `;
       });
-      html += buttonsHtml(tableId);
+      html += `<p style="margin-top:8px;font-weight:700;">Total cumulé : ${Number(
+        data.total || 0
+      ).toFixed(2)} €</p>`;
+      html += `
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          <button id="btnPrint" data-table="${tableId}" style="flex:1;background:#10B981;border:none;border-radius:6px;padding:8px;cursor:pointer;">Imprimer</button>
+          <button id="btnPaid" data-table="${tableId}" style="flex:1;background:#3B82F6;border:none;border-radius:6px;padding:8px;cursor:pointer;">Paiement confirmé</button>
+        </div>`;
       content.innerHTML = html;
     } catch (err) {
-      status.textContent = "Erreur";
+      status.textContent = "Erreur de chargement";
       content.innerHTML = `<p style="color:#ef4444;">${err.message}</p>`;
     }
   }
 
-  // --------------------- clics ---------------------
+  // --------------------------------------------------
+  // 8. clic sur une carte
+  // --------------------------------------------------
   document.addEventListener("click", (e) => {
-    // clic sur une table
-    const card = e.target.closest(".table, [data-table]");
-    if (card && !e.target.closest("#tablePanel")) {
-      const id = getTableIdFromCard(card);
-      if (id) loadTablePanel(id);
+    if (e.target.closest("button") && !e.target.closest("#tablePanel")) return;
+    const card = e.target.closest("[data-table], .table");
+    if (!card) return;
+    const id =
+      card.dataset.table ||
+      (card.querySelector(".chip")?.textContent || "").trim();
+    if (!id) return;
+    openTablePanel(id);
+  });
+
+  // --------------------------------------------------
+  // 9. actions panneau
+  // --------------------------------------------------
+  document.addEventListener("click", async (e) => {
+    const printBtn = e.target.closest("#btnPrint");
+    if (printBtn) {
+      const tableId = printBtn.dataset.table;
+      try {
+        await fetch(getApiBase() + "/print", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: tableId }),
+        });
+      } catch (_) {}
+      setTableStatus(tableId, "prepa", "En préparation");
+      startDoitPayerTimer(tableId);
       return;
     }
 
-    // clic dans le panneau
-    const btnPrint = e.target.closest("#btnPrint");
-    if (btnPrint) {
-      const tableId = btnPrint.dataset.table;
-      setStatus(tableId, "preparing");
-      startToPayTimer(tableId);
+    const paidBtn = e.target.closest("#btnPaid");
+    if (paidBtn) {
+      const tableId = paidBtn.dataset.table;
+      try {
+        await fetch(getApiBase() + "/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table: tableId }),
+        });
+      } catch (_) {}
+      setTableStatus(tableId, "payee", "Payée");
+      clearDoitPayerTimer(tableId);
       return;
-    }
-    const btnPaid = e.target.closest("#btnPaid");
-    if (btnPaid) {
-      const tableId = btnPaid.dataset.table;
-      setStatus(tableId, "paid");
-      clearToPayTimer(tableId);
-      return;
-    }
-
-    // clic sur bouton vert de la carte
-    const btn = e.target.closest("button");
-    if (btn) {
-      const txt = btn.textContent.trim().toLowerCase();
-      const parentCard = btn.closest(".table, [data-table]");
-      if (!parentCard) return;
-      const tableId = getTableIdFromCard(parentCard);
-      if (!tableId) return;
-
-      if (txt.includes("imprimer")) {
-        setStatus(tableId, "preparing");
-        startToPayTimer(tableId);
-      } else if (txt.includes("paiement")) {
-        setStatus(tableId, "paid");
-        clearToPayTimer(tableId);
-      }
     }
   });
 
-  // --------------------- sync /summary toutes les 8s ---------------------
-  async function syncFromSummary() {
+  // --------------------------------------------------
+  // 10. boutons verts dans la grille
+  // --------------------------------------------------
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const txt = btn.textContent.trim().toLowerCase();
+    const card = btn.closest("[data-table], .table");
+    if (!card) return;
+    const tableId =
+      card.dataset.table ||
+      (card.querySelector(".chip")?.textContent || "").trim();
+    if (!tableId) return;
+
+    if (txt.includes("imprimer maintenant")) {
+      setTableStatus(tableId, "prepa", "En préparation");
+      startDoitPayerTimer(tableId);
+      return;
+    }
+    if (txt.includes("paiement confirmé")) {
+      setTableStatus(tableId, "payee", "Payée");
+      clearDoitPayerTimer(tableId);
+      return;
+    }
+  });
+
+  // --------------------------------------------------
+  // 11. 🔁 synchronisation automatique depuis /summary
+  //     → pour mettre "Commandée" sans que le serveur clique
+  // --------------------------------------------------
+  async function syncStatusesFromSummary() {
     try {
       const data = await apiGET("/summary");
       const tickets = data.tickets || [];
 
+      // tables qui ont un ticket
       const tablesWithOrders = new Set(
         tickets
           .map((t) => (t.table || "").toUpperCase())
-          .filter(Boolean)
+          .filter((t) => t.length > 0)
       );
 
-      // tables qui ont des commandes → "Commandée" si pas déjà plus avancé
-      tablesWithOrders.forEach((tid) => {
-        const cur = getStatus(tid);
-        if (!cur || cur === "Vide") {
-          setStatus(tid, "ordered");
+      // 11.a marquer "Commandée" celles qui ont un ticket mais sont encore "Vide"
+      tablesWithOrders.forEach((tableId) => {
+        const current = getTableStatus(tableId);
+        // ne pas écraser les états plus avancés
+        if (
+          !current ||
+          current === "Vide"
+        ) {
+          setTableStatus(tableId, "commande", "Commandée");
         }
       });
 
-      // tables sans commandes → si elles étaient "Commandée" on remet "Vide"
-      document.querySelectorAll(".table").forEach((card) => {
-        const tid = getTableIdFromCard(card);
-        if (!tid) return;
-        if (!tablesWithOrders.has(tid)) {
-          const cur = getStatus(tid);
-          if (cur === "Commandée") {
-            setStatus(tid, "empty");
+      // 11.b éventuellement remettre "Vide" les tables sans ticket
+      // mais seulement si elles ne sont pas en prépa/doit payer/payée
+      const allCards = document.querySelectorAll(".table");
+      allCards.forEach((card) => {
+        const chip = card.querySelector(".chip");
+        if (!chip) return;
+        const tableId = chip.textContent.trim().toUpperCase();
+        if (!tableId) return;
+
+        if (!tablesWithOrders.has(tableId)) {
+          const current = getTableStatus(tableId);
+          if (
+            current === "Commandée" // seulement cet état-là
+          ) {
+            setTableStatus(tableId, "vide", "Vide");
           }
         }
       });
     } catch (err) {
-      // on ignore, on réessaiera
+      // pas grave, on réessaiera
+      console.warn("[table-detail] sync summary échoué:", err.message);
     }
   }
 
-  // lancer après que app.js ait affiché les cartes
-  window.addEventListener("load", () => {
-    setTimeout(() => {
-      // première passe : s'assurer que chaque table a un statut (si jamais)
-      document.querySelectorAll(".table").forEach((card) => {
-        const chip = getStatusChip(card);
-        if (chip && !chip.textContent.trim()) {
-          chip.textContent = "Vide";
-        }
-      });
-
-      syncFromSummary();
-      setInterval(syncFromSummary, 8000);
-    }, 300);
-  });
+  // lancer tout de suite puis toutes les 8s
+  syncStatusesFromSummary();
+  setInterval(syncStatusesFromSummary, 8000);
 })();

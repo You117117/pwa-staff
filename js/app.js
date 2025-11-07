@@ -1,247 +1,168 @@
-/* Staff app – version sans pastille statut */
-(() => {
-  const $ = sel => document.querySelector(sel);
+// js/app.js
+// charge les tables + le résumé et affiche tout dans la page
+// ajout d’un badge de statut entre T1 et "Dernier : ..."
 
-  const apiInput      = $('#apiUrl');
-  const healthBadge   = $('#healthBadge');
-  const tablesWrap    = $('#tables');
-  const tablesEmpty   = $('#tablesEmpty');
-  const summaryWrap   = $('#summary');
-  const summaryEmpty  = $('#summaryEmpty');
-  const filterSel     = $('#filter');
-  const lastError     = $('#lastError');
-  const LS_KEY        = 'staff_api_url';
+const API_INPUT_ID = "apiUrl";
+const TABLES_CONTAINER_ID = "tables";
+const SUMMARY_CONTAINER_ID = "summary";
+const FILTER_SELECT_ID = "filter";
+const REFRESH_BTN_ID = "btnRefresh";
+const REFRESH_SUMMARY_BTN_ID = "btnRefreshSummary";
 
-  let lastTables = [];
+let CURRENT_API_URL = "";
 
-  function log(...args){ try{ console.log('[STAFF]', ...args); }catch{} }
-  function showError(msg){
-    if (lastError) {
-      lastError.textContent = msg;
-      lastError.style.display = '';
-    }
-  }
+// petit helper
+function $(sel, root = document) {
+  return root.querySelector(sel);
+}
 
+function getApiUrl() {
+  if (CURRENT_API_URL) return CURRENT_API_URL;
+  const input = $("#" + API_INPUT_ID);
+  return input ? input.value.trim() : "";
+}
+
+// ---------- RÉCUP TABLES ----------
+async function fetchTables() {
+  const url = getApiUrl();
+  if (!url) return [];
   try {
-    tablesWrap.style.display = 'grid';
-    tablesWrap.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
-    tablesWrap.style.gap = '12px';
-  } catch {}
-
-  function saveApi(url){
-    localStorage.setItem(LS_KEY, url);
-    if (apiInput) apiInput.value = url;
-  }
-  function restoreApi(){
-    const saved = localStorage.getItem(LS_KEY) || '';
-    if (saved && apiInput) apiInput.value = saved;
-  }
-  function getApiBase(){
-    const v = (apiInput?.value || '').trim().replace(/\/$/, '');
-    return v;
-  }
-
-  async function apiGETmulti(paths){
-    const base = getApiBase();
-    for (const p of paths){
-      const url = base + p;
-      try{
-        log('GET', url);
-        const r = await fetch(url, { cache: 'no-store' });
-        if (!r.ok) continue;
-        const j = await r.json();
-        log('OK', url, j);
-        return j;
-      }catch(e){
-        log('ERR', url, e);
-      }
-    }
-    throw new Error('all GET attempts failed: ' + paths.join(' OR '));
-  }
-
-  async function apiPOSTmulti(paths, body){
-    const base = getApiBase();
-    for (const p of paths){
-      const url = base + p;
-      try{
-        log('POST', url, body);
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        if (!r.ok) continue;
-        const j = await r.json().catch(()=>({ok:true}));
-        log('OK', url, j);
-        return j;
-      }catch(e){
-        log('ERR', url, e);
-      }
-    }
-    throw new Error('all POST attempts failed: ' + paths.join(' OR '));
-  }
-
-  function markHealth(txt, ok){
-    healthBadge.textContent = txt;
-    healthBadge.className = 'badge ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
-  }
-
-  async function probeHealth(){
-    markHealth('…');
-    try {
-      const j = await apiGETmulti(['/health']);
-      markHealth(j.ok ? 'OK' : 'KO', j.ok);
-    } catch {
-      markHealth('KO', false);
-    }
-  }
-
-  function normalizeTables(data){
-    try{
-      if (!data) return [];
-      if (Array.isArray(data)) return data;
-      if (data.tables && Array.isArray(data.tables)) return data.tables;
-      if (data.data && Array.isArray(data.data)) return data.data;
-      if (data.result && Array.isArray(data.result)) return data.result;
-      if (data.payload && typeof data.payload === 'object'){
-        return Object.entries(data.payload).map(([id,obj]) => ({ id, ...obj }));
-      }
-      if (typeof data === 'object'){
-        return Object.entries(data).map(([id,obj]) => ({ id, ...obj }));
-      }
-    }catch(e){}
+    const res = await fetch(url + "/tables");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+    // on standardise un peu
+    return Array.isArray(json.tables) ? json.tables : json;
+  } catch (err) {
+    console.warn("[STAFF] erreur tables", err);
     return [];
   }
+}
 
-  function renderTables(data){
-    const list = normalizeTables(data);
-    lastTables = list;
+// ---------- RÉCUP SUMMARY ----------
+async function fetchSummary() {
+  const url = getApiUrl();
+  if (!url) return [];
+  try {
+    const res = await fetch(url + "/summary");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+    return Array.isArray(json.tickets) ? json.tickets : json;
+  } catch (err) {
+    console.warn("[STAFF] erreur summary", err);
+    return [];
+  }
+}
 
-    tablesWrap.innerHTML = '';
-    const onlyPending = (filterSel?.value === 'pending');
+// ---------- RENDU TABLES ----------
+function renderTables(tables) {
+  const container = $("#" + TABLES_CONTAINER_ID);
+  if (!container) return;
 
-    const filtered = list.filter(x => {
-      const p = Number(x.pending || 0);
-      return onlyPending ? (p > 0) : true;
-    });
+  const filter = $("#" + FILTER_SELECT_ID);
+  const filterVal = filter ? filter.value : "ALL";
 
-    if (filtered.length === 0) {
-      tablesEmpty.style.display = '';
-      return;
-    }
-    tablesEmpty.style.display = 'none';
+  container.innerHTML = "";
 
-    filtered.forEach(t => {
-      const el = document.createElement('div');
-      el.className = 'table';
+  tables
+    .filter((t) => {
+      if (filterVal === "ALL") return true;
+      return t.id === filterVal;
+    })
+    .forEach((table) => {
+      const id = table.id || table.name || "";
+      const last = table.last || table.last_order || "--:--";
+      // IMPORTANT : on récup le statut que renvoie l’API
+      const status = table.status || "Vide";
 
-      const lt = t.lastTicket ? new Date(t.lastTicket.at) : null;
-      const last = lt
-        ? lt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-        : '--:--';
+      const card = document.createElement("div");
+      card.className = "table";
+      card.dataset.table = id;
 
-      // ⬇️ plus de pastille "Vide" ici
-      el.innerHTML = `
-        <div class="row">
-          <span class="chip"><b>${t.id}</b></span>
-          <span class="chip">Dernier : ${last}</span>
+      // on construit le header avec 3 chips :
+      // [T1] [Commandée] [Dernier : 00:07]
+      card.innerHTML = `
+        <div class="table-head">
+          <div class="chip"><b>${id}</b></div>
+          <div class="chip chip-status ${statusClass(status)}">${status}</div>
+          <div class="chip muted">Dernier : ${last}</div>
         </div>
-        <div class="row" style="margin-top:8px">
-          <button class="primary btnPrint" data-table="${t.id}">Imprimer maintenant</button>
-          <button class="ghost btnPaid" data-table="${t.id}">Paiement confirmé</button>
-        </div>
+        <button class="btn btn-primary btn-print">Imprimer maintenant</button>
+        <button class="btn btn-primary btn-pay">Paiement confirmé</button>
       `;
 
-      tablesWrap.appendChild(el);
+      // actions boutons (on laisse comme mock)
+      card.querySelector(".btn-print").onclick = () => {
+        console.log("[STAFF] impression", id);
+      };
+      card.querySelector(".btn-pay").onclick = () => {
+        console.log("[STAFF] paiement confirmé", id);
+      };
+
+      container.appendChild(card);
     });
 
-    tablesWrap.querySelectorAll('.btnPrint').forEach(b => b.onclick = async e => {
-      const t = e.currentTarget.dataset.table;
-      try {
-        await apiPOSTmulti(['/print','/staff/print'], { table: t });
-        e.currentTarget.textContent = 'Imprimé ✓';
-      } catch(err){
-        e.currentTarget.textContent = 'Erreur';
-        showError(err.message);
-      }
-      setTimeout(() => { e.currentTarget.textContent = 'Imprimer maintenant'; }, 1200);
-    });
+  // si rien
+  if (!container.children.length) {
+    container.innerHTML = `<p class="muted" id="tablesEmpty">Aucune table</p>`;
+  }
+}
 
-    tablesWrap.querySelectorAll('.btnPaid').forEach(b => b.onclick = async e => {
-      const t = e.currentTarget.dataset.table;
-      try {
-        await apiPOSTmulti(['/confirm','/staff/confirm'], { table: t });
-        e.currentTarget.textContent = 'Confirmé ✓';
-      } catch(err){
-        e.currentTarget.textContent = 'Erreur';
-        showError(err.message);
-      }
-      setTimeout(() => { e.currentTarget.textContent = 'Paiement confirmé'; }, 1200);
-      refreshTables();
-    });
+// classe css selon statut (tu peux styler dans style.css)
+function statusClass(status) {
+  const s = status.toLowerCase();
+  if (s.includes("command")) return "is-warning";
+  if (s.includes("payer") || s.includes("doit")) return "is-danger";
+  if (s.includes("payé") || s.includes("payee") || s.includes("confirm")) return "is-success";
+  return "is-muted";
+}
+
+// ---------- RENDU SUMMARY ----------
+function renderSummary(tickets) {
+  const container = $("#" + SUMMARY_CONTAINER_ID);
+  if (!container) return;
+  container.innerHTML = "";
+
+  tickets.forEach((t) => {
+    // t.table, t.time, t.total, t.lines…
+    const div = document.createElement("div");
+    div.className = "table";
+    div.innerHTML = `
+      <div class="chip"><b>${t.table}</b></div>
+      <div class="chip muted"><span class="icon">🕒</span> ${t.time || ""}</div>
+      <div class="chip muted">Total : ${t.total || ""}</div>
+      <p class="muted">${t.items || t.lines || ""}</p>
+    `;
+    container.appendChild(div);
+  });
+
+  if (!container.children.length) {
+    container.innerHTML = `<p class="muted" id="summaryEmpty">Aucun ticket aujourd'hui.</p>`;
+  }
+}
+
+// ---------- INIT ----------
+async function refreshAll() {
+  const [tables, summary] = await Promise.all([fetchTables(), fetchSummary()]);
+  renderTables(tables);
+  renderSummary(summary);
+}
+
+function init() {
+  const input = $("#" + API_INPUT_ID);
+  if (input) {
+    CURRENT_API_URL = input.value.trim();
   }
 
-  function renderSummary(data){
-    const list = (data?.tickets || []);
-    summaryWrap.innerHTML = '';
-    summaryEmpty.style.display = list.length ? 'none' : '';
-    list.forEach(t => {
-      const it = document.createElement('div');
-      it.className = 'table';
-      const items = (t.items || []).map(i => `${i.qty}× ${i.name}`).join(', ');
-      it.innerHTML = `
-        <div class="row">
-          <span class="chip"><b>${t.table}</b></span>
-          <span class="chip">⏱ ${t.time || ''}</span>
-          <span class="chip">Total : <b>${t.total} €</b></span>
-        </div>
-        <div class="muted" style="margin-top:8px">${items || '—'}</div>
-      `;
-      summaryWrap.appendChild(it);
-    });
-  }
+  const btn = $("#" + REFRESH_BTN_ID);
+  if (btn) btn.onclick = refreshAll;
 
-  async function refreshTables(){
-    try {
-      const j = await apiGETmulti(['/tables','/staff/tables']);
-      renderTables(j);
-    } catch(e){
-      tablesWrap.innerHTML = '';
-      tablesEmpty.style.display = '';
-      showError('Tables: ' + e.message);
-    }
-  }
+  const btn2 = $("#" + REFRESH_SUMMARY_BTN_ID);
+  if (btn2) btn2.onclick = refreshAll;
 
-  async function refreshSummary(){
-    try {
-      const j = await apiGETmulti(['/summary','/staff/summary']);
-      renderSummary(j);
-    } catch(e){
-      summaryWrap.innerHTML = '';
-      summaryEmpty.style.display = '';
-      showError('Summary: ' + e.message);
-    }
-  }
+  const filter = $("#" + FILTER_SELECT_ID);
+  if (filter) filter.onchange = refreshAll;
 
-  async function refreshAll(){
-    await Promise.all([refreshTables(), refreshSummary()]);
-  }
-
-  function startPolling(){
-    setInterval(refreshAll, 10000);
-  }
-
-  $('#btnRemember')?.addEventListener('click', () => saveApi(apiInput?.value || ''));
-  $('#btnHealth')?.addEventListener('click', () => probeHealth());
-  $('#btnRefreshTables')?.addEventListener('click', () => refreshTables());
-  $('#btnRefreshSummary')?.addEventListener('click', () => refreshSummary());
-  filterSel && (filterSel.onchange = () => renderTables(lastTables));
-
-  restoreApi();
-  probeHealth();
   refreshAll();
-  startPolling();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
-  }
-})();
+}
+
+document.addEventListener("DOMContentLoaded", init);

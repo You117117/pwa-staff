@@ -1,262 +1,226 @@
-/* Staff app – version stable + ajout du badge de statut */
-(() => {
-  const $ = sel => document.querySelector(sel);
+// pwa-staff/js/app.js
+// version avec persistance locale des statuts
 
-  const apiInput      = $('#apiUrl');
-  const healthBadge   = $('#healthBadge');
-  const tablesWrap    = $('#tables');
-  const tablesEmpty   = $('#tablesEmpty');
-  const summaryWrap   = $('#summary');
-  const summaryEmpty  = $('#summaryEmpty');
-  const filterSel     = $('#filter');
-  const lastError     = $('#lastError');
-  const LS_KEY        = 'staff_api_url';
+const API_INPUT = document.querySelector('#apiUrl');
+const btnMemorize = document.querySelector('#btnMemorize');
+const btnHealth = document.querySelector('#btnHealth');
+const tablesContainer = document.querySelector('#tables');
+const tablesEmpty = document.querySelector('#tablesEmpty');
+const btnRefreshTables = document.querySelector('#btnRefresh');
+const filterSelect = document.querySelector('#filterTables');
 
-  let lastTables = [];
+const summaryContainer = document.querySelector('#summary');
+const summaryEmpty = document.querySelector('#summaryEmpty');
+const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
-  function log(...args){ try{ console.log('[STAFF]', ...args); }catch{} }
-  function showError(msg){
-    if (lastError) {
-      lastError.textContent = msg;
-      lastError.style.display = '';
-    }
+// 🔴 c’est le petit stockage local des statuts de table
+// on ne le vide pas quand on rafraîchit
+// { "T1": "Commandée", "T5": "Doit payer" }
+window.tableStatus = window.tableStatus || {};
+
+// intervalle de refresh (ms)
+const REFRESH_MS = 5000;
+
+// =========================
+// utilitaires
+// =========================
+function getApiBase() {
+  return API_INPUT.value.trim();
+}
+
+function formatTime(dateString) {
+  if (!dateString) return '--:--';
+  const d = new Date(dateString);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+// =========================
+// rendu des tables
+// =========================
+function renderTables(tables) {
+  tablesContainer.innerHTML = '';
+
+  if (!tables || !tables.length) {
+    tablesEmpty.style.display = 'block';
+    return;
   }
+  tablesEmpty.style.display = 'none';
 
-  try {
-    tablesWrap.style.display = 'grid';
-    tablesWrap.style.gridTemplateColumns = 'repeat(auto-fill, minmax(280px, 1fr))';
-    tablesWrap.style.gap = '12px';
-  } catch {}
+  const filter = filterSelect.value; // "Toutes" ou "T1", "T2"...
 
-  function saveApi(url){
-    localStorage.setItem(LS_KEY, url);
-    if (apiInput) apiInput.value = url;
-  }
-  function restoreApi(){
-    const saved = localStorage.getItem(LS_KEY) || '';
-    if (saved && apiInput) apiInput.value = saved;
-  }
-  function getApiBase(){
-    const v = (apiInput?.value || '').trim().replace(/\/$/, '');
-    return v;
-  }
-
-  async function apiGETmulti(paths){
-    const base = getApiBase();
-    for (const p of paths){
-      const url = base + p;
-      try{
-        log('GET', url);
-        const r = await fetch(url, { cache: 'no-store' });
-        if (!r.ok) continue;
-        const j = await r.json();
-        log('OK', url, j);
-        return j;
-      }catch(e){
-        log('ERR', url, e);
-      }
-    }
-    throw new Error('all GET attempts failed: ' + paths.join(' OR '));
-  }
-
-  async function apiPOSTmulti(paths, body){
-    const base = getApiBase();
-    for (const p of paths){
-      const url = base + p;
-      try{
-        log('POST', url, body);
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        if (!r.ok) continue;
-        const j = await r.json().catch(()=>({ok:true}));
-        log('OK', url, j);
-        return j;
-      }catch(e){
-        log('ERR', url, e);
-      }
-    }
-    throw new Error('all POST attempts failed: ' + paths.join(' OR '));
-  }
-
-  function markHealth(txt, ok){
-    healthBadge.textContent = txt;
-    healthBadge.className = 'badge ' + (ok === true ? 'ok' : ok === false ? 'err' : '');
-  }
-
-  async function probeHealth(){
-    markHealth('…');
-    try {
-      const j = await apiGETmulti(['/health']);
-      markHealth(j.ok ? 'OK' : 'KO', j.ok);
-    } catch {
-      markHealth('KO', false);
-    }
-  }
-
-  function normalizeTables(data){
-    try{
-      if (!data) return [];
-      if (Array.isArray(data)) return data;
-      if (data.tables && Array.isArray(data.tables)) return data.tables;
-      if (data.data && Array.isArray(data.data)) return data.data;
-      if (data.result && Array.isArray(data.result)) return data.result;
-      if (data.payload && typeof data.payload === 'object'){
-        return Object.entries(data.payload).map(([id,obj]) => ({ id, ...obj }));
-      }
-      if (typeof data === 'object'){
-        return Object.entries(data).map(([id,obj]) => ({ id, ...obj }));
-      }
-    }catch(e){}
-    return [];
-  }
-
-  // calcule le statut d’une table localement (simplifié)
-  function computeStatus(t) {
-    const pending = Number(t.pending || 0);
-    if (t.closed || t.paid) return 'Payée';
-    if (pending > 0) return 'Commandée';
-    if (t.lastTicket) {
-      const age = Date.now() - new Date(t.lastTicket.at).getTime();
-      if (age > 15 * 60 * 1000) return 'Doit payer';
-    }
-    return 'Vide';
-  }
-
-  function renderTables(data){
-    const list = normalizeTables(data);
-    lastTables = list;
-
-    tablesWrap.innerHTML = '';
-    const onlyPending = (filterSel?.value === 'pending');
-
-    const filtered = list.filter(x => {
-      const p = Number(x.pending || 0);
-      return onlyPending ? (p > 0) : true;
-    });
-
-    if (filtered.length === 0) {
-      tablesEmpty.style.display = '';
+  tables.forEach((table) => {
+    const id = table.id; // ex: "T1"
+    if (filter !== 'Toutes' && filter !== id) {
       return;
     }
-    tablesEmpty.style.display = 'none';
 
-    filtered.forEach(t => {
-      const el = document.createElement('div');
-      el.className = 'table';
+    // heure du dernier ticket
+    const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      const lt = t.lastTicket ? new Date(t.lastTicket.at) : null;
-      const last = lt
-        ? lt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-        : '--:--';
+    // ⚠️ récupérer le statut que NOUS avons conservé
+    // sinon on affiche "Vide" par défaut
+    const statusLabel = window.tableStatus[id] || 'Vide';
 
-      const status = computeStatus(t);
+    const card = document.createElement('div');
+    card.className = 'tableCard';
+    card.setAttribute('data-table', id);
 
-      // ✅ badge ajouté entre T1 et Dernier
-      el.innerHTML = `
-        <div class="row">
-          <span class="chip"><b>${t.id}</b></span>
-          <span class="chip chip-status">${status}</span>
-          <span class="chip">Dernier : ${last}</span>
-        </div>
-        <div class="row" style="margin-top:8px">
-          <button class="primary btnPrint" data-table="${t.id}">Imprimer maintenant</button>
-          <button class="ghost btnPaid" data-table="${t.id}">Paiement confirmé</button>
-        </div>
-      `;
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="chip chip-id">${id}</span>
+        <span class="chip chip-status">${statusLabel}</span>
+        <span class="chip chip-last">Dernier : ${last}</span>
+      </div>
+      <div class="card-actions">
+        <button class="btn btn-primary btn-print">Imprimer maintenant</button>
+        <button class="btn btn-primary btn-paid">Paiement confirmé</button>
+      </div>
+    `;
 
-      tablesWrap.appendChild(el);
+    // clic sur la carte → ouvrir le panneau latéral
+    card.addEventListener('click', (e) => {
+      // éviter que le clic sur le bouton imprime/paid ouvre aussi le panneau
+      if (e.target.closest('button')) return;
+      openTableDetail(id);
     });
 
-    tablesWrap.querySelectorAll('.btnPrint').forEach(b => b.onclick = async e => {
-      const t = e.currentTarget.dataset.table;
-      try {
-        await apiPOSTmulti(['/print','/staff/print'], { table: t });
-        e.currentTarget.textContent = 'Imprimé ✓';
-      } catch(err){
-        e.currentTarget.textContent = 'Erreur';
-        showError(err.message);
-      }
-      setTimeout(() => { e.currentTarget.textContent = 'Imprimer maintenant'; }, 1200);
+    // bouton imprimer
+    card.querySelector('.btn-print').addEventListener('click', (e) => {
+      e.stopPropagation();
+      // ici ton code d’impression (mock)
+      alert(`Impression pour ${id}`);
     });
 
-    tablesWrap.querySelectorAll('.btnPaid').forEach(b => b.onclick = async e => {
-      const t = e.currentTarget.dataset.table;
-      try {
-        await apiPOSTmulti(['/confirm','/staff/confirm'], { table: t });
-        e.currentTarget.textContent = 'Confirmé ✓';
-      } catch(err){
-        e.currentTarget.textContent = 'Erreur';
-        showError(err.message);
-      }
-      setTimeout(() => { e.currentTarget.textContent = 'Paiement confirmé'; }, 1200);
-      refreshTables();
+    // bouton paiement confirmé
+    card.querySelector('.btn-paid').addEventListener('click', (e) => {
+      e.stopPropagation();
+      // quand on confirme le paiement → on peut mettre le statut ici
+      window.tableStatus[id] = 'Payé';
+      // on met à jour juste ce chip-là
+      const chip = card.querySelector('.chip-status');
+      if (chip) chip.textContent = window.tableStatus[id];
     });
-  }
 
-  function renderSummary(data){
-    const list = (data?.tickets || []);
-    summaryWrap.innerHTML = '';
-    summaryEmpty.style.display = list.length ? 'none' : '';
-    list.forEach(t => {
-      const it = document.createElement('div');
-      it.className = 'table';
-      const items = (t.items || []).map(i => `${i.qty}× ${i.name}`).join(', ');
-      it.innerHTML = `
-        <div class="row">
-          <span class="chip"><b>${t.table}</b></span>
-          <span class="chip">⏱ ${t.time || ''}</span>
-          <span class="chip">Total : <b>${t.total} €</b></span>
-        </div>
-        <div class="muted" style="margin-top:8px">${items || '—'}</div>
-      `;
-      summaryWrap.appendChild(it);
-    });
-  }
+    tablesContainer.appendChild(card);
+  });
+}
 
-  async function refreshTables(){
-    try {
-      const j = await apiGETmulti(['/tables','/staff/tables']);
-      renderTables(j);
-    } catch(e){
-      tablesWrap.innerHTML = '';
-      tablesEmpty.style.display = '';
-      showError('Tables: ' + e.message);
-    }
-  }
+// =========================
+// rendu du résumé du jour
+// =========================
+function renderSummary(tickets) {
+  summaryContainer.innerHTML = '';
 
-  async function refreshSummary(){
-    try {
-      const j = await apiGETmulti(['/summary','/staff/summary']);
-      renderSummary(j);
-    } catch(e){
-      summaryWrap.innerHTML = '';
-      summaryEmpty.style.display = '';
-      showError('Summary: ' + e.message);
-    }
+  if (!tickets || !tickets.length) {
+    summaryEmpty.style.display = 'block';
+    return;
   }
+  summaryEmpty.style.display = 'none';
 
-  async function refreshAll(){
-    await Promise.all([refreshTables(), refreshSummary()]);
+  tickets.forEach((t) => {
+    const item = document.createElement('div');
+    item.className = 'summaryItem';
+    item.innerHTML = `
+      <div class="head">
+        <span class="chip">${t.table}</span>
+        <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
+        <span class="chip">Total : ${t.total} €</span>
+      </div>
+      <div class="body">${t.label}</div>
+    `;
+    summaryContainer.appendChild(item);
+  });
+}
+
+// =========================
+// fetch tables
+// =========================
+async function refreshTables() {
+  const base = getApiBase();
+  if (!base) return;
+
+  try {
+    const res = await fetch(`${base}/tables`);
+    const data = await res.json();
+    // data.tables = [{id:"T1", lastTicketAt: "..."}]
+
+    // 👉 on rend en réutilisant les statuts déjà connus
+    renderTables(data.tables || []);
+  } catch (err) {
+    console.error('[STAFF] erreur tables', err);
   }
+}
 
-  function startPolling(){
-    setInterval(refreshAll, 10000);
+// =========================
+// fetch summary
+// =========================
+async function refreshSummary() {
+  const base = getApiBase();
+  if (!base) return;
+  try {
+    const res = await fetch(`${base}/summary`);
+    const data = await res.json();
+    renderSummary(data.tickets || []);
+  } catch (err) {
+    console.error('[STAFF] erreur summary', err);
   }
+}
 
-  $('#btnRemember')?.addEventListener('click', () => saveApi(apiInput?.value || ''));
-  $('#btnHealth')?.addEventListener('click', () => probeHealth());
-  $('#btnRefreshTables')?.addEventListener('click', () => refreshTables());
-  $('#btnRefreshSummary')?.addEventListener('click', () => refreshSummary());
-  filterSel && (filterSel.onchange = () => renderTables(lastTables));
-
-  restoreApi();
-  probeHealth();
-  refreshAll();
-  startPolling();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+// =========================
+// panneau latéral
+// =========================
+async function openTableDetail(tableId) {
+  // ce fichier est déjà inclus dans ton index.html
+  // et c’est lui qui s’occupe d’aller chercher /table/TX/session
+  if (window.showTableDetail) {
+    window.showTableDetail(tableId);
   }
-})();
+}
+
+// =========================
+// init
+// =========================
+btnMemorize.addEventListener('click', () => {
+  const url = getApiBase();
+  localStorage.setItem('staff-api', url);
+});
+
+btnHealth.addEventListener('click', async () => {
+  const base = getApiBase();
+  if (!base) return;
+  try {
+    const res = await fetch(`${base}/health`);
+    const data = await res.json();
+    alert('API OK : ' + JSON.stringify(data));
+  } catch (err) {
+    alert('Erreur API');
+  }
+});
+
+btnRefreshTables.addEventListener('click', () => {
+  refreshTables();
+});
+btnRefreshSummary.addEventListener('click', () => {
+  refreshSummary();
+});
+filterSelect.addEventListener('change', () => {
+  refreshTables();
+});
+
+// charger URL mémorisée
+const saved = localStorage.getItem('staff-api');
+if (saved) {
+  API_INPUT.value = saved;
+}
+
+// premier chargement
+refreshTables();
+refreshSummary();
+
+// rafraîchissement périodique
+setInterval(() => {
+  refreshTables();
+  refreshSummary();
+}, REFRESH_MS);

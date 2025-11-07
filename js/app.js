@@ -1,177 +1,203 @@
-// === app.js — version stable ===
+// js/app.js
+// - charge URL API depuis localStorage
+// - permet de mémoriser
+// - récupère /tables et /summary
+// - affiche un badge de statut entre T1 et "Dernier : ..."
 
-// Sélecteurs
-const apiInput = document.querySelector('#apiUrl');
-const btnMemorize = document.querySelector('#btnMemorize');
-const btnHealth = document.querySelector('#btnHealth');
-const tablesContainer = document.querySelector('#tables');
-const tablesEmpty = document.querySelector('#tablesEmpty');
-const btnRefreshTables = document.querySelector('#btnRefresh');
-const filterSelect = document.querySelector('#filterTables');
-const summaryContainer = document.querySelector('#summary');
-const summaryEmpty = document.querySelector('#summaryEmpty');
-const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
+const API_INPUT_ID = "apiUrl";
+const TABLES_CONTAINER_ID = "tables";
+const SUMMARY_CONTAINER_ID = "summary";
+const FILTER_SELECT_ID = "filter";
+const REFRESH_BTN_ID = "btnRefresh";
+const REFRESH_SUMMARY_BTN_ID = "btnRefreshSummary";
+const MEMO_BTN_ID = "btnMemorize";
+const HEALTH_BTN_ID = "btnHealth";
 
-// Intervalle de rafraîchissement (ms)
-const REFRESH_MS = 5000;
+const LS_KEY = "staff_api_url";
 
-// Utilitaires
-function getApiBase() {
-  return apiInput.value.trim();
+let CURRENT_API_URL = "";
+
+// petit helper
+function $(sel, root = document) {
+  return root.querySelector(sel);
 }
 
-function formatTime(dateString) {
-  if (!dateString) return '--:--';
-  const d = new Date(dateString);
-  const h = d.getHours().toString().padStart(2, '0');
-  const m = d.getMinutes().toString().padStart(2, '0');
-  return `${h}:${m}`;
+// charge l’URL depuis le champ ou depuis le localStorage
+function getApiUrl() {
+  if (CURRENT_API_URL) return CURRENT_API_URL;
+  const input = $("#" + API_INPUT_ID);
+  if (input && input.value.trim()) {
+    return input.value.trim();
+  }
+  const saved = localStorage.getItem(LS_KEY) || "";
+  return saved;
 }
 
-// Rendu des tables
+// met à jour le champ et la variable
+function setApiUrl(url) {
+  CURRENT_API_URL = url;
+  const input = $("#" + API_INPUT_ID);
+  if (input) input.value = url;
+}
+
+// ---------- APPELS API ----------
+async function fetchTables() {
+  const url = getApiUrl();
+  if (!url) return [];
+  try {
+    const res = await fetch(url + "/tables");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+    return Array.isArray(json.tables) ? json.tables : json;
+  } catch (err) {
+    console.warn("[STAFF] erreur /tables", err);
+    return [];
+  }
+}
+
+async function fetchSummary() {
+  const url = getApiUrl();
+  if (!url) return [];
+  try {
+    const res = await fetch(url + "/summary");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+    return Array.isArray(json.tickets) ? json.tickets : json;
+  } catch (err) {
+    console.warn("[STAFF] erreur /summary", err);
+    return [];
+  }
+}
+
+// ---------- RENDU TABLES ----------
 function renderTables(tables) {
-  tablesContainer.innerHTML = '';
+  const container = $("#" + TABLES_CONTAINER_ID);
+  if (!container) return;
 
-  if (!tables || !tables.length) {
-    tablesEmpty.style.display = 'block';
-    return;
-  }
+  const filter = $("#" + FILTER_SELECT_ID);
+  const filterVal = filter ? filter.value : "ALL";
 
-  tablesEmpty.style.display = 'none';
-  const filter = filterSelect.value;
+  container.innerHTML = "";
 
-  tables.forEach((table) => {
-    const id = table.id;
-    if (filter !== 'Toutes' && filter !== id) return;
+  tables
+    .filter((t) => {
+      if (filterVal === "ALL") return true;
+      return t.id === filterVal;
+    })
+    .forEach((table) => {
+      const id = table.id || table.name || "";
+      const last = table.last || table.last_order || "--:--";
+      // statut envoyé par l’API, sinon “Vide”
+      const status = table.status || "Vide";
 
-    const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
-    const status = table.status || 'Vide';
+      const card = document.createElement("div");
+      card.className = "table";
+      card.dataset.table = id;
 
-    const card = document.createElement('div');
-    card.className = 'table';
-    card.setAttribute('data-table', id);
-
-    card.innerHTML = `
-      <div class="card-head">
-        <span class="chip">${id}</span>
-        <span class="chip">${status}</span>
-        <span class="chip">Dernier : ${last}</span>
-      </div>
-      <div class="card-actions">
+      card.innerHTML = `
+        <div class="table-head">
+          <div class="chip"><b>${id}</b></div>
+          <div class="chip chip-status ${statusClass(status)}">${status}</div>
+          <div class="chip muted">Dernier : ${last}</div>
+        </div>
         <button class="btn btn-primary btn-print">Imprimer maintenant</button>
-        <button class="btn btn-primary btn-paid">Paiement confirmé</button>
-      </div>
-    `;
+        <button class="btn btn-primary btn-pay">Paiement confirmé</button>
+      `;
 
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
-      openTableDetail(id);
+      container.appendChild(card);
     });
 
-    card.querySelector('.btn-print').addEventListener('click', (e) => {
-      e.stopPropagation();
-      alert(`Impression pour ${id}`);
-    });
-
-    card.querySelector('.btn-paid').addEventListener('click', (e) => {
-      e.stopPropagation();
-      alert(`Paiement confirmé pour ${id}`);
-    });
-
-    tablesContainer.appendChild(card);
-  });
+  if (!container.children.length) {
+    container.innerHTML = `<p class="muted" id="tablesEmpty">Aucune table</p>`;
+  }
 }
 
-// Rendu du résumé
+// retourne une classe css en fonction du texte
+function statusClass(status) {
+  const s = status.toLowerCase();
+  if (s.includes("command")) return "is-warning";
+  if (s.includes("payer") || s.includes("doit")) return "is-danger";
+  if (s.includes("payé") || s.includes("payee") || s.includes("confirm")) return "is-success";
+  return "is-muted";
+}
+
+// ---------- RENDU SUMMARY ----------
 function renderSummary(tickets) {
-  summaryContainer.innerHTML = '';
-
-  if (!tickets || !tickets.length) {
-    summaryEmpty.style.display = 'block';
-    return;
-  }
-
-  summaryEmpty.style.display = 'none';
+  const container = $("#" + SUMMARY_CONTAINER_ID);
+  if (!container) return;
+  container.innerHTML = "";
 
   tickets.forEach((t) => {
-    const item = document.createElement('div');
-    item.className = 'summaryItem';
-    item.innerHTML = `
-      <div class="head">
-        <span class="chip">${t.table}</span>
-        <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
-        <span class="chip">Total : ${t.total} €</span>
-      </div>
-      <div class="body">${t.label}</div>
+    const div = document.createElement("div");
+    div.className = "table";
+    div.innerHTML = `
+      <div class="chip"><b>${t.table}</b></div>
+      <div class="chip muted">🕒 ${t.time || ""}</div>
+      <div class="chip muted">Total : ${t.total || ""}</div>
+      <p class="muted">${t.items || t.lines || ""}</p>
     `;
-    summaryContainer.appendChild(item);
+    container.appendChild(div);
   });
+
+  if (!container.children.length) {
+    container.innerHTML = `<p class="muted" id="summaryEmpty">Aucun ticket aujourd'hui.</p>`;
+  }
 }
 
-// Rafraîchissement
-async function refreshTables() {
-  const base = getApiBase();
-  if (!base) return;
+// ---------- ACTIONS ----------
+async function refreshAll() {
+  const [tables, summary] = await Promise.all([fetchTables(), fetchSummary()]);
+  renderTables(tables);
+  renderSummary(summary);
+}
+
+async function testHealth() {
+  const url = getApiUrl();
+  if (!url) return alert("Pas d’URL API");
   try {
-    const res = await fetch(`${base}/tables`);
-    const data = await res.json();
-    renderTables(data.tables || []);
-  } catch (err) {
-    console.error('[STAFF] erreur tables', err);
+    const res = await fetch(url + "/health");
+    alert("/health → " + res.status);
+  } catch (e) {
+    alert("Erreur /health");
   }
 }
 
-async function refreshSummary() {
-  const base = getApiBase();
-  if (!base) return;
-  try {
-    const res = await fetch(`${base}/summary`);
-    const data = await res.json();
-    renderSummary(data.tickets || []);
-  } catch (err) {
-    console.error('[STAFF] erreur summary', err);
+// ---------- INIT ----------
+function init() {
+  // recharger l’URL mémorisée
+  const saved = localStorage.getItem(LS_KEY);
+  if (saved) {
+    setApiUrl(saved);
   }
+
+  // bouton mémoriser
+  const memoBtn = $("#" + MEMO_BTN_ID);
+  if (memoBtn) {
+    memoBtn.onclick = () => {
+      const val = $("#" + API_INPUT_ID).value.trim();
+      if (!val) return;
+      localStorage.setItem(LS_KEY, val);
+      setApiUrl(val);
+    };
+  }
+
+  // bouton /health
+  const healthBtn = $("#" + HEALTH_BTN_ID);
+  if (healthBtn) {
+    healthBtn.onclick = testHealth;
+  }
+
+  const btn = $("#" + REFRESH_BTN_ID);
+  if (btn) btn.onclick = refreshAll;
+
+  const btn2 = $("#" + REFRESH_SUMMARY_BTN_ID);
+  if (btn2) btn2.onclick = refreshAll;
+
+  const filter = $("#" + FILTER_SELECT_ID);
+  if (filter) filter.onchange = refreshAll;
+
+  // premier chargement
+  refreshAll();
 }
 
-// Détail table
-function openTableDetail(tableId) {
-  if (window.showTableDetail) {
-    window.showTableDetail(tableId);
-  }
-}
-
-// Boutons
-btnMemorize.addEventListener('click', () => {
-  const url = getApiBase();
-  localStorage.setItem('staff-api', url);
-});
-
-btnHealth.addEventListener('click', async () => {
-  const base = getApiBase();
-  if (!base) return;
-  try {
-    const res = await fetch(`${base}/health`);
-    const data = await res.json();
-    alert('API OK : ' + JSON.stringify(data));
-  } catch (err) {
-    alert('Erreur API');
-  }
-});
-
-btnRefreshTables.addEventListener('click', refreshTables);
-btnRefreshSummary.addEventListener('click', refreshSummary);
-filterSelect.addEventListener('change', refreshTables);
-
-// Initialisation
-const saved = localStorage.getItem('staff-api');
-if (saved) {
-  apiInput.value = saved;
-}
-
-refreshTables();
-refreshSummary();
-
-setInterval(() => {
-  refreshTables();
-  refreshSummary();
-}, REFRESH_MS);
+document.addEventListener("DOMContentLoaded", init);

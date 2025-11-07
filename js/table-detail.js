@@ -1,13 +1,13 @@
 // js/table-detail.js
 // Panneau latéral qui affiche les tickets d’une table
-// et le total cumulé, en lisant la colonne "Résumé du jour"
+// + total cumulé clair et mise en page améliorée
 
-console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
+console.log("[table-detail] panneau latéral (DOM) + total cumulé + style clair");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // === panneau ===
+  // === panneau latéral ===
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -38,27 +38,25 @@ console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
 
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
-  // récupère toutes les cartes du résumé pour cette table
-  function getCardsForTable(tableId) {
+  // === outils ===
+  function getTicketsForTable(tableId) {
     const summary = $("#summary");
     if (!summary) return [];
-    const cards = [...summary.querySelectorAll(".table")];
-    return cards.filter((card) => {
+    return [...summary.querySelectorAll(".table")].filter((card) => {
       const chip = card.querySelector(".chip");
       return chip && chip.textContent.trim() === tableId;
     });
   }
 
-  // extrait "Total : 52.8 €" d'une carte
   function extractTotalFromCard(card) {
     const chips = [...card.querySelectorAll(".chip")];
     const totalChip = chips.find((c) => c.textContent.includes("Total"));
     if (!totalChip) return 0;
-    const txt = totalChip.textContent.replace(",", ".");
-    const m = txt.match(/([\d.]+)\s*€?/);
+    const m = totalChip.textContent.replace(",", ".").match(/([\d.]+)\s*€?/);
     return m ? parseFloat(m[1]) : 0;
   }
 
+  // === affichage principal ===
   function openPanelForTable(tableId) {
     const title = $("#panelTitle");
     const sub = $("#panelSubtitle");
@@ -67,51 +65,46 @@ console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
     title.textContent = "Table " + tableId;
     panel.style.right = "0";
 
-    const cards = getCardsForTable(tableId);
+    const cards = getTicketsForTable(tableId);
 
     if (!cards.length) {
       sub.textContent = "Aucune commande pour cette table";
-      content.innerHTML = `<p style="color:#9CA3AF;">Cette table n'a pas de ticket dans le résumé du jour.</p>`;
+      content.innerHTML = `<p style="color:#9CA3AF;">Cette table n'a pas encore de tickets dans le résumé du jour.</p>`;
       return;
     }
 
-    // calc total cumulé
-    let total = 0;
-    cards.forEach((c) => (total += extractTotalFromCard(c)));
+    // total cumulé
+    const total = cards.reduce((acc, c) => acc + extractTotalFromCard(c), 0);
     sub.textContent = `${cards.length} ticket(s) • Total cumulé : ${total.toFixed(2)} €`;
 
-    // construire l'affichage
+    // rendu clair et lisible
     content.innerHTML = cards
-      .map((card) => {
-        // chips du ticket (T9 • 00:05 • Total : 52.8 €)
+      .map((card, i) => {
         const chips = [...card.querySelectorAll(".chip")]
           .map((c) => c.textContent.trim())
           .join(" • ");
 
-        // le texte visible (4× Cheeseburger, 4× Frites…)
-        // on prend le premier texte non vide en dehors des chips
-        let lineText = "";
-        // souvent c'est dans un <p>
-        const p = card.querySelector("p");
-        if (p && p.textContent.trim()) {
-          lineText = p.textContent.trim();
-        } else {
-          // fallback : on prend le texte global et on enlève les chips
-          const full = card.textContent.trim();
-          lineText = full.replace(chips, "").trim();
-        }
+        const products =
+          card.querySelector("p")?.textContent.trim() ||
+          card.querySelector(".muted")?.textContent.trim() ||
+          "";
 
         return `
-          <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
-            <div style="font-size:.7rem;color:#9CA3AF;margin-bottom:4px;">${chips}</div>
-            <div>${lineText || "—"}</div>
+          <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:12px;margin-bottom:12px;">
+            <div style="font-size:.8rem;color:#9CA3AF;margin-bottom:4px;display:flex;justify-content:space-between;">
+              <span>Ticket #${i + 1}</span>
+              <span>${chips}</span>
+            </div>
+            <div style="font-size:1rem;color:#f3f4f6;font-weight:500;margin-top:6px;">
+              ${products || "—"}
+            </div>
           </div>
         `;
       })
       .join("");
   }
 
-  // clic sur une table de la grille
+  // === clic sur une table ===
   document.addEventListener("click", (e) => {
     const card = e.target.closest(".table");
     if (!card || e.target.closest("#tablePanel")) return;

@@ -1,54 +1,55 @@
 // pwa-staff/js/table-status.js
-// version corrigée — lit aussi 'staff_api_url' et met bien à jour les badges
-console.log("[table-status] loaded ✅ (sync sur /summary + suppression 'En attente')");
+// version simple : met à jour UNIQUEMENT le badge .status-chip, jamais les boutons
+console.log("[table-status] v9 chargé");
 
 (function () {
-  // états possibles
   const STATUS = {
-    empty:      { label: "Vide",          color: "#1f2937" },
-    ordered:    { label: "Commandée",     color: "#334155" },
-    preparing:  { label: "En préparation",color: "#1d4ed8" },
-    toPay:      { label: "Doit payer",    color: "#b45309" },
-    paid:       { label: "Payée",         color: "#15803d" },
+    empty:     { text: "Vide",          color: "#1f2937" },
+    ordered:   { text: "Commandée",     color: "#334155" },
+    preparing: { text: "En préparation",color: "#1d4ed8" },
+    toPay:     { text: "Doit payer",    color: "#b45309" },
+    paid:      { text: "Payée",         color: "#15803d" },
   };
 
-  // mémoire locale
-  const tableState   = {};
-  const toPayTimers  = {};
+  const tableState  = {};
+  const payTimers   = {};
 
   const $ = (s, r = document) => r.querySelector(s);
 
-  // -------- 1. récupérer l’URL API --------
+  // ----------- API -----------
   function getApiBase() {
-    // 1) input de la page
-    const inp = $("#apiUrl");
-    const v = (inp?.value || "").trim();
-    if (v) return v.replace(/\/+$/, "");
+    const input = $("#apiUrl");
+    const val = (input?.value || "").trim();
+    if (val) return val.replace(/\/+$/, "");
 
-    // 2) les différentes clés qu’on utilise dans le projet
     try {
       const fromLS =
-        localStorage.getItem("staff_api_url") ||               // 👈 c’est celle-ci qui manquait
+        localStorage.getItem("staff_api_url") ||   // 👈 c’est celle que ton staff utilise
         localStorage.getItem("orders_api_url_v11") ||
         localStorage.getItem("api_url") ||
-        localStorage.getItem("API_URL") ||
-        "";
+        localStorage.getItem("API_URL") || "";
       return fromLS.trim().replace(/\/+$/, "");
     } catch {
       return "";
     }
   }
 
-  // -------- 2. helpers DOM --------
-  function findTableCard(tableId) {
-    if (!tableId) return null;
-    const id = tableId.toUpperCase();
+  async function fetchSummary() {
+    const base = getApiBase();
+    if (!base) return null;
+    const res = await fetch(base + "/summary", { cache: "no-store" });
+    if (!res.ok) return null;
+    return res.json();
+  }
 
-    // essayer data-table
+  // ----------- DOM helpers -----------
+  function findTableCard(tableId) {
+    const id = tableId.toUpperCase();
+    // data-table
     let card = document.querySelector(`[data-table="${id}"]`);
     if (card) return card;
 
-    // sinon via la 1re .chip
+    // sinon via première .chip
     const all = document.querySelectorAll(".table");
     for (const c of all) {
       const chip = c.querySelector(".chip");
@@ -59,171 +60,126 @@ console.log("[table-status] loaded ✅ (sync sur /summary + suppression 'En atte
     return null;
   }
 
-  function getTableIdFromCard(card) {
-    if (!card) return null;
-    if (card.dataset.table) return card.dataset.table.toUpperCase();
-    const chip = card.querySelector(".chip");
-    if (chip) return chip.textContent.trim().toUpperCase();
-    return null;
-  }
-
-  // crée/récupère la pastille juste après le n° de table
-  function ensureBadge(card) {
+  // 🔴 le badge qu’on veut mettre à jour, et rien d’autre
+  function getStatusBadge(card) {
     if (!card) return null;
 
-    // on enlève les vieux "En attente : 0"
+    // on enlève d’éventuels vieux "En attente : 0" posés dans la même ligne
     card.querySelectorAll("span, small").forEach((el) => {
-      const txt = (el.textContent || "").trim().toLowerCase();
-      if (txt.startsWith("en attente")) el.remove();
+      const t = (el.textContent || "").trim().toLowerCase();
+      if (t.startsWith("en attente")) el.remove();
     });
 
-    let badge = card.querySelector(".table-status-badge");
-    if (badge) return badge;
-
-    const chip = card.querySelector(".chip");
-    badge = document.createElement("span");
-    badge.className = "table-status-badge";
-    badge.style.display = "inline-block";
-    badge.style.marginLeft = "6px";
-    badge.style.fontSize = "12px";
-    badge.style.padding = "2px 8px";
-    badge.style.borderRadius = "999px";
-    badge.style.color = "#fff";
-    badge.style.background = STATUS.empty.color;
-    badge.textContent = STATUS.empty.label;
-
-    if (chip && chip.parentNode) {
-      chip.parentNode.insertBefore(badge, chip.nextSibling);
-    } else {
-      card.prepend(badge);
-    }
-    return badge;
+    const badge = card.querySelector(".status-chip");
+    return badge || null;
   }
 
-  // applique un état visible
-  function applyStatus(tableId, statusKey) {
+  function setStatus(tableId, statusKey) {
     const def = STATUS[statusKey] || STATUS.empty;
-    const id = tableId.toUpperCase();
-    tableState[id] = statusKey;
+    const card = findTableCard(tableId);
+    if (!card) return;
+    const badge = getStatusBadge(card);
+    if (!badge) return;             // 👈 si pas de badge, on NE TOUCHE PAS aux boutons
 
-    const card  = findTableCard(id);
-    const badge = card ? ensureBadge(card) : null;
-    if (!badge) return;
-
-    badge.textContent = def.label;
+    badge.textContent = def.text;
     badge.style.background = def.color;
+    tableState[tableId.toUpperCase()] = statusKey;
   }
 
-  // -------- 3. timer "doit payer" --------
-  function startToPayTimer(tableId) {
+  function startToPay(tableId) {
     const id = tableId.toUpperCase();
-    clearToPayTimer(id);
-    toPayTimers[id] = setTimeout(() => {
+    clearToPay(id);
+    payTimers[id] = setTimeout(() => {
       if (tableState[id] !== "paid") {
-        applyStatus(id, "toPay");
+        setStatus(id, "toPay");
       }
     }, 15 * 60 * 1000);
   }
-  function clearToPayTimer(tableId) {
+
+  function clearToPay(tableId) {
     const id = tableId.toUpperCase();
-    if (toPayTimers[id]) {
-      clearTimeout(toPayTimers[id]);
-      delete toPayTimers[id];
+    if (payTimers[id]) {
+      clearTimeout(payTimers[id]);
+      delete payTimers[id];
     }
   }
 
-  // -------- 4. init à l’affichage --------
-  function initTablesOnce() {
-    const cards = document.querySelectorAll(".table");
-    if (!cards.length) return false;
-    cards.forEach((card) => {
-      const id = getTableIdFromCard(card);
-      const badge = ensureBadge(card);
-      if (!id) return;
-      if (tableState[id]) {
-        applyStatus(id, tableState[id]);
-      } else {
-        badge.textContent = STATUS.empty.label;
-        badge.style.background = STATUS.empty.color;
-        tableState[id] = "empty";
-      }
-    });
-    return true;
-  }
-
-  // -------- 5. synchronisation /summary --------
+  // ----------- sync /summary -----------
   async function syncFromSummary() {
-    const base = getApiBase();
-    if (!base) return;
-    try {
-      const res = await fetch(base + "/summary", { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
-      const tickets = data.tickets || [];
+    const data = await fetchSummary();
+    if (!data) return;
+    const tickets = data.tickets || [];
 
-      // tables qui ont actuellement une commande
-      const tablesWithOrders = new Set(
-        tickets
-          .map((t) => (t.table || "").toUpperCase())
-          .filter((x) => x.length > 0)
-      );
+    // tables qui ont une commande
+    const busy = new Set(
+      tickets
+        .map((t) => (t.table || "").toUpperCase())
+        .filter(Boolean)
+    );
 
-      // celles qui ont une commande → "Commandée" (si elles étaient vides)
-      tablesWithOrders.forEach((tid) => {
-        const cur = tableState[tid];
-        if (!cur || cur === "empty") {
-          applyStatus(tid, "ordered");
-        }
-      });
-
-      // celles qui n'en ont plus → on les remet "Vide" seulement si elles étaient "Commandée"
-      Object.keys(tableState).forEach((tid) => {
-        if (tableState[tid] === "ordered" && !tablesWithOrders.has(tid)) {
-          applyStatus(tid, "empty");
-        }
-      });
-    } catch (err) {
-      console.warn("[table-status] sync erreur:", err.message);
-    }
-  }
-
-  // -------- 6. clic sur les boutons verts --------
-  function setupButtonListeners() {
-    document.addEventListener("click", (e) => {
-      const btn  = e.target.closest("button");
-      if (!btn) return;
-      const txt  = btn.textContent.trim().toLowerCase();
-      const card = btn.closest(".table, [data-table]");
-      if (!card) return;
-      const tableId = getTableIdFromCard(card);
-      if (!tableId) return;
-
-      if (txt.includes("imprimer")) {
-        applyStatus(tableId, "preparing");
-        startToPayTimer(tableId);
-        return;
+    // celles-là → "Commandée" (si pas déjà plus avancé)
+    busy.forEach((tid) => {
+      const current = tableState[tid];
+      if (!current || current === "empty") {
+        setStatus(tid, "ordered");
       }
-      if (txt.includes("paiement")) {
-        applyStatus(tableId, "paid");
-        clearToPayTimer(tableId);
-        // on laisse au staff le temps de voir "Payée", puis on repasse à "Vide"
-        setTimeout(() => {
-          applyStatus(tableId, "empty");
-        }, 2000);
-        return;
+    });
+
+    // celles qui ne sont plus dans le résumé → on remet "Vide" si elles étaient "Commandée"
+    Object.keys(tableState).forEach((tid) => {
+      if (!busy.has(tid) && tableState[tid] === "ordered") {
+        setStatus(tid, "empty");
       }
     });
   }
 
-  // -------- 7. démarrage --------
+  // ----------- clics sur les boutons ----------- 
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+
+    const card = btn.closest(".table, [data-table]");
+    if (!card) return;
+
+    const firstChip = card.querySelector(".chip");
+    const tableId = firstChip ? firstChip.textContent.trim().toUpperCase() : card.dataset.table;
+    if (!tableId) return;
+
+    const label = btn.textContent.trim().toLowerCase();
+
+    if (label.includes("imprimer")) {
+      // seul le badge change
+      setStatus(tableId, "preparing");
+      startToPay(tableId);
+    } else if (label.includes("paiement")) {
+      setStatus(tableId, "paid");
+      clearToPay(tableId);
+      // si tu veux laisser "payée" définitivement, supprime les 2 lignes suivantes
+      setTimeout(() => {
+        setStatus(tableId, "empty");
+      }, 1500);
+    }
+  });
+
+  // ----------- démarrage ----------- 
   window.addEventListener("load", () => {
-    // on laisse le temps à app.js de dessiner les cartes
+    // petite latence pour laisser app.js dessiner les cartes
     setTimeout(() => {
-      initTablesOnce();
-      setupButtonListeners();
+      // init : tout le monde en "Vide"
+      document.querySelectorAll(".table").forEach((card) => {
+        const chip = card.querySelector(".status-chip");
+        if (chip) {
+          chip.textContent = STATUS.empty.text;
+          chip.style.background = STATUS.empty.color;
+          const id = (card.querySelector(".chip")?.textContent || "").trim().toUpperCase();
+          if (id) tableState[id] = "empty";
+        }
+      });
+
+      // 1er sync
       syncFromSummary();
-      // toutes les 8 secondes → on recalcule
+      // puis toutes les 8s
       setInterval(syncFromSummary, 8000);
-    }, 500);
+    }, 400);
   });
 })();

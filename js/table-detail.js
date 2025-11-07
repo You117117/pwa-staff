@@ -1,8 +1,7 @@
 // js/table-detail.js
-// Panneau latéral qui affiche les tickets d’une table
-// + total cumulé clair et mise en page améliorée
+// Panneau latéral : affiche les tickets d'une table + bloc total bien visible
 
-console.log("[table-detail] panneau latéral (DOM) + total cumulé + style clair");
+console.log("[table-detail] panneau latéral + total visible");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
@@ -38,7 +37,7 @@ console.log("[table-detail] panneau latéral (DOM) + total cumulé + style clair
 
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
-  // === outils ===
+  // ===== helpers =====
   function getTicketsForTable(tableId) {
     const summary = $("#summary");
     if (!summary) return [];
@@ -56,7 +55,7 @@ console.log("[table-detail] panneau latéral (DOM) + total cumulé + style clair
     return m ? parseFloat(m[1]) : 0;
   }
 
-  // === affichage principal ===
+  // ===== affichage panneau =====
   function openPanelForTable(tableId) {
     const title = $("#panelTitle");
     const sub = $("#panelSubtitle");
@@ -73,12 +72,12 @@ console.log("[table-detail] panneau latéral (DOM) + total cumulé + style clair
       return;
     }
 
-    // total cumulé
+    // calcul du total cumulé
     const total = cards.reduce((acc, c) => acc + extractTotalFromCard(c), 0);
     sub.textContent = `${cards.length} ticket(s) • Total cumulé : ${total.toFixed(2)} €`;
 
-    // rendu clair et lisible
-    content.innerHTML = cards
+    // rendu des tickets
+    const ticketsHtml = cards
       .map((card, i) => {
         const chips = [...card.querySelectorAll(".chip")]
           .map((c) => c.textContent.trim())
@@ -91,20 +90,27 @@ console.log("[table-detail] panneau latéral (DOM) + total cumulé + style clair
 
         return `
           <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:12px;margin-bottom:12px;">
-            <div style="font-size:.8rem;color:#9CA3AF;margin-bottom:4px;display:flex;justify-content:space-between;">
-              <span>Ticket #${i + 1}</span>
-              <span>${chips}</span>
+            <div style="font-size:.75rem;color:#9CA3AF;margin-bottom:4px;">
+              Ticket #${i + 1} • ${chips}
             </div>
-            <div style="font-size:1rem;color:#f3f4f6;font-weight:500;margin-top:6px;">
-              ${products || "—"}
-            </div>
+            <div style="font-size:1rem;color:#F9FAFB;">${products || "—"}</div>
           </div>
         `;
       })
       .join("");
+
+    // bloc total bien visible (la zone rouge de ta capture)
+    const totalBlock = `
+      <div style="margin-top:10px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);border-radius:10px;padding:14px;">
+        <div style="font-size:.75rem;color:#A7F3D0;letter-spacing:.02em;">TOTAL DE LA TABLE</div>
+        <div style="font-size:1.6rem;font-weight:700;margin-top:4px;">${total.toFixed(2)} €</div>
+      </div>
+    `;
+
+    content.innerHTML = ticketsHtml + totalBlock;
   }
 
-  // === clic sur une table ===
+  // clic sur une carte de table
   document.addEventListener("click", (e) => {
     const card = e.target.closest(".table");
     if (!card || e.target.closest("#tablePanel")) return;

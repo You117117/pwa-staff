@@ -1,13 +1,13 @@
 // js/table-detail.js
-// Panneau latéral qui affiche le récap d'une table
-// + calcule le total cumulé à partir de la colonne "Résumé du jour"
+// Panneau latéral qui affiche les tickets d’une table
+// et le total cumulé, en lisant la colonne "Résumé du jour"
 
 console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
 
 (function () {
   const $ = (s, r = document) => r.querySelector(s);
 
-  // création panneau
+  // === panneau ===
   const panel = document.createElement("div");
   panel.id = "tablePanel";
   Object.assign(panel.style, {
@@ -38,34 +38,24 @@ console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
 
   $("#panelClose").onclick = () => (panel.style.right = "-420px");
 
-  // lit la colonne de droite et renvoie les tickets de la table
-  function getTicketsForTable(tableId) {
+  // récupère toutes les cartes du résumé pour cette table
+  function getCardsForTable(tableId) {
     const summary = $("#summary");
     if (!summary) return [];
-
     const cards = [...summary.querySelectorAll(".table")];
-    const matches = [];
-
-    cards.forEach((card) => {
-      // la première pastille est le numéro de table
-      const chipTable = card.querySelector(".chip");
-      const txt = chipTable ? chipTable.textContent.trim() : "";
-      if (txt === tableId) {
-        matches.push(card);
-      }
+    return cards.filter((card) => {
+      const chip = card.querySelector(".chip");
+      return chip && chip.textContent.trim() === tableId;
     });
-
-    return matches;
   }
 
-  // extrait le total "Total : 52.8 €" d'une carte du résumé
+  // extrait "Total : 52.8 €" d'une carte
   function extractTotalFromCard(card) {
-    // dans tes captures c'est le 3ème chip
     const chips = [...card.querySelectorAll(".chip")];
     const totalChip = chips.find((c) => c.textContent.includes("Total"));
     if (!totalChip) return 0;
-    const txt = totalChip.textContent; // "Total : 52.8 €"
-    const m = txt.replace(",", ".").match(/([\d.]+)\s*€?/);
+    const txt = totalChip.textContent.replace(",", ".");
+    const m = txt.match(/([\d.]+)\s*€?/);
     return m ? parseFloat(m[1]) : 0;
   }
 
@@ -77,7 +67,7 @@ console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
     title.textContent = "Table " + tableId;
     panel.style.right = "0";
 
-    const cards = getTicketsForTable(tableId);
+    const cards = getCardsForTable(tableId);
 
     if (!cards.length) {
       sub.textContent = "Aucune commande pour cette table";
@@ -85,42 +75,47 @@ console.log("[table-detail] panneau latéral (DOM only) + total cumulé");
       return;
     }
 
-    // calcul du total cumulé
+    // calc total cumulé
     let total = 0;
-    cards.forEach((c) => {
-      total += extractTotalFromCard(c);
-    });
-
+    cards.forEach((c) => (total += extractTotalFromCard(c)));
     sub.textContent = `${cards.length} ticket(s) • Total cumulé : ${total.toFixed(2)} €`;
 
-    // on reconstruit un affichage propre
+    // construire l'affichage
     content.innerHTML = cards
       .map((card) => {
+        // chips du ticket (T9 • 00:05 • Total : 52.8 €)
         const chips = [...card.querySelectorAll(".chip")]
           .map((c) => c.textContent.trim())
           .join(" • ");
 
-        const products =
-          card.querySelector(".muted")?.textContent?.trim() ||
-          card.querySelector("p")?.textContent?.trim() ||
-          "";
+        // le texte visible (4× Cheeseburger, 4× Frites…)
+        // on prend le premier texte non vide en dehors des chips
+        let lineText = "";
+        // souvent c'est dans un <p>
+        const p = card.querySelector("p");
+        if (p && p.textContent.trim()) {
+          lineText = p.textContent.trim();
+        } else {
+          // fallback : on prend le texte global et on enlève les chips
+          const full = card.textContent.trim();
+          lineText = full.replace(chips, "").trim();
+        }
 
         return `
           <div style="background:#0f172a;border:1px solid #1f2937;border-radius:10px;padding:10px;margin-bottom:10px;">
             <div style="font-size:.7rem;color:#9CA3AF;margin-bottom:4px;">${chips}</div>
-            <div>${products || "—"}</div>
+            <div>${lineText || "—"}</div>
           </div>
         `;
       })
       .join("");
   }
 
-  // clic sur une table
+  // clic sur une table de la grille
   document.addEventListener("click", (e) => {
     const card = e.target.closest(".table");
     if (!card || e.target.closest("#tablePanel")) return;
 
-    // le numéro de table est dans la première .chip > b
     const id =
       card.querySelector(".chip b")?.textContent.trim() ||
       card.querySelector(".chip")?.textContent.trim() ||

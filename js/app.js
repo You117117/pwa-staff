@@ -1,6 +1,8 @@
 // js/app.js
-// charge les tables + le résumé et affiche tout dans la page
-// ajout d’un badge de statut entre T1 et "Dernier : ..."
+// - charge URL API depuis localStorage
+// - permet de mémoriser
+// - récupère /tables et /summary
+// - affiche un badge de statut entre T1 et "Dernier : ..."
 
 const API_INPUT_ID = "apiUrl";
 const TABLES_CONTAINER_ID = "tables";
@@ -8,6 +10,10 @@ const SUMMARY_CONTAINER_ID = "summary";
 const FILTER_SELECT_ID = "filter";
 const REFRESH_BTN_ID = "btnRefresh";
 const REFRESH_SUMMARY_BTN_ID = "btnRefreshSummary";
+const MEMO_BTN_ID = "btnMemorize";
+const HEALTH_BTN_ID = "btnHealth";
+
+const LS_KEY = "staff_api_url";
 
 let CURRENT_API_URL = "";
 
@@ -16,13 +22,25 @@ function $(sel, root = document) {
   return root.querySelector(sel);
 }
 
+// charge l’URL depuis le champ ou depuis le localStorage
 function getApiUrl() {
   if (CURRENT_API_URL) return CURRENT_API_URL;
   const input = $("#" + API_INPUT_ID);
-  return input ? input.value.trim() : "";
+  if (input && input.value.trim()) {
+    return input.value.trim();
+  }
+  const saved = localStorage.getItem(LS_KEY) || "";
+  return saved;
 }
 
-// ---------- RÉCUP TABLES ----------
+// met à jour le champ et la variable
+function setApiUrl(url) {
+  CURRENT_API_URL = url;
+  const input = $("#" + API_INPUT_ID);
+  if (input) input.value = url;
+}
+
+// ---------- APPELS API ----------
 async function fetchTables() {
   const url = getApiUrl();
   if (!url) return [];
@@ -30,15 +48,13 @@ async function fetchTables() {
     const res = await fetch(url + "/tables");
     if (!res.ok) throw new Error("HTTP " + res.status);
     const json = await res.json();
-    // on standardise un peu
     return Array.isArray(json.tables) ? json.tables : json;
   } catch (err) {
-    console.warn("[STAFF] erreur tables", err);
+    console.warn("[STAFF] erreur /tables", err);
     return [];
   }
 }
 
-// ---------- RÉCUP SUMMARY ----------
 async function fetchSummary() {
   const url = getApiUrl();
   if (!url) return [];
@@ -48,7 +64,7 @@ async function fetchSummary() {
     const json = await res.json();
     return Array.isArray(json.tickets) ? json.tickets : json;
   } catch (err) {
-    console.warn("[STAFF] erreur summary", err);
+    console.warn("[STAFF] erreur /summary", err);
     return [];
   }
 }
@@ -71,15 +87,13 @@ function renderTables(tables) {
     .forEach((table) => {
       const id = table.id || table.name || "";
       const last = table.last || table.last_order || "--:--";
-      // IMPORTANT : on récup le statut que renvoie l’API
+      // statut envoyé par l’API, sinon “Vide”
       const status = table.status || "Vide";
 
       const card = document.createElement("div");
       card.className = "table";
       card.dataset.table = id;
 
-      // on construit le header avec 3 chips :
-      // [T1] [Commandée] [Dernier : 00:07]
       card.innerHTML = `
         <div class="table-head">
           <div class="chip"><b>${id}</b></div>
@@ -90,24 +104,15 @@ function renderTables(tables) {
         <button class="btn btn-primary btn-pay">Paiement confirmé</button>
       `;
 
-      // actions boutons (on laisse comme mock)
-      card.querySelector(".btn-print").onclick = () => {
-        console.log("[STAFF] impression", id);
-      };
-      card.querySelector(".btn-pay").onclick = () => {
-        console.log("[STAFF] paiement confirmé", id);
-      };
-
       container.appendChild(card);
     });
 
-  // si rien
   if (!container.children.length) {
     container.innerHTML = `<p class="muted" id="tablesEmpty">Aucune table</p>`;
   }
 }
 
-// classe css selon statut (tu peux styler dans style.css)
+// retourne une classe css en fonction du texte
 function statusClass(status) {
   const s = status.toLowerCase();
   if (s.includes("command")) return "is-warning";
@@ -123,12 +128,11 @@ function renderSummary(tickets) {
   container.innerHTML = "";
 
   tickets.forEach((t) => {
-    // t.table, t.time, t.total, t.lines…
     const div = document.createElement("div");
     div.className = "table";
     div.innerHTML = `
       <div class="chip"><b>${t.table}</b></div>
-      <div class="chip muted"><span class="icon">🕒</span> ${t.time || ""}</div>
+      <div class="chip muted">🕒 ${t.time || ""}</div>
       <div class="chip muted">Total : ${t.total || ""}</div>
       <p class="muted">${t.items || t.lines || ""}</p>
     `;
@@ -140,17 +144,47 @@ function renderSummary(tickets) {
   }
 }
 
-// ---------- INIT ----------
+// ---------- ACTIONS ----------
 async function refreshAll() {
   const [tables, summary] = await Promise.all([fetchTables(), fetchSummary()]);
   renderTables(tables);
   renderSummary(summary);
 }
 
+async function testHealth() {
+  const url = getApiUrl();
+  if (!url) return alert("Pas d’URL API");
+  try {
+    const res = await fetch(url + "/health");
+    alert("/health → " + res.status);
+  } catch (e) {
+    alert("Erreur /health");
+  }
+}
+
+// ---------- INIT ----------
 function init() {
-  const input = $("#" + API_INPUT_ID);
-  if (input) {
-    CURRENT_API_URL = input.value.trim();
+  // recharger l’URL mémorisée
+  const saved = localStorage.getItem(LS_KEY);
+  if (saved) {
+    setApiUrl(saved);
+  }
+
+  // bouton mémoriser
+  const memoBtn = $("#" + MEMO_BTN_ID);
+  if (memoBtn) {
+    memoBtn.onclick = () => {
+      const val = $("#" + API_INPUT_ID).value.trim();
+      if (!val) return;
+      localStorage.setItem(LS_KEY, val);
+      setApiUrl(val);
+    };
+  }
+
+  // bouton /health
+  const healthBtn = $("#" + HEALTH_BTN_ID);
+  if (healthBtn) {
+    healthBtn.onclick = testHealth;
   }
 
   const btn = $("#" + REFRESH_BTN_ID);
@@ -162,6 +196,7 @@ function init() {
   const filter = $("#" + FILTER_SELECT_ID);
   if (filter) filter.onchange = refreshAll;
 
+  // premier chargement
   refreshAll();
 }
 

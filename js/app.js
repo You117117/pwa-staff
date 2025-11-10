@@ -1,4 +1,4 @@
-// app.js — version DOMContentLoaded + statuts locaux + verrou anti-retour à "Vide"
+// app.js — version DOMContentLoaded + statuts locaux + verrou anti-retour à "Vide" + résumé du jour sans undefined
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -93,14 +93,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const forced = getLocalStatus(id);
 
       // -------- LOGIQUE ANTI-CLIGNOTEMENT --------
-      // règle 1 : si on a un statut forcé → on l'affiche
       let finalStatus;
       if (forced) {
         finalStatus = forced;
       } else if (prev && prev !== 'Vide') {
-        // règle 2 : si on avait déjà un statut "avancé" (pas Vide),
-        // on NE REDESCEND PAS à Vide même si le backend le dit
-        // ex: prev = "Commandée" et backend = "Vide" → on garde "Commandée"
         const prevIdx = PRIORITY.indexOf(prev);
         const backIdx = PRIORITY.indexOf(backendStatus);
         if (prevIdx > backIdx) {
@@ -109,7 +105,6 @@ document.addEventListener('DOMContentLoaded', () => {
           finalStatus = backendStatus;
         }
       } else {
-        // première fois ou toujours Vide → on prend le backend
         finalStatus = backendStatus;
       }
       // -------------------------------------------
@@ -145,9 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           alert(`Impression pour ${id}`);
-          // on force 20 min
           setPreparationFor20min(id);
-          // et on rerend via un fetch frais
           refreshTables();
         });
       }
@@ -158,7 +151,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           alert(`Paiement confirmé pour ${id}`);
-          // on force en "Doit payer" et on le fixe dans la mémoire globale
           localTableStatus[id] = { phase: 'PAY', until: null };
           window.lastKnownStatus[id] = 'Doit payer';
           refreshTables();
@@ -169,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // 🔽🔽🔽 ICI on corrige "undefined" dans résumé du jour
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -181,6 +174,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (summaryEmpty) summaryEmpty.style.display = 'none';
 
     tickets.forEach((t) => {
+      // on essaie de construire un texte lisible
+      let bodyText = '';
+      if (t.label) {
+        bodyText = t.label;
+      } else if (Array.isArray(t.items)) {
+        bodyText = t.items
+          .map((it) => {
+            const qty = it.qty || it.quantity || 1;
+            const name = it.label || it.name || it.title || 'article';
+            return `${qty}× ${name}`;
+          })
+          .join(', ');
+      } else if (Array.isArray(t.lines)) {
+        bodyText = t.lines
+          .map((it) => {
+            const qty = it.qty || it.quantity || 1;
+            const name = it.label || it.name || it.title || 'article';
+            return `${qty}× ${name}`;
+          })
+          .join(', ');
+      } else {
+        bodyText = ''; // on n'affiche rien plutôt que "undefined"
+      }
+
       const item = document.createElement('div');
       item.className = 'summaryItem';
       item.innerHTML = `
@@ -189,11 +206,12 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
           <span class="chip">Total : ${t.total} €</span>
         </div>
-        <div class="body">${t.label}</div>
+        <div class="body">${bodyText}</div>
       `;
       summaryContainer.appendChild(item);
     });
   }
+  // 🔼🔼🔼 fin correctif résumé du jour
 
   async function refreshTables() {
     const base = getApiBase();

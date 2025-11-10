@@ -1,203 +1,236 @@
-// js/app.js
-// - charge URL API depuis localStorage
-// - permet de mémoriser
-// - récupère /tables et /summary
-// - affiche un badge de statut entre T1 et "Dernier : ..."
+// === app.js — version avec statut local (prépa 20 min) ===
 
-const API_INPUT_ID = "apiUrl";
-const TABLES_CONTAINER_ID = "tables";
-const SUMMARY_CONTAINER_ID = "summary";
-const FILTER_SELECT_ID = "filter";
-const REFRESH_BTN_ID = "btnRefresh";
-const REFRESH_SUMMARY_BTN_ID = "btnRefreshSummary";
-const MEMO_BTN_ID = "btnMemorize";
-const HEALTH_BTN_ID = "btnHealth";
+// Sélecteurs
+const apiInput = document.querySelector('#apiUrl');
+const btnMemorize = document.querySelector('#btnMemorize');
+const btnHealth = document.querySelector('#btnHealth');
+const tablesContainer = document.querySelector('#tables');
+const tablesEmpty = document.querySelector('#tablesEmpty');
+const btnRefreshTables = document.querySelector('#btnRefresh');
+const filterSelect = document.querySelector('#filterTables');
+const summaryContainer = document.querySelector('#summary');
+const summaryEmpty = document.querySelector('#summaryEmpty');
+const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
-const LS_KEY = "staff_api_url";
+// Intervalle de rafraîchissement (ms)
+const REFRESH_MS = 5000;
 
-let CURRENT_API_URL = "";
+// --- store des statuts forcés côté front ---
+// structure : { "T7": { phase: "PREPARATION", until: 1731240000000 } }
+const localTableStatus = {};
 
-// petit helper
-function $(sel, root = document) {
-  return root.querySelector(sel);
+// utilitaire pour poser 20 minutes de préparation
+function setPreparationFor20min(tableId) {
+  const TWENTY_MIN = 20 * 60 * 1000;
+  localTableStatus[tableId] = {
+    phase: 'PREPARATION',
+    until: Date.now() + TWENTY_MIN,
+  };
 }
 
-// charge l’URL depuis le champ ou depuis le localStorage
-function getApiUrl() {
-  if (CURRENT_API_URL) return CURRENT_API_URL;
-  const input = $("#" + API_INPUT_ID);
-  if (input && input.value.trim()) {
-    return input.value.trim();
+// récupère le statut à afficher si on en a un local
+function getLocalStatus(tableId) {
+  const st = localTableStatus[tableId];
+  if (!st) return null;
+
+  const now = Date.now();
+
+  // cas "en préparation"
+  if (st.phase === 'PREPARATION') {
+    if (now < st.until) {
+      return 'En préparation';
+    } else {
+      // les 20 min sont passées → on passe en "doit payer"
+      localTableStatus[tableId] = { phase: 'PAY', until: null };
+      return 'Doit payer';
+    }
   }
-  const saved = localStorage.getItem(LS_KEY) || "";
-  return saved;
-}
 
-// met à jour le champ et la variable
-function setApiUrl(url) {
-  CURRENT_API_URL = url;
-  const input = $("#" + API_INPUT_ID);
-  if (input) input.value = url;
-}
-
-// ---------- APPELS API ----------
-async function fetchTables() {
-  const url = getApiUrl();
-  if (!url) return [];
-  try {
-    const res = await fetch(url + "/tables");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const json = await res.json();
-    return Array.isArray(json.tables) ? json.tables : json;
-  } catch (err) {
-    console.warn("[STAFF] erreur /tables", err);
-    return [];
+  // cas "doit payer" déjà posé
+  if (st.phase === 'PAY') {
+    return 'Doit payer';
   }
+
+  return null;
 }
 
-async function fetchSummary() {
-  const url = getApiUrl();
-  if (!url) return [];
-  try {
-    const res = await fetch(url + "/summary");
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const json = await res.json();
-    return Array.isArray(json.tickets) ? json.tickets : json;
-  } catch (err) {
-    console.warn("[STAFF] erreur /summary", err);
-    return [];
-  }
+// Utilitaires
+function getApiBase() {
+  return apiInput.value.trim();
 }
 
-// ---------- RENDU TABLES ----------
+function formatTime(dateString) {
+  if (!dateString) return '--:--';
+  const d = new Date(dateString);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+// Rendu des tables
 function renderTables(tables) {
-  const container = $("#" + TABLES_CONTAINER_ID);
-  if (!container) return;
+  tablesContainer.innerHTML = '';
 
-  const filter = $("#" + FILTER_SELECT_ID);
-  const filterVal = filter ? filter.value : "ALL";
+  if (!tables || !tables.length) {
+    tablesEmpty.style.display = 'block';
+    return;
+  }
 
-  container.innerHTML = "";
+  tablesEmpty.style.display = 'none';
+  const filter = filterSelect.value;
 
-  tables
-    .filter((t) => {
-      if (filterVal === "ALL") return true;
-      return t.id === filterVal;
-    })
-    .forEach((table) => {
-      const id = table.id || table.name || "";
-      const last = table.last || table.last_order || "--:--";
-      // statut envoyé par l’API, sinon “Vide”
-      const status = table.status || "Vide";
+  tables.forEach((table) => {
+    const id = table.id;
+    if (filter !== 'Toutes' && filter !== id) return;
 
-      const card = document.createElement("div");
-      card.className = "table";
-      card.dataset.table = id;
+    const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      card.innerHTML = `
-        <div class="table-head">
-          <div class="chip"><b>${id}</b></div>
-          <div class="chip chip-status ${statusClass(status)}">${status}</div>
-          <div class="chip muted">Dernier : ${last}</div>
-        </div>
+    // ✅ priorité au statut local (imprimer → en préparation 20 min → doit payer)
+    const forced = getLocalStatus(id);
+    const status = forced ? forced : (table.status || 'Vide');
+
+    const card = document.createElement('div');
+    card.className = 'table';
+    card.setAttribute('data-table', id);
+
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="chip">${id}</span>
+        <span class="chip">${status}</span>
+        <span class="chip">Dernier : ${last}</span>
+      </div>
+      <div class="card-actions">
         <button class="btn btn-primary btn-print">Imprimer maintenant</button>
-        <button class="btn btn-primary btn-pay">Paiement confirmé</button>
-      `;
+        <button class="btn btn-primary btn-paid">Paiement confirmé</button>
+      </div>
+    `;
 
-      container.appendChild(card);
+    // clic sur la carte → détail
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      openTableDetail(id);
     });
 
-  if (!container.children.length) {
-    container.innerHTML = `<p class="muted" id="tablesEmpty">Aucune table</p>`;
-  }
+    // bouton imprimer
+    card.querySelector('.btn-print').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      // ici tu fais ton appel backend si tu veux vraiment imprimer
+      // const base = getApiBase();
+      // if (base) await fetch(`${base}/print`, { method: 'POST', body: JSON.stringify({ table: id }) })
+
+      alert(`Impression pour ${id}`);
+
+      // ✅ on force le statut en local pendant 20 min
+      setPreparationFor20min(id);
+      // on relance un rendu pour afficher tout de suite
+      refreshTables();
+    });
+
+    // bouton paiement confirmé
+    card.querySelector('.btn-paid').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      alert(`Paiement confirmé pour ${id}`);
+
+      // si tu veux, on peut aussi fixer localement :
+      localTableStatus[id] = { phase: 'PAY', until: null };
+      refreshTables();
+    });
+
+    tablesContainer.appendChild(card);
+  });
 }
 
-// retourne une classe css en fonction du texte
-function statusClass(status) {
-  const s = status.toLowerCase();
-  if (s.includes("command")) return "is-warning";
-  if (s.includes("payer") || s.includes("doit")) return "is-danger";
-  if (s.includes("payé") || s.includes("payee") || s.includes("confirm")) return "is-success";
-  return "is-muted";
-}
-
-// ---------- RENDU SUMMARY ----------
+// Rendu du résumé
 function renderSummary(tickets) {
-  const container = $("#" + SUMMARY_CONTAINER_ID);
-  if (!container) return;
-  container.innerHTML = "";
+  summaryContainer.innerHTML = '';
+
+  if (!tickets || !tickets.length) {
+    summaryEmpty.style.display = 'block';
+    return;
+  }
+
+  summaryEmpty.style.display = 'none';
 
   tickets.forEach((t) => {
-    const div = document.createElement("div");
-    div.className = "table";
-    div.innerHTML = `
-      <div class="chip"><b>${t.table}</b></div>
-      <div class="chip muted">🕒 ${t.time || ""}</div>
-      <div class="chip muted">Total : ${t.total || ""}</div>
-      <p class="muted">${t.items || t.lines || ""}</p>
+    const item = document.createElement('div');
+    item.className = 'summaryItem';
+    item.innerHTML = `
+      <div class="head">
+        <span class="chip">${t.table}</span>
+        <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
+        <span class="chip">Total : ${t.total} €</span>
+      </div>
+      <div class="body">${t.label}</div>
     `;
-    container.appendChild(div);
+    summaryContainer.appendChild(item);
   });
-
-  if (!container.children.length) {
-    container.innerHTML = `<p class="muted" id="summaryEmpty">Aucun ticket aujourd'hui.</p>`;
-  }
 }
 
-// ---------- ACTIONS ----------
-async function refreshAll() {
-  const [tables, summary] = await Promise.all([fetchTables(), fetchSummary()]);
-  renderTables(tables);
-  renderSummary(summary);
-}
-
-async function testHealth() {
-  const url = getApiUrl();
-  if (!url) return alert("Pas d’URL API");
+// Rafraîchissement
+async function refreshTables() {
+  const base = getApiBase();
+  if (!base) return;
   try {
-    const res = await fetch(url + "/health");
-    alert("/health → " + res.status);
-  } catch (e) {
-    alert("Erreur /health");
+    const res = await fetch(`${base}/tables`);
+    const data = await res.json();
+    renderTables(data.tables || []);
+  } catch (err) {
+    console.error('[STAFF] erreur tables', err);
   }
 }
 
-// ---------- INIT ----------
-function init() {
-  // recharger l’URL mémorisée
-  const saved = localStorage.getItem(LS_KEY);
-  if (saved) {
-    setApiUrl(saved);
+async function refreshSummary() {
+  const base = getApiBase();
+  if (!base) return;
+  try {
+    const res = await fetch(`${base}/summary`);
+    const data = await res.json();
+    renderSummary(data.tickets || []);
+  } catch (err) {
+    console.error('[STAFF] erreur summary', err);
   }
-
-  // bouton mémoriser
-  const memoBtn = $("#" + MEMO_BTN_ID);
-  if (memoBtn) {
-    memoBtn.onclick = () => {
-      const val = $("#" + API_INPUT_ID).value.trim();
-      if (!val) return;
-      localStorage.setItem(LS_KEY, val);
-      setApiUrl(val);
-    };
-  }
-
-  // bouton /health
-  const healthBtn = $("#" + HEALTH_BTN_ID);
-  if (healthBtn) {
-    healthBtn.onclick = testHealth;
-  }
-
-  const btn = $("#" + REFRESH_BTN_ID);
-  if (btn) btn.onclick = refreshAll;
-
-  const btn2 = $("#" + REFRESH_SUMMARY_BTN_ID);
-  if (btn2) btn2.onclick = refreshAll;
-
-  const filter = $("#" + FILTER_SELECT_ID);
-  if (filter) filter.onchange = refreshAll;
-
-  // premier chargement
-  refreshAll();
 }
 
-document.addEventListener("DOMContentLoaded", init);
+// Détail table
+function openTableDetail(tableId) {
+  if (window.showTableDetail) {
+    window.showTableDetail(tableId);
+  }
+}
+
+// Boutons
+btnMemorize.addEventListener('click', () => {
+  const url = getApiBase();
+  localStorage.setItem('staff-api', url);
+});
+
+btnHealth.addEventListener('click', async () => {
+  const base = getApiBase();
+  if (!base) return;
+  try {
+    const res = await fetch(`${base}/health`);
+    const data = await res.json();
+    alert('API OK : ' + JSON.stringify(data));
+  } catch (err) {
+    alert('Erreur API');
+  }
+});
+
+btnRefreshTables.addEventListener('click', refreshTables);
+btnRefreshSummary.addEventListener('click', refreshSummary);
+filterSelect.addEventListener('change', refreshTables);
+
+// Initialisation
+const saved = localStorage.getItem('staff-api');
+if (saved) {
+  apiInput.value = saved;
+}
+
+refreshTables();
+refreshSummary();
+
+setInterval(() => {
+  // 👇 à chaque refresh on redessine, mais le statut local garde la priorité
+  refreshTables();
+  refreshSummary();
+}, REFRESH_MS);

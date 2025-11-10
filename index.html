@@ -4,26 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Resto QR — Staff</title>
-  <!-- On garde le même CSS d'origine -->
+  <!-- ✅ bon chemin -->
   <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
-  <header class="header">
-    <h1>Resto QR — Staff</h1>
-    <div class="api-bar">
-      <label for="apiUrl">URL API</label>
-      <input type="text" id="apiUrl" placeholder="https://orders-api-XXXX.onrender.com" />
-      <button id="btnMemorize" class="btn btn-primary">Mémoriser</button>
-      <button id="btnHealth" class="btn btn-primary">Tester /health</button>
-    </div>
-  </header>
+  <h1>Resto QR — Staff</h1>
 
-  <main class="main">
-    <section class="panel panel-tables">
-      <div class="panel-head">
+  <div class="topbar">
+    <label>URL API</label>
+    <input type="text" id="apiUrl" placeholder="https://..." />
+    <button id="btnMemorize">Mémoriser</button>
+    <button id="btnHealth">Tester /health</button>
+  </div>
+
+  <div class="layout">
+    <div class="tables-section">
+      <div class="section-head">
         <h2>Tables</h2>
-        <div class="filters">
+        <div class="controls">
           <select id="filterTables">
             <option value="Toutes">Toutes</option>
             <option value="T1">T1</option>
@@ -37,12 +36,28 @@
             <option value="T9">T9</option>
             <option value="T10">T10</option>
           </select>
-          <button id="btnRefresh" class="btn btn-secondary">Rafraîchir</button>
+          <button id="btnRefresh">Rafraîchir</button>
         </div>
       </div>
 
-      <div id="tablesEmpty" class="empty">Aucune table.</div>
+      <div id="tablesEmpty" class="empty">Aucune table</div>
       <div id="tables" class="tables"></div>
-    </section>
+    </div>
 
-    <section class="panel panel-summary"
+    <div class="summary-section">
+      <div class="section-head">
+        <h2>Résumé du jour</h2>
+        <button id="btnRefreshSummary">Rafraîchir</button>
+      </div>
+      <div id="summaryEmpty" class="empty">Aucun ticket aujourd’hui.</div>
+      <div id="summary" class="summary"></div>
+    </div>
+  </div>
+
+  <script src="js/bridge-orders-staff.js"></script>
+  <!-- ✅ on force le nouveau JS -->
+  <script src="js/app.js?v=2"></script>
+  <script src="js/table-status.js"></script>
+  <script src="js/table-detail.js?v=5"></script>
+</body>
+</html>

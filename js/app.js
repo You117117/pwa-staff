@@ -1,4 +1,4 @@
-// app.js — version cartes + panneau synchronisés + merge /tables + /summary
+// app.js — version avec fermeture de table après paiement
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -23,6 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!window.lastKnownStatus) {
     window.lastKnownStatus = {};
   }
+
+  // 3) tables clôturées (après paiement) → on ignore /summary
+  const closedTables = (window.closedTables = window.closedTables || {});
 
   function setPreparationFor20min(tableId) {
     const TWENTY_MIN = 20 * 60 * 1000;
@@ -129,13 +132,12 @@ document.addEventListener('DOMContentLoaded', () => {
         openTableDetail(id);
       });
 
-      // ✅ bouton "Imprimer maintenant" sur la carte
+      // bouton "Imprimer maintenant"
       const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
-          // appel backend si dispo
           if (base) {
             try {
               await fetch(`${base}/print`, {
@@ -143,19 +145,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
-            } catch (err) {
-              // pas bloquant
-            }
+            } catch (err) {}
           }
-          // même comportement que panneau
           setPreparationFor20min(id);
           window.lastKnownStatus[id] = 'En préparation';
-          // on rerend
+          // si elle était marquée clôturée par erreur → on enlève
+          delete closedTables[id];
           refreshTables();
         });
       }
 
-      // ✅ bouton "Paiement confirmé" sur la carte
+      // bouton "Paiement confirmé"
       const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
         btnPaid.addEventListener('click', async (e) => {
@@ -171,16 +171,16 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (err) {}
           }
 
-          // on passe en "Payée" comme le panneau
+          // tout de suite : Payée
           window.lastKnownStatus[id] = 'Payée';
-          // on enlève les timers de préparation éventuels
           delete localTableStatus[id];
           refreshTables();
 
-          // 30s après → Vide (table clôturée)
+          // 30s plus tard : on clôture vraiment
           setTimeout(() => {
             window.lastKnownStatus[id] = 'Vide';
             delete localTableStatus[id];
+            closedTables[id] = true; // ⬅️ très important : on marque la table comme clôturée
             refreshTables();
           }, 30 * 1000);
         });
@@ -190,7 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // résumé du jour (version sans undefined)
+  // résumé du jour (déjà corrigé)
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -238,7 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 🔁 version corrigée : on merge /tables et /summary
+  // 🔁 merge /tables + /summary avec prise en compte des tables clôturées
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -263,18 +263,29 @@ document.addEventListener('DOMContentLoaded', () => {
           if (tid) acc[tid] = true;
           return acc;
         }, {});
-      } catch (e) {
-        // si /summary ne marche pas on n'empêche pas l'affichage des tables
-      }
+      } catch (e) {}
+
+      // 2b. si une table était marquée clôturée mais qu'elle a disparu du summary,
+      // on peut la "déclôturer" pour la prochaine commande
+      Object.keys(closedTables).forEach((tid) => {
+        if (!summaryMap[tid]) {
+          delete closedTables[tid];
+        }
+      });
 
       // 3. on enrichit les tables : Vide + présente dans summary → Commandée
       const enriched = tables.map((tb) => {
         const idNorm = (tb.id || '').trim().toUpperCase();
         if (!idNorm) return tb;
+
+        // ⛔ si la table est clôturée, on force Vide et on n'utilise pas summary
+        if (closedTables[idNorm]) {
+          return { ...tb, id: idNorm, status: 'Vide' };
+        }
+
         if ((!tb.status || tb.status === 'Vide') && summaryMap[idNorm]) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
-        // on normalise quand même l'id pour être cohérent
         return { ...tb, id: idNorm };
       });
 

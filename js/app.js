@@ -1,4 +1,4 @@
-// app.js — version DOMContentLoaded + statuts locaux (v3 anti-clignotement)
+// app.js — version DOMContentLoaded + statuts locaux + verrou anti-retour à "Vide"
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -15,11 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  // --- store des statuts forcés côté front (imprimer → 20min) ---
+  // 1) statuts forcés (quand tu imprimes → 20 min en préparation)
   const localTableStatus = {};
 
-  // --- store pour empêcher de revenir en arrière (Vide -> Commandée -> Vide) ---
-  // on le met sur window pour qu'il survive aux refresh dans la même page
+  // 2) mémoire globale des derniers statuts vus (pour ne pas redescendre)
   if (!window.lastKnownStatus) {
     window.lastKnownStatus = {};
   }
@@ -41,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (now < st.until) {
         return 'En préparation';
       } else {
-        // 20min passées → on passe en "doit payer"
+        // 20min passées → passe en doit payer
         localTableStatus[tableId] = { phase: 'PAY', until: null };
         return 'Doit payer';
       }
@@ -75,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tablesEmpty) tablesEmpty.style.display = 'none';
     const filter = filterSelect ? filterSelect.value : 'Toutes';
 
-    // ordre de priorité des statuts
+    // ordre de priorité
     const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payer'];
 
     tables.forEach((table) => {
@@ -84,26 +83,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      // 1) statut calculé par le backend
+      // statut reçu du backend (ou Vide si rien)
       let backendStatus = table.status || 'Vide';
 
-      // 2) on regarde ce qu'on avait affiché la dernière fois
-      const lastStatus = window.lastKnownStatus[id] || null;
+      // statut qu'on avait affiché la dernière fois
+      const prev = window.lastKnownStatus[id] || null;
 
-      // 3) on bloque les régressions : si le backend revient à "Vide" mais nous on avait mieux → on garde mieux
-      if (lastStatus) {
-        const backendIndex = PRIORITY.indexOf(backendStatus);
-        const lastIndex = PRIORITY.indexOf(lastStatus);
-        if (lastIndex > backendIndex) {
-          backendStatus = lastStatus;
-        }
-      }
-
-      // 4) on regarde si on a un statut forcé (impression → 20min)
+      // statut forcé (impression → 20 min, paiement)
       const forced = getLocalStatus(id);
-      const finalStatus = forced ? forced : backendStatus;
 
-      // 5) on met à jour l'historique
+      // -------- LOGIQUE ANTI-CLIGNOTEMENT --------
+      // règle 1 : si on a un statut forcé → on l'affiche
+      let finalStatus;
+      if (forced) {
+        finalStatus = forced;
+      } else if (prev && prev !== 'Vide') {
+        // règle 2 : si on avait déjà un statut "avancé" (pas Vide),
+        // on NE REDESCEND PAS à Vide même si le backend le dit
+        // ex: prev = "Commandée" et backend = "Vide" → on garde "Commandée"
+        const prevIdx = PRIORITY.indexOf(prev);
+        const backIdx = PRIORITY.indexOf(backendStatus);
+        if (prevIdx > backIdx) {
+          finalStatus = prev;
+        } else {
+          finalStatus = backendStatus;
+        }
+      } else {
+        // première fois ou toujours Vide → on prend le backend
+        finalStatus = backendStatus;
+      }
+      // -------------------------------------------
+
+      // on mémorise ce qu'on vient d'afficher
       window.lastKnownStatus[id] = finalStatus;
 
       const card = document.createElement('div');
@@ -122,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // clic carte → détail
+      // clic sur la carte → détail
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
@@ -134,9 +145,9 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           alert(`Impression pour ${id}`);
-          // on force 20 min de "En préparation"
+          // on force 20 min
           setPreparationFor20min(id);
-          // et on rerend
+          // et on rerend via un fetch frais
           refreshTables();
         });
       }
@@ -147,9 +158,8 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           alert(`Paiement confirmé pour ${id}`);
-          // on force en "Doit payer"
+          // on force en "Doit payer" et on le fixe dans la mémoire globale
           localTableStatus[id] = { phase: 'PAY', until: null };
-          // on l'enregistre aussi dans la mémoire anti-régression
           window.lastKnownStatus[id] = 'Doit payer';
           refreshTables();
         });
@@ -188,7 +198,6 @@ document.addEventListener('DOMContentLoaded', () => {
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
-      // pas d'API → on affiche rien
       if (tablesContainer) tablesContainer.innerHTML = '';
       if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;

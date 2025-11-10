@@ -1,8 +1,6 @@
-// === table-detail.js (version corrigée) ===
-// Affiche le panneau de droite avec le détail de la table
+// === table-detail.js (version sans 404, basée sur /summary) ===
 
 (function () {
-  // on crée le panneau une seule fois
   let panel = document.querySelector('#tableDetailPanel');
   if (!panel) {
     panel = document.createElement('div');
@@ -12,8 +10,8 @@
     panel.style.right = '0';
     panel.style.width = '360px';
     panel.style.height = '100vh';
-    panel.style.background = '#0f172a'; // même thème
-    panel.style.borderLeft = '1px solid rgba(255,255,255,0.05)';
+    panel.style.background = '#0f172a';
+    panel.style.borderLeft = '1px solid rgba(255,255,255,0.03)';
     panel.style.zIndex = '500';
     panel.style.display = 'none';
     panel.style.flexDirection = 'column';
@@ -33,7 +31,7 @@
     panel.innerHTML = '';
   }
 
-  function renderTicket(ticket) {
+  function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.35)';
     card.style.border = '1px solid rgba(255,255,255,0.03)';
@@ -44,42 +42,37 @@
     card.style.flexDirection = 'column';
     card.style.gap = '6px';
 
-    const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.gap = '8px';
-    header.style.alignItems = 'center';
+    const head = document.createElement('div');
+    head.style.display = 'flex';
+    head.style.gap = '6px';
+    head.style.alignItems = 'center';
 
-    const chipId = document.createElement('span');
-    chipId.className = 'chip';
-    chipId.textContent = `#${ticket.id || ''}`;
-    header.appendChild(chipId);
+    const chipTable = document.createElement('span');
+    chipTable.className = 'chip';
+    chipTable.textContent = ticket.table || '';
+    head.appendChild(chipTable);
 
     if (ticket.time) {
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
       chipTime.textContent = ticket.time;
-      header.appendChild(chipTime);
+      head.appendChild(chipTime);
     }
 
-    if (ticket.total !== undefined) {
+    if (typeof ticket.total === 'number') {
       const chipTotal = document.createElement('span');
       chipTotal.className = 'chip';
-      chipTotal.textContent = `Total : ${ticket.total} €`;
-      header.appendChild(chipTotal);
+      chipTotal.textContent = `Total : ${ticket.total}`;
+      head.appendChild(chipTotal);
     }
 
-    card.appendChild(header);
+    card.appendChild(head);
 
-    if (Array.isArray(ticket.lines)) {
-      ticket.lines.forEach((l) => {
-        const line = document.createElement('div');
-        line.textContent = `${l.qty}× ${l.label}`;
-        card.appendChild(line);
-      });
-    } else if (ticket.label) {
-      const line = document.createElement('div');
-      line.textContent = ticket.label;
-      card.appendChild(line);
+    // si backend renvoie label
+    if (ticket.label) {
+      const body = document.createElement('div');
+      body.textContent = ticket.label;
+      card.appendChild(body);
     }
 
     return card;
@@ -117,29 +110,38 @@
     panel.appendChild(info);
 
     try {
-      // ✅ on aligne avec table-session.js → /session/{tableId}
-      const res = await fetch(`${base}/session/${encodeURIComponent(tableId)}`);
-      if (!res.ok) throw new Error('404');
+      // ✅ on passe par /summary (celle qui marche)
+      const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('summary failed');
       const data = await res.json();
 
-      const tickets = data.tickets || data.orders || [];
-      let total = 0;
-      tickets.forEach((t) => {
-        if (typeof t.total === 'number') total += t.total;
+      const allTickets = data.tickets || [];
+      // certains backends renvoient "t7" → on normalise
+      const wanted = (tableId || '').trim().toUpperCase();
+      const tickets = allTickets.filter((t) => {
+        return (t.table || '').trim().toUpperCase() === wanted;
       });
 
-      info.textContent = `${tickets.length} ticket(s) • Total cumulé : ${total.toFixed(2)} €`;
+      info.textContent = `${tickets.length} ticket(s) pour cette table`;
+
+      if (!tickets.length) {
+        const empty = document.createElement('div');
+        empty.textContent = 'Aucune commande pour cette table.';
+        panel.appendChild(empty);
+        return;
+      }
 
       tickets.forEach((t) => {
-        panel.appendChild(renderTicket(t));
+        panel.appendChild(makeTicketCard(t));
       });
     } catch (err) {
-      info.textContent = 'Erreur';
-      const e = document.createElement('div');
-      e.textContent = '404';
-      panel.appendChild(e);
+      info.textContent = 'Erreur de chargement';
+      const code = document.createElement('div');
+      code.textContent = 'Impossible de lire /summary';
+      panel.appendChild(code);
     }
   }
 
+  // on expose pour app.js
   window.showTableDetail = showTableDetail;
 })();

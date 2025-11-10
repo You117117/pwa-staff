@@ -1,7 +1,6 @@
-// app.js — version avec fermeture de table après paiement
+// app.js — version avec fermeture fiable (ID normalisé)
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
   const btnMemorize = document.querySelector('#btnMemorize');
   const btnHealth = document.querySelector('#btnHealth');
@@ -15,28 +14,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  // 1) statuts forcés partagés (panneau + cartes)
+  // partagés
   const localTableStatus =
     (window.localTableStatus = window.localTableStatus || {});
+  const closedTables = (window.closedTables = window.closedTables || {});
+  if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
-  // 2) mémoire globale pour empêcher de redescendre
-  if (!window.lastKnownStatus) {
-    window.lastKnownStatus = {};
+  function normId(id) {
+    return (id || '').trim().toUpperCase();
   }
 
-  // 3) tables clôturées (après paiement) → on ignore /summary
-  const closedTables = (window.closedTables = window.closedTables || {});
-
   function setPreparationFor20min(tableId) {
+    const id = normId(tableId);
     const TWENTY_MIN = 20 * 60 * 1000;
-    localTableStatus[tableId] = {
+    localTableStatus[id] = {
       phase: 'PREPARATION',
       until: Date.now() + TWENTY_MIN,
     };
   }
 
   function getLocalStatus(tableId) {
-    const st = localTableStatus[tableId];
+    const id = normId(tableId);
+    const st = localTableStatus[id];
     if (!st) return null;
     const now = Date.now();
 
@@ -44,14 +43,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (now < st.until) {
         return 'En préparation';
       } else {
-        // 20 min passées → doit payé
-        localTableStatus[tableId] = { phase: 'PAY', until: null };
+        localTableStatus[id] = { phase: 'PAY', until: null };
         return 'Doit payé';
       }
     }
-
     if (st.phase === 'PAY') return 'Doit payé';
-
     return null;
   }
 
@@ -77,29 +73,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (tablesEmpty) tablesEmpty.style.display = 'none';
-    const filter = filterSelect ? filterSelect.value : 'Toutes';
+    const filter = filterSelect ? normId(filterSelect.value) : 'TOUTES';
 
     const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payé', 'Payée'];
 
     tables.forEach((table) => {
-      const id = table.id;
-      if (filter !== 'Toutes' && filter !== id) return;
+      const id = normId(table.id);
+      if (filter !== 'TOUTES' && filter !== id) return;
 
       const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      // statut que dit l'API
       let backendStatus = table.status || 'Vide';
-      // statut affiché précédemment
       const prev = window.lastKnownStatus[id] || null;
-      // statut forcé (impression / timer)
       const forced = getLocalStatus(id);
 
       let finalStatus;
-
       if (forced) {
         finalStatus = forced;
       } else if (prev && prev !== 'Vide') {
-        // on ne redescend pas
         const prevIdx = PRIORITY.indexOf(prev);
         const backIdx = PRIORITY.indexOf(backendStatus);
         finalStatus = prevIdx > backIdx ? prev : backendStatus;
@@ -107,7 +98,6 @@ document.addEventListener('DOMContentLoaded', () => {
         finalStatus = backendStatus;
       }
 
-      // on mémorise
       window.lastKnownStatus[id] = finalStatus;
 
       const card = document.createElement('div');
@@ -126,13 +116,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // clic carte → panneau
+      // ouvrir panneau
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
       });
 
-      // bouton "Imprimer maintenant"
+      // imprimer
       const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
@@ -145,17 +135,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
-            } catch (err) {}
+            } catch {}
           }
           setPreparationFor20min(id);
           window.lastKnownStatus[id] = 'En préparation';
-          // si elle était marquée clôturée par erreur → on enlève
-          delete closedTables[id];
+          delete closedTables[id]; // si jamais
           refreshTables();
         });
       }
 
-      // bouton "Paiement confirmé"
+      // paiement confirmé
       const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
         btnPaid.addEventListener('click', async (e) => {
@@ -168,19 +157,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
-            } catch (err) {}
+            } catch {}
           }
 
-          // tout de suite : Payée
+          // tout de suite: payée
           window.lastKnownStatus[id] = 'Payée';
           delete localTableStatus[id];
           refreshTables();
 
-          // 30s plus tard : on clôture vraiment
+          // 30s plus tard: vide + marquée clôturée
           setTimeout(() => {
             window.lastKnownStatus[id] = 'Vide';
             delete localTableStatus[id];
-            closedTables[id] = true; // ⬅️ très important : on marque la table comme clôturée
+            closedTables[id] = true; // IMPORTANT: avec id normalisé
             refreshTables();
           }, 30 * 1000);
         });
@@ -190,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // résumé du jour (déjà corrigé)
+  // résumé du jour
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -238,7 +227,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 🔁 merge /tables + /summary avec prise en compte des tables clôturées
+  // merge /tables + /summary en respectant les tables clôturées
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -247,45 +236,44 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
-      // 1. on récupère les tables
       const res = await fetch(`${base}/tables`);
       const data = await res.json();
       const tables = data.tables || [];
 
-      // 2. on récupère le résumé pour savoir qui a vraiment commandé
+      // on récupère /summary
       let summaryMap = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
         const dataSum = await resSum.json();
         const tickets = dataSum.tickets || [];
         summaryMap = tickets.reduce((acc, t) => {
-          const tid = (t.table || '').trim().toUpperCase();
+          const tid = normId(t.table);
           if (tid) acc[tid] = true;
           return acc;
         }, {});
-      } catch (e) {}
+      } catch {}
 
-      // 2b. si une table était marquée clôturée mais qu'elle a disparu du summary,
-      // on peut la "déclôturer" pour la prochaine commande
+      // dé-clôturer si la table n'a plus de ticket
       Object.keys(closedTables).forEach((tid) => {
         if (!summaryMap[tid]) {
           delete closedTables[tid];
         }
       });
 
-      // 3. on enrichit les tables : Vide + présente dans summary → Commandée
       const enriched = tables.map((tb) => {
-        const idNorm = (tb.id || '').trim().toUpperCase();
+        const idNorm = normId(tb.id);
         if (!idNorm) return tb;
 
-        // ⛔ si la table est clôturée, on force Vide et on n'utilise pas summary
+        // si clôturée → toujours vide
         if (closedTables[idNorm]) {
           return { ...tb, id: idNorm, status: 'Vide' };
         }
 
+        // sinon : Vide + existe dans summary → Commandée
         if ((!tb.status || tb.status === 'Vide') && summaryMap[idNorm]) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
+
         return { ...tb, id: idNorm };
       });
 
@@ -343,7 +331,6 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
   if (filterSelect) filterSelect.addEventListener('change', refreshTables);
 
-  // init
   const saved = localStorage.getItem('staff-api');
   if (saved && apiInput) {
     apiInput.value = saved;

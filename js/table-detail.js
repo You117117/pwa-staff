@@ -1,5 +1,5 @@
-// === table-detail.js v10 ===
-// panneau de droite avec détail de commande synchronisé avec "Résumé du jour"
+// === table-detail.js v11 ===
+// panneau de droite avec détail de commande synchronisé + prise en compte des tables clôturées
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -105,14 +105,14 @@
 
     card.appendChild(head);
 
-    // 💡 texte détaillé (même logique que résumé du jour)
+    // détail (même logique que résumé du jour)
     const bodyText = buildBodyText(ticket);
     if (bodyText) {
       const body = document.createElement('div');
       body.textContent = bodyText;
       body.style.fontSize = '13px';
       body.style.opacity = '0.95';
-      body.style.color = '#fff'; // important
+      body.style.color = '#fff';
       card.appendChild(body);
     }
 
@@ -124,6 +124,9 @@
     if (!base) return;
 
     const normId = (tableId || '').trim().toUpperCase();
+
+    // on récupère la liste des tables clôturées partagée par app.js
+    const closedTables = (window.closedTables = window.closedTables || {});
 
     panel.innerHTML = '';
     panel.style.display = 'flex';
@@ -150,10 +153,58 @@
     panel.appendChild(head);
 
     const info = document.createElement('div');
-    info.textContent = 'Chargement...';
     info.style.marginBottom = '10px';
     info.style.color = '#fff';
     panel.appendChild(info);
+
+    // si la table est clôturée → on n'affiche pas l'ancienne commande
+    if (closedTables[normId]) {
+      info.textContent = 'Aucune commande pour cette table.';
+      // on met quand même les boutons pour réimprimer / réouvrir si tu veux
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.flexDirection = 'column';
+      actions.style.gap = '8px';
+
+      const btnPrint = document.createElement('button');
+      btnPrint.textContent = 'Imprimer maintenant';
+      btnPrint.className = 'btn btn-primary';
+      btnPrint.style.width = '100%';
+
+      const btnCancelPay = document.createElement('button');
+      btnCancelPay.textContent = 'Annuler le paiement';
+      btnCancelPay.className = 'btn btn-secondary';
+      btnCancelPay.style.width = '100%';
+
+      actions.appendChild(btnPrint);
+      actions.appendChild(btnCancelPay);
+      panel.appendChild(actions);
+
+      // on laisse ces actions mini
+      btnPrint.addEventListener('click', async () => {
+        try {
+          await fetch(`${base}/print`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: normId }),
+          });
+        } catch {}
+        // si on réimprime après clôture, on peut décider de repasser en préparation
+        updateLeftTableStatus(normId, 'En préparation');
+        delete closedTables[normId];
+      });
+
+      btnCancelPay.addEventListener('click', () => {
+        // si on annule on rouvre la table
+        delete closedTables[normId];
+        updateLeftTableStatus(normId, 'Commandée');
+      });
+
+      return;
+    }
+
+    // sinon on affiche vraiment la commande depuis /summary
+    info.textContent = 'Chargement...';
 
     let tickets = [];
     let total = 0;
@@ -235,8 +286,11 @@
         });
       } catch {}
       updateLeftTableStatus(normId, 'Payée');
+
       setTimeout(() => {
+        // on passe en vide + on marque la table comme clôturée (ID normalisé)
         updateLeftTableStatus(normId, 'Vide');
+        closedTables[normId] = true;
       }, 30 * 1000);
     });
 

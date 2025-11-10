@@ -1,4 +1,4 @@
-// app.js — version DOMContentLoaded + statuts locaux (v2)
+// app.js — version DOMContentLoaded + statuts locaux (v3 anti-clignotement)
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -15,8 +15,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  // --- store des statuts forcés côté front ---
+  // --- store des statuts forcés côté front (imprimer → 20min) ---
   const localTableStatus = {};
+
+  // --- store pour empêcher de revenir en arrière (Vide -> Commandée -> Vide) ---
+  // on le met sur window pour qu'il survive aux refresh dans la même page
+  if (!window.lastKnownStatus) {
+    window.lastKnownStatus = {};
+  }
 
   function setPreparationFor20min(tableId) {
     const TWENTY_MIN = 20 * 60 * 1000;
@@ -35,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (now < st.until) {
         return 'En préparation';
       } else {
-        // 20min passées
+        // 20min passées → on passe en "doit payer"
         localTableStatus[tableId] = { phase: 'PAY', until: null };
         return 'Doit payer';
       }
@@ -69,15 +75,36 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tablesEmpty) tablesEmpty.style.display = 'none';
     const filter = filterSelect ? filterSelect.value : 'Toutes';
 
+    // ordre de priorité des statuts
+    const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payer'];
+
     tables.forEach((table) => {
       const id = table.id;
       if (filter !== 'Toutes' && filter !== id) return;
 
       const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      // priorité local
+      // 1) statut calculé par le backend
+      let backendStatus = table.status || 'Vide';
+
+      // 2) on regarde ce qu'on avait affiché la dernière fois
+      const lastStatus = window.lastKnownStatus[id] || null;
+
+      // 3) on bloque les régressions : si le backend revient à "Vide" mais nous on avait mieux → on garde mieux
+      if (lastStatus) {
+        const backendIndex = PRIORITY.indexOf(backendStatus);
+        const lastIndex = PRIORITY.indexOf(lastStatus);
+        if (lastIndex > backendIndex) {
+          backendStatus = lastStatus;
+        }
+      }
+
+      // 4) on regarde si on a un statut forcé (impression → 20min)
       const forced = getLocalStatus(id);
-      const status = forced ? forced : (table.status || 'Vide');
+      const finalStatus = forced ? forced : backendStatus;
+
+      // 5) on met à jour l'historique
+      window.lastKnownStatus[id] = finalStatus;
 
       const card = document.createElement('div');
       card.className = 'table';
@@ -86,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.innerHTML = `
         <div class="card-head">
           <span class="chip">${id}</span>
-          <span class="chip">${status}</span>
+          <span class="chip">${finalStatus}</span>
           <span class="chip">Dernier : ${last}</span>
         </div>
         <div class="card-actions">
@@ -106,11 +133,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
-          // appel API si besoin
-          // const base = getApiBase();
-          // if (base) await fetch(`${base}/print`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ table: id }) });
           alert(`Impression pour ${id}`);
+          // on force 20 min de "En préparation"
           setPreparationFor20min(id);
+          // et on rerend
           refreshTables();
         });
       }
@@ -121,7 +147,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           alert(`Paiement confirmé pour ${id}`);
+          // on force en "Doit payer"
           localTableStatus[id] = { phase: 'PAY', until: null };
+          // on l'enregistre aussi dans la mémoire anti-régression
+          window.lastKnownStatus[id] = 'Doit payer';
           refreshTables();
         });
       }

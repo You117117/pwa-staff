@@ -1,4 +1,4 @@
-// === table-detail.js (version stable) ===
+// === table-detail.js (version corrigée) ===
 // Affiche le panneau de droite avec le détail de la table
 
 (function () {
@@ -23,19 +23,16 @@
     document.body.appendChild(panel);
   }
 
-  // petit helper pour récupérer l'URL API que l'utilisateur a mise
   function getApiBase() {
     const input = document.querySelector('#apiUrl');
-    return input ? input.value.trim() : '';
+    return input ? input.value.trim().replace(/\/+$/, '') : '';
   }
 
-  // ferme le panneau
   function closePanel() {
     panel.style.display = 'none';
     panel.innerHTML = '';
   }
 
-  // rendu d’un ticket
   function renderTicket(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.35)';
@@ -57,7 +54,6 @@
     chipId.textContent = `#${ticket.id || ''}`;
     header.appendChild(chipId);
 
-    // heure
     if (ticket.time) {
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
@@ -65,7 +61,6 @@
       header.appendChild(chipTime);
     }
 
-    // total
     if (ticket.total !== undefined) {
       const chipTotal = document.createElement('span');
       chipTotal.className = 'chip';
@@ -75,7 +70,6 @@
 
     card.appendChild(header);
 
-    // lignes d'articles
     if (Array.isArray(ticket.lines)) {
       ticket.lines.forEach((l) => {
         const line = document.createElement('div');
@@ -91,7 +85,6 @@
     return card;
   }
 
-  // fonction principale appelée par app.js
   async function showTableDetail(tableId) {
     const base = getApiBase();
     if (!base) return;
@@ -99,7 +92,6 @@
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
-    // header de base
     const head = document.createElement('div');
     head.style.display = 'flex';
     head.style.justifyContent = 'space-between';
@@ -119,21 +111,18 @@
     head.appendChild(btnClose);
     panel.appendChild(head);
 
-    // zone info (on remplira après le fetch)
     const info = document.createElement('div');
     info.textContent = 'Chargement...';
     info.style.marginBottom = '10px';
     panel.appendChild(info);
 
     try {
-      // IMPORTANT : on va bien chercher sur la même API que le reste
-      const res = await fetch(`${base}/table/${tableId}/session`);
+      // ✅ on aligne avec table-session.js → /session/{tableId}
+      const res = await fetch(`${base}/session/${encodeURIComponent(tableId)}`);
       if (!res.ok) throw new Error('404');
       const data = await res.json();
 
-      const tickets = data.tickets || [];
-
-      // calcule le total cumulé
+      const tickets = data.tickets || data.orders || [];
       let total = 0;
       tickets.forEach((t) => {
         if (typeof t.total === 'number') total += t.total;
@@ -141,11 +130,9 @@
 
       info.textContent = `${tickets.length} ticket(s) • Total cumulé : ${total.toFixed(2)} €`;
 
-      // liste des tickets
       tickets.forEach((t) => {
         panel.appendChild(renderTicket(t));
       });
-
     } catch (err) {
       info.textContent = 'Erreur';
       const e = document.createElement('div');
@@ -154,6 +141,5 @@
     }
   }
 
-  // on expose la fonction au global
   window.showTableDetail = showTableDetail;
 })();

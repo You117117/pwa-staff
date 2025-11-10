@@ -1,62 +1,62 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Resto QR — Staff</title>
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0b1220">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="css/style.css" />
 </head>
-<body>
-  <header class="topbar">
-    <h1>Resto QR — Staff</h1>
-    <div class="api-tools">
-      <label for="apiUrl">URL API</label>
-      <input id="apiUrl" type="text" placeholder="https://orders-api-XXXX.onrender.com">
-      <button id="btnRemember" class="secondary">Mémoriser</button>
-      <button id="btnHealth" class="secondary">Tester /health</button>
-      <span id="healthBadge" class="badge"></span>
-    </div>
-  </header>
 
-  <main class="grid">
-    <section class="card" id="tablesCard">
-      <div class="card-head">
+<body>
+  <h1>Resto QR — Staff</h1>
+
+  <div class="topbar">
+    <label>URL API</label>
+    <input type="text" id="apiUrl" placeholder="https://..." />
+    <button id="btnMemorize">Mémoriser</button>
+    <button id="btnHealth">Tester /health</button>
+  </div>
+
+  <div class="layout">
+    <div class="tables-section">
+      <div class="section-head">
         <h2>Tables</h2>
-        <div class="actions">
-          <select id="filter">
-            <option value="ALL">Toutes</option>
+        <div class="controls">
+          <select id="filterTables">
+            <option value="Toutes">Toutes</option>
             <option value="T1">T1</option>
             <option value="T2">T2</option>
             <option value="T3">T3</option>
             <option value="T4">T4</option>
             <option value="T5">T5</option>
+            <option value="T6">T6</option>
+            <option value="T7">T7</option>
+            <option value="T8">T8</option>
+            <option value="T9">T9</option>
+            <option value="T10">T10</option>
           </select>
-          <button id="btnRefresh" class="secondary">Rafraîchir</button>
+          <button id="btnRefresh">Rafraîchir</button>
         </div>
       </div>
+
+      <div id="tablesEmpty" class="empty">Aucune table</div>
       <div id="tables" class="tables"></div>
-      <p id="tablesEmpty" class="muted" style="display:none">Aucune table</p>
-    </section>
+    </div>
 
-    <aside class="card" id="summaryCard">
-      <div class="card-head">
+    <div class="summary-section">
+      <div class="section-head">
         <h2>Résumé du jour</h2>
-        <div class="actions">
-          <button id="btnRefreshSummary" class="secondary">Rafraîchir</button>
-        </div>
+        <button id="btnRefreshSummary">Rafraîchir</button>
       </div>
+      <div id="summaryEmpty" class="empty">Aucun ticket aujourd’hui.</div>
       <div id="summary" class="summary"></div>
-      <p id="summaryEmpty" class="muted" style="display:none">Aucun ticket aujourd'hui</p>
-    </aside>
-  </main>
-
-  <footer class="muted small">V1.1 — Cette PWA est un mock fonctionnel (impression à intégrer ePOS côté site).</footer>
+    </div>
+  </div>
 
   <script src="js/bridge-orders-staff.js"></script>
-  <script src="js/app.js"></script>
+  <!-- 👇 juste cette ligne change -->
+  <script src="js/app.js?v=2"></script>
+  <script src="js/table-status.js"></script>
   <script src="js/table-detail.js?v=5"></script>
-
 </body>
 </html>

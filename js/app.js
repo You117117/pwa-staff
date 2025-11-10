@@ -1,4 +1,4 @@
-// app.js — version DOMContentLoaded + statuts locaux + verrou anti-retour à "Vide" + résumé du jour sans undefined
+// app.js — version cartes + panneau synchronisés
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -15,10 +15,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  // 1) statuts forcés (quand tu imprimes → 20 min en préparation)
-  const localTableStatus = {};
+  // 1) statuts forcés partagés (panneau + cartes)
+  const localTableStatus =
+    (window.localTableStatus = window.localTableStatus || {});
 
-  // 2) mémoire globale des derniers statuts vus (pour ne pas redescendre)
+  // 2) mémoire globale pour empêcher de redescendre
   if (!window.lastKnownStatus) {
     window.lastKnownStatus = {};
   }
@@ -40,13 +41,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (now < st.until) {
         return 'En préparation';
       } else {
-        // 20min passées → passe en doit payer
+        // 20 min passées → doit payé
         localTableStatus[tableId] = { phase: 'PAY', until: null };
-        return 'Doit payer';
+        return 'Doit payé';
       }
     }
 
-    if (st.phase === 'PAY') return 'Doit payer';
+    if (st.phase === 'PAY') return 'Doit payé';
+
     return null;
   }
 
@@ -74,8 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tablesEmpty) tablesEmpty.style.display = 'none';
     const filter = filterSelect ? filterSelect.value : 'Toutes';
 
-    // ordre de priorité
-    const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payer'];
+    const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payé', 'Payée'];
 
     tables.forEach((table) => {
       const id = table.id;
@@ -83,33 +84,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      // statut reçu du backend (ou Vide si rien)
+      // statut que dit l'API
       let backendStatus = table.status || 'Vide';
-
-      // statut qu'on avait affiché la dernière fois
+      // statut affiché précédemment
       const prev = window.lastKnownStatus[id] || null;
-
-      // statut forcé (impression → 20 min, paiement)
+      // statut forcé (impression / timer)
       const forced = getLocalStatus(id);
 
-      // -------- LOGIQUE ANTI-CLIGNOTEMENT --------
       let finalStatus;
+
       if (forced) {
         finalStatus = forced;
       } else if (prev && prev !== 'Vide') {
+        // on ne redescend pas
         const prevIdx = PRIORITY.indexOf(prev);
         const backIdx = PRIORITY.indexOf(backendStatus);
-        if (prevIdx > backIdx) {
-          finalStatus = prev;
-        } else {
-          finalStatus = backendStatus;
-        }
+        finalStatus = prevIdx > backIdx ? prev : backendStatus;
       } else {
         finalStatus = backendStatus;
       }
-      // -------------------------------------------
 
-      // on mémorise ce qu'on vient d'afficher
+      // on mémorise
       window.lastKnownStatus[id] = finalStatus;
 
       const card = document.createElement('div');
@@ -128,32 +123,66 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // clic sur la carte → détail
+      // clic carte → panneau
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
       });
 
-      // bouton imprimer
+      // ✅ bouton "Imprimer maintenant" sur la carte
       const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
-          alert(`Impression pour ${id}`);
+          const base = getApiBase();
+          // appel backend si dispo
+          if (base) {
+            try {
+              await fetch(`${base}/print`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {
+              // pas bloquant
+            }
+          }
+          // même comportement que panneau
           setPreparationFor20min(id);
+          window.lastKnownStatus[id] = 'En préparation';
+          // on rerend
           refreshTables();
         });
       }
 
-      // bouton paiement confirmé
+      // ✅ bouton "Paiement confirmé" sur la carte
       const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
-          alert(`Paiement confirmé pour ${id}`);
-          localTableStatus[id] = { phase: 'PAY', until: null };
-          window.lastKnownStatus[id] = 'Doit payer';
+          const base = getApiBase();
+          if (base) {
+            try {
+              await fetch(`${base}/confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {}
+          }
+
+          // on passe en "Payée" comme le panneau
+          window.lastKnownStatus[id] = 'Payée';
+          // on enlève les timers de préparation éventuels
+          delete localTableStatus[id];
           refreshTables();
+
+          // 30s après → Vide (table clôturée)
+          setTimeout(() => {
+            window.lastKnownStatus[id] = 'Vide';
+            delete localTableStatus[id];
+            refreshTables();
+          }, 30 * 1000);
         });
       }
 
@@ -161,7 +190,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 🔽🔽🔽 ICI on corrige "undefined" dans résumé du jour
+  // résumé du jour (version sans undefined)
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -174,7 +203,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (summaryEmpty) summaryEmpty.style.display = 'none';
 
     tickets.forEach((t) => {
-      // on essaie de construire un texte lisible
       let bodyText = '';
       if (t.label) {
         bodyText = t.label;
@@ -194,8 +222,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return `${qty}× ${name}`;
           })
           .join(', ');
-      } else {
-        bodyText = ''; // on n'affiche rien plutôt que "undefined"
       }
 
       const item = document.createElement('div');
@@ -206,12 +232,11 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
           <span class="chip">Total : ${t.total} €</span>
         </div>
-        <div class="body">${bodyText}</div>
+        <div class="body">${bodyText || ''}</div>
       `;
       summaryContainer.appendChild(item);
     });
   }
-  // 🔼🔼🔼 fin correctif résumé du jour
 
   async function refreshTables() {
     const base = getApiBase();
@@ -251,7 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Boutons topbar
+  // topbar
   if (btnMemorize) {
     btnMemorize.addEventListener('click', () => {
       const url = getApiBase();

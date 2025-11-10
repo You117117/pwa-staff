@@ -1,4 +1,4 @@
-// app.js — version DOMContentLoaded + statuts locaux
+// app.js — version DOMContentLoaded + statuts locaux (v2)
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -13,14 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryEmpty = document.querySelector('#summaryEmpty');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
-  // Intervalle de rafraîchissement (ms)
   const REFRESH_MS = 5000;
 
   // --- store des statuts forcés côté front ---
-  // structure : { "T7": { phase: "PREPARATION", until: 1731240000000 } }
   const localTableStatus = {};
 
-  // utilitaire pour poser 20 minutes de préparation
   function setPreparationFor20min(tableId) {
     const TWENTY_MIN = 20 * 60 * 1000;
     localTableStatus[tableId] = {
@@ -29,35 +26,27 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // récupère le statut à afficher si on en a un local
   function getLocalStatus(tableId) {
     const st = localTableStatus[tableId];
     if (!st) return null;
-
     const now = Date.now();
 
-    // cas "en préparation"
     if (st.phase === 'PREPARATION') {
       if (now < st.until) {
         return 'En préparation';
       } else {
-        // les 20 min sont passées → on passe en "doit payer"
+        // 20min passées
         localTableStatus[tableId] = { phase: 'PAY', until: null };
         return 'Doit payer';
       }
     }
 
-    // cas "doit payer" déjà posé
-    if (st.phase === 'PAY') {
-      return 'Doit payer';
-    }
-
+    if (st.phase === 'PAY') return 'Doit payer';
     return null;
   }
 
-  // Utilitaires
   function getApiBase() {
-    return apiInput ? apiInput.value.trim() : '';
+    return apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '';
   }
 
   function formatTime(dateString) {
@@ -68,7 +57,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${h}:${m}`;
   }
 
-  // Rendu des tables
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
@@ -87,7 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      // ✅ priorité au statut local (imprimer → en préparation 20 min → doit payer)
+      // priorité local
       const forced = getLocalStatus(id);
       const status = forced ? forced : (table.status || 'Vide');
 
@@ -101,4 +89,149 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="chip">${status}</span>
           <span class="chip">Dernier : ${last}</span>
         </div>
-        <d
+        <div class="card-actions">
+          <button class="btn btn-primary btn-print">Imprimer maintenant</button>
+          <button class="btn btn-primary btn-paid">Paiement confirmé</button>
+        </div>
+      `;
+
+      // clic carte → détail
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        openTableDetail(id);
+      });
+
+      // bouton imprimer
+      const btnPrint = card.querySelector('.btn-print');
+      if (btnPrint) {
+        btnPrint.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          // appel API si besoin
+          // const base = getApiBase();
+          // if (base) await fetch(`${base}/print`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ table: id }) });
+          alert(`Impression pour ${id}`);
+          setPreparationFor20min(id);
+          refreshTables();
+        });
+      }
+
+      // bouton paiement confirmé
+      const btnPaid = card.querySelector('.btn-paid');
+      if (btnPaid) {
+        btnPaid.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          alert(`Paiement confirmé pour ${id}`);
+          localTableStatus[id] = { phase: 'PAY', until: null };
+          refreshTables();
+        });
+      }
+
+      tablesContainer.appendChild(card);
+    });
+  }
+
+  function renderSummary(tickets) {
+    if (!summaryContainer) return;
+    summaryContainer.innerHTML = '';
+
+    if (!tickets || !tickets.length) {
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
+      return;
+    }
+
+    if (summaryEmpty) summaryEmpty.style.display = 'none';
+
+    tickets.forEach((t) => {
+      const item = document.createElement('div');
+      item.className = 'summaryItem';
+      item.innerHTML = `
+        <div class="head">
+          <span class="chip">${t.table}</span>
+          <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
+          <span class="chip">Total : ${t.total} €</span>
+        </div>
+        <div class="body">${t.label}</div>
+      `;
+      summaryContainer.appendChild(item);
+    });
+  }
+
+  async function refreshTables() {
+    const base = getApiBase();
+    if (!base) {
+      // pas d'API → on affiche rien
+      if (tablesContainer) tablesContainer.innerHTML = '';
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
+      return;
+    }
+    try {
+      const res = await fetch(`${base}/tables`);
+      const data = await res.json();
+      renderTables(data.tables || []);
+    } catch (err) {
+      console.error('[STAFF] erreur tables', err);
+    }
+  }
+
+  async function refreshSummary() {
+    const base = getApiBase();
+    if (!base) {
+      if (summaryContainer) summaryContainer.innerHTML = '';
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
+      return;
+    }
+    try {
+      const res = await fetch(`${base}/summary`);
+      const data = await res.json();
+      renderSummary(data.tickets || []);
+    } catch (err) {
+      console.error('[STAFF] erreur summary', err);
+    }
+  }
+
+  function openTableDetail(tableId) {
+    if (window.showTableDetail) {
+      window.showTableDetail(tableId);
+    }
+  }
+
+  // Boutons topbar
+  if (btnMemorize) {
+    btnMemorize.addEventListener('click', () => {
+      const url = getApiBase();
+      if (url) localStorage.setItem('staff-api', url);
+    });
+  }
+
+  if (btnHealth) {
+    btnHealth.addEventListener('click', async () => {
+      const base = getApiBase();
+      if (!base) return;
+      try {
+        const res = await fetch(`${base}/health`);
+        const data = await res.json();
+        alert('API OK : ' + JSON.stringify(data));
+      } catch (err) {
+        alert('Erreur API');
+      }
+    });
+  }
+
+  if (btnRefreshTables) btnRefreshTables.addEventListener('click', refreshTables);
+  if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
+  if (filterSelect) filterSelect.addEventListener('change', refreshTables);
+
+  // init
+  const saved = localStorage.getItem('staff-api');
+  if (saved && apiInput) {
+    apiInput.value = saved;
+  }
+
+  refreshTables();
+  refreshSummary();
+
+  setInterval(() => {
+    refreshTables();
+    refreshSummary();
+  }, REFRESH_MS);
+});

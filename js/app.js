@@ -1,4 +1,4 @@
-// app.js — version cartes + panneau synchronisés
+// app.js — version cartes + panneau synchronisés + merge /tables + /summary
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -238,6 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // 🔁 version corrigée : on merge /tables et /summary
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -246,9 +247,38 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
+      // 1. on récupère les tables
       const res = await fetch(`${base}/tables`);
       const data = await res.json();
-      renderTables(data.tables || []);
+      const tables = data.tables || [];
+
+      // 2. on récupère le résumé pour savoir qui a vraiment commandé
+      let summaryMap = {};
+      try {
+        const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
+        const dataSum = await resSum.json();
+        const tickets = dataSum.tickets || [];
+        summaryMap = tickets.reduce((acc, t) => {
+          const tid = (t.table || '').trim().toUpperCase();
+          if (tid) acc[tid] = true;
+          return acc;
+        }, {});
+      } catch (e) {
+        // si /summary ne marche pas on n'empêche pas l'affichage des tables
+      }
+
+      // 3. on enrichit les tables : Vide + présente dans summary → Commandée
+      const enriched = tables.map((tb) => {
+        const idNorm = (tb.id || '').trim().toUpperCase();
+        if (!idNorm) return tb;
+        if ((!tb.status || tb.status === 'Vide') && summaryMap[idNorm]) {
+          return { ...tb, id: idNorm, status: 'Commandée' };
+        }
+        // on normalise quand même l'id pour être cohérent
+        return { ...tb, id: idNorm };
+      });
+
+      renderTables(enriched);
     } catch (err) {
       console.error('[STAFF] erreur tables', err);
     }

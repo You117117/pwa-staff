@@ -1,4 +1,4 @@
-// table-detail.js — (ajout) pas de boutons si table clôturée ou sans commande
+// table-detail.js — ajuste paiement côté panneau pour ne plus repasser à "Doit payé"
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -38,7 +38,9 @@
       if (chips.length >= 2) chips[1].textContent = newStatus;
     }
     if (window.lastKnownStatus) window.lastKnownStatus[id] = newStatus;
-    if (newStatus === 'Vide' && window.localTableStatus) delete window.localTableStatus[id];
+    if (newStatus === 'Vide' && window.localTableStatus) {
+      delete window.localTableStatus[id];
+    }
   }
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
@@ -152,10 +154,8 @@
       return tid && !mem.ignoreIds.has(tid);
     });
 
-    // >>> CHANGEMENT: si table clôturée OU pas de tickets à afficher → message seul, AUCUN bouton
     if (mem.isClosed || displayable.length === 0) {
       info.textContent = 'Aucune commande pour cette table.';
-      // total 0 pour cohérence visuelle
       const totalBox = document.createElement('div');
       totalBox.style.marginTop = '8px';
       totalBox.style.marginBottom = '16px';
@@ -167,7 +167,6 @@
       return;
     }
 
-    // Sinon : on affiche les tickets + total + boutons
     info.textContent = `${displayable.length} ticket(s) pour cette table`;
     displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
 
@@ -214,6 +213,7 @@
           body: JSON.stringify({ table: id }),
         });
       } catch {}
+      // ré-ouvre explicitement
       mem.isClosed = false;
       updateLeftTableStatus(id, 'En préparation');
     });
@@ -226,7 +226,24 @@
           body: JSON.stringify({ table: id }),
         });
       } catch {}
+
+      // >>> FIX: aligne le comportement sur la liste de gauche
+      // 1) annule un éventuel buffer auto
+      if (window.autoBuffer && window.autoBuffer[id]) {
+        const b = window.autoBuffer[id];
+        if (b.timeoutId) clearTimeout(b.timeoutId);
+        delete window.autoBuffer[id];
+      }
+      // 2) enlève tout état local "PAY" qui forcerait "Doit payé"
+      if (window.localTableStatus && window.localTableStatus[id]) {
+        delete window.localTableStatus[id];
+      }
+      // 3) fige l'étiquette côté gauche
+      if (window.lastKnownStatus) window.lastKnownStatus[id] = 'Payée';
+
       updateLeftTableStatus(id, 'Payée');
+
+      // clôture après 30s (comme avant)
       setTimeout(async () => {
         updateLeftTableStatus(id, 'Vide');
         try {

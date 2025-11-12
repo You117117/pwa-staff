@@ -1,4 +1,4 @@
-// table-detail.js — n'affiche jamais les tickets "ignorés" même après réouverture
+// table-detail.js — (ajout) pas de boutons si table clôturée ou sans commande
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -22,17 +22,14 @@
   }
 
   const normId = (id) => (id || '').trim().toUpperCase();
-
   function getApiBase() {
     const input = document.querySelector('#apiUrl');
     return input ? input.value.trim().replace(/\/+$/, '') : '';
   }
-
   function closePanel() {
     panel.style.display = 'none';
     panel.innerHTML = '';
   }
-
   function updateLeftTableStatus(tableId, newStatus) {
     const id = normId(tableId);
     const card = document.querySelector(`.table[data-table="${id}"]`);
@@ -41,18 +38,11 @@
       if (chips.length >= 2) chips[1].textContent = newStatus;
     }
     if (window.lastKnownStatus) window.lastKnownStatus[id] = newStatus;
-    if (newStatus === 'Vide' && window.localTableStatus) {
-      delete window.localTableStatus[id];
-    }
+    if (newStatus === 'Vide' && window.localTableStatus) delete window.localTableStatus[id];
   }
-
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
-    const src = Array.isArray(ticket.items)
-      ? ticket.items
-      : Array.isArray(ticket.lines)
-      ? ticket.lines
-      : null;
+    const src = Array.isArray(ticket.items) ? ticket.items : Array.isArray(ticket.lines) ? ticket.lines : null;
     if (src) {
       return src
         .map((it) => {
@@ -64,7 +54,6 @@
     }
     return '';
   }
-
   function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.35)';
@@ -108,7 +97,6 @@
 
     return card;
   }
-
   async function fetchSummary(base) {
     const res = await fetch(`${base}/summary`, { cache: 'no-store' });
     return await res.json();
@@ -119,17 +107,12 @@
     if (!base) return;
     const id = normId(tableId);
 
-    // mémoire partagée avec app.js
     const tableMemory = (window.tableMemory = window.tableMemory || {});
-    const mem = (tableMemory[id] = tableMemory[id] || {
-      isClosed: false,
-      ignoreIds: new Set(),
-    });
+    const mem = (tableMemory[id] = tableMemory[id] || { isClosed: false, ignoreIds: new Set() });
 
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
-    // header
     const head = document.createElement('div');
     head.style.display = 'flex';
     head.style.justifyContent = 'space-between';
@@ -156,7 +139,6 @@
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
-    // lecture /summary
     let tickets = [];
     try {
       const data = await fetchSummary(base);
@@ -165,25 +147,31 @@
       info.textContent = 'Erreur de chargement';
     }
 
-    // on filtre TOUJOURS les tickets ignorés (même après réouverture)
     const displayable = tickets.filter((t) => {
-      const tid =
-        t.id !== undefined && t.id !== null ? String(t.id) : '';
+      const tid = t.id !== undefined && t.id !== null ? String(t.id) : '';
       return tid && !mem.ignoreIds.has(tid);
     });
 
-    if (displayable.length === 0) {
+    // >>> CHANGEMENT: si table clôturée OU pas de tickets à afficher → message seul, AUCUN bouton
+    if (mem.isClosed || displayable.length === 0) {
       info.textContent = 'Aucune commande pour cette table.';
-    } else {
-      info.textContent = `${displayable.length} ticket(s) pour cette table`;
-      displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
+      // total 0 pour cohérence visuelle
+      const totalBox = document.createElement('div');
+      totalBox.style.marginTop = '8px';
+      totalBox.style.marginBottom = '16px';
+      totalBox.innerHTML = `
+        <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
+        <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
+      `;
+      panel.appendChild(totalBox);
+      return;
     }
 
-    // total sur les tickets affichés
-    const total = displayable.reduce((acc, t) => {
-      if (typeof t.total === 'number') return acc + t.total;
-      return acc;
-    }, 0);
+    // Sinon : on affiche les tickets + total + boutons
+    info.textContent = `${displayable.length} ticket(s) pour cette table`;
+    displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
+
+    const total = displayable.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
     const totalBox = document.createElement('div');
     totalBox.style.marginTop = '8px';
     totalBox.style.marginBottom = '16px';
@@ -193,7 +181,6 @@
     `;
     panel.appendChild(totalBox);
 
-    // actions
     const actions = document.createElement('div');
     actions.style.display = 'flex';
     actions.style.flexDirection = 'column';
@@ -219,7 +206,6 @@
     actions.appendChild(btnCancelPay);
     panel.appendChild(actions);
 
-    // handlers
     btnPrint.addEventListener('click', async () => {
       try {
         await fetch(`${base}/print`, {
@@ -228,7 +214,6 @@
           body: JSON.stringify({ table: id }),
         });
       } catch {}
-      // réouverture : on ne touche pas aux ignoreIds
       mem.isClosed = false;
       updateLeftTableStatus(id, 'En préparation');
     });
@@ -242,28 +227,22 @@
         });
       } catch {}
       updateLeftTableStatus(id, 'Payée');
-
-      // 30s → Vide + ajoute les tickets courants à ignoreIds (cumul)
       setTimeout(async () => {
         updateLeftTableStatus(id, 'Vide');
-
-        // mémorise la liste des tickets existants pour ne plus les afficher
         try {
           const data = await fetchSummary(base);
-          const all = (data.tickets || []).filter((t) => normId(t.table) === id);
-          all.forEach((t) => {
-            if (t.id !== undefined && t.id !== null) {
-              mem.ignoreIds.add(String(t.id));
-            }
-          });
+          (data.tickets || [])
+            .filter((t) => normId(t.table) === id)
+            .forEach((t) => {
+              if (t.id !== undefined && t.id !== null) mem.ignoreIds.add(String(t.id));
+            });
         } catch {}
-
-        mem.isClosed = true; // fermé jusqu'à prochain "nouveau ticket"
+        mem.isClosed = true;
       }, 30 * 1000);
     });
 
     btnCancelPay.addEventListener('click', () => {
-      mem.isClosed = false; // ré-ouvre
+      mem.isClosed = false;
       updateLeftTableStatus(id, 'Commandée');
     });
   }

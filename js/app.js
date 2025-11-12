@@ -1,6 +1,7 @@
-// app.js — version avec fermeture fiable (ID normalisé)
+// app.js — clôture fiable + réouverture sur nouveau ticket (ignore des anciens)
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
   const btnMemorize = document.querySelector('#btnMemorize');
   const btnHealth = document.querySelector('#btnHealth');
@@ -14,23 +15,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  // partagés
+  // Stores partagés
   const localTableStatus =
     (window.localTableStatus = window.localTableStatus || {});
-  const closedTables = (window.closedTables = window.closedTables || {});
+  const closedTables =
+    (window.closedTables = window.closedTables || {}); // { [TID]: { ignoreIds: Set<string> } }
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
-  function normId(id) {
-    return (id || '').trim().toUpperCase();
-  }
+  // Utils
+  const normId = (id) => (id || '').trim().toUpperCase();
+  const formatTime = (dateString) => {
+    if (!dateString) return '--:--';
+    const d = new Date(dateString);
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
+  const getApiBase = () =>
+    apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '';
 
+  // Timers statut
   function setPreparationFor20min(tableId) {
     const id = normId(tableId);
     const TWENTY_MIN = 20 * 60 * 1000;
-    localTableStatus[id] = {
-      phase: 'PREPARATION',
-      until: Date.now() + TWENTY_MIN,
-    };
+    localTableStatus[id] = { phase: 'PREPARATION', until: Date.now() + TWENTY_MIN };
   }
 
   function getLocalStatus(tableId) {
@@ -38,29 +46,44 @@ document.addEventListener('DOMContentLoaded', () => {
     const st = localTableStatus[id];
     if (!st) return null;
     const now = Date.now();
-
     if (st.phase === 'PREPARATION') {
-      if (now < st.until) {
-        return 'En préparation';
-      } else {
-        localTableStatus[id] = { phase: 'PAY', until: null };
-        return 'Doit payé';
-      }
+      if (now < st.until) return 'En préparation';
+      localTableStatus[id] = { phase: 'PAY', until: null };
+      return 'Doit payé';
     }
     if (st.phase === 'PAY') return 'Doit payé';
     return null;
   }
 
-  function getApiBase() {
-    return apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '';
+  // Récupère tous les IDs de tickets d'une table dans /summary
+  async function fetchTicketIdsForTable(base, tableIdNorm) {
+    try {
+      const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+      const data = await res.json();
+      const tickets = (data.tickets || []).filter(
+        (t) => normId(t.table) === tableIdNorm
+      );
+      return tickets
+        .map((t) => t.id)
+        .filter((id) => typeof id === 'string' || typeof id === 'number')
+        .map(String);
+    } catch {
+      return [];
+    }
   }
 
-  function formatTime(dateString) {
-    if (!dateString) return '--:--';
-    const d = new Date(dateString);
-    const h = d.getHours().toString().padStart(2, '0');
-    const m = d.getMinutes().toString().padStart(2, '0');
-    return `${h}:${m}`;
+  // Marque une table comme clôturée et mémorise les tickets à ignorer
+  async function closeTableAndIgnoreCurrentTickets(tableId) {
+    const base = getApiBase();
+    const id = normId(tableId);
+    window.lastKnownStatus[id] = 'Vide';
+    delete localTableStatus[id];
+
+    // on lit une fois /summary pour mémoriser les tickets actuels
+    const ids = base ? await fetchTicketIdsForTable(base, id) : [];
+    closedTables[id] = {
+      ignoreIds: new Set(ids), // anciens tickets à ignorer définitivement côté front
+    };
   }
 
   function renderTables(tables) {
@@ -71,10 +94,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
-
     if (tablesEmpty) tablesEmpty.style.display = 'none';
-    const filter = filterSelect ? normId(filterSelect.value) : 'TOUTES';
 
+    const filter = filterSelect ? normId(filterSelect.value) : 'TOUTES';
     const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payé', 'Payée'];
 
     tables.forEach((table) => {
@@ -82,7 +104,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (filter !== 'TOUTES' && filter !== id) return;
 
       const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
-
       let backendStatus = table.status || 'Vide';
       const prev = window.lastKnownStatus[id] || null;
       const forced = getLocalStatus(id);
@@ -103,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = document.createElement('div');
       card.className = 'table';
       card.setAttribute('data-table', id);
-
       card.innerHTML = `
         <div class="card-head">
           <span class="chip">${id}</span>
@@ -116,13 +136,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // ouvrir panneau
+      // Ouvrir panneau
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
       });
 
-      // imprimer
+      // Imprimer
       const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
@@ -139,12 +159,13 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           setPreparationFor20min(id);
           window.lastKnownStatus[id] = 'En préparation';
-          delete closedTables[id]; // si jamais
+          // si elle était marquée clôturée par le passé, on la ré-ouvre explicitement
+          delete closedTables[id];
           refreshTables();
         });
       }
 
-      // paiement confirmé
+      // Paiement confirmé
       const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
         btnPaid.addEventListener('click', async (e) => {
@@ -159,17 +180,13 @@ document.addEventListener('DOMContentLoaded', () => {
               });
             } catch {}
           }
-
-          // tout de suite: payée
           window.lastKnownStatus[id] = 'Payée';
           delete localTableStatus[id];
           refreshTables();
 
-          // 30s plus tard: vide + marquée clôturée
-          setTimeout(() => {
-            window.lastKnownStatus[id] = 'Vide';
-            delete localTableStatus[id];
-            closedTables[id] = true; // IMPORTANT: avec id normalisé
+          // 30s plus tard → clôture + mémorise les tickets à ignorer
+          setTimeout(async () => {
+            await closeTableAndIgnoreCurrentTickets(id);
             refreshTables();
           }, 30 * 1000);
         });
@@ -179,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // résumé du jour
+  // Résumé du jour (inchangé, déjà corrigé)
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -188,7 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (summaryEmpty) summaryEmpty.style.display = 'block';
       return;
     }
-
     if (summaryEmpty) summaryEmpty.style.display = 'none';
 
     tickets.forEach((t) => {
@@ -227,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // merge /tables + /summary en respectant les tables clôturées
+  // Merge /tables + /summary avec logique de clôture/ignores
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -236,41 +252,53 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
+      // 1) tables
       const res = await fetch(`${base}/tables`);
       const data = await res.json();
       const tables = data.tables || [];
 
-      // on récupère /summary
-      let summaryMap = {};
+      // 2) summary → map par table + liste d'IDs par table
+      let summaryByTable = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
         const dataSum = await resSum.json();
         const tickets = dataSum.tickets || [];
-        summaryMap = tickets.reduce((acc, t) => {
+        tickets.forEach((t) => {
           const tid = normId(t.table);
-          if (tid) acc[tid] = true;
-          return acc;
-        }, {});
+          if (!tid) return;
+          const idStr = (t.id !== undefined && t.id !== null) ? String(t.id) : null;
+          if (!summaryByTable[tid]) summaryByTable[tid] = { has: true, ids: [] };
+          if (idStr) summaryByTable[tid].ids.push(idStr);
+        });
       } catch {}
 
-      // dé-clôturer si la table n'a plus de ticket
+      // 2b) SI table clôturée ET nouveau ticket non ignoré → réouverture auto
       Object.keys(closedTables).forEach((tid) => {
-        if (!summaryMap[tid]) {
-          delete closedTables[tid];
+        const entry = summaryByTable[tid];
+        if (entry && entry.ids && entry.ids.length) {
+          const ignore = closedTables[tid]?.ignoreIds || new Set();
+          const hasNew = entry.ids.some((id) => !ignore.has(id));
+          if (hasNew) {
+            // on ré-ouvre : on supprime l'état clôturé
+            delete closedTables[tid];
+            // le merge la fera passer en "Commandée"
+          }
         }
       });
 
+      // 3) enrichit tables pour affichage
       const enriched = tables.map((tb) => {
         const idNorm = normId(tb.id);
         if (!idNorm) return tb;
 
-        // si clôturée → toujours vide
+        // table clôturée → toujours Vide (le panneau de droite ne montrera pas d'anciens tickets)
         if (closedTables[idNorm]) {
           return { ...tb, id: idNorm, status: 'Vide' };
         }
 
-        // sinon : Vide + existe dans summary → Commandée
-        if ((!tb.status || tb.status === 'Vide') && summaryMap[idNorm]) {
+        // sinon : si Vide mais table vue dans summary → Commandée
+        const inSum = !!summaryByTable[idNorm];
+        if ((!tb.status || tb.status === 'Vide') && inSum) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
 
@@ -305,7 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // topbar
+  // Topbar
   if (btnMemorize) {
     btnMemorize.addEventListener('click', () => {
       const url = getApiBase();
@@ -331,6 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
   if (filterSelect) filterSelect.addEventListener('change', refreshTables);
 
+  // Init
   const saved = localStorage.getItem('staff-api');
   if (saved && apiInput) {
     apiInput.value = saved;

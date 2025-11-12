@@ -1,4 +1,4 @@
-// app.js — toggle "Paiement confirmé" ↔ "Annuler le paiement" + tout l'existant
+// app.js — restore statut précédent à l’annulation + bouton "Annuler le paiement" orange
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -36,15 +36,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const autoBuffer      = (window.autoBuffer      = window.autoBuffer      || {}); // { until, timeoutId }
   const payClose        = (window.payClose        = window.payClose        || {}); // { closeAt, timeoutId }
   const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {}); // { tid -> Set(ids) }
+  const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {}); // { tableId: {label, local} }
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
-  // --- Chime robuste (déjà en place précédemment)
+  // --- Chime robuste (version précédente)
   const chime = {
     ctx: null, lastPlayAt: 0, unlockTimer: null, el: null, wavUrl: null, retryTimer: null, retryUntil: 0,
     ensureCtx(){ const AC = window.AudioContext||window.webkitAudioContext; if(!this.ctx&&AC) this.ctx=new AC(); },
     startAutoUnlock(){ this.ensureCtx(); if(!this.ctx) return; const tryResume=()=>{ if(this.ctx&&this.ctx.state!=='running') this.ctx.resume?.().catch(()=>{}); }; if(!this.unlockTimer){ this.unlockTimer=setInterval(tryResume,1000); document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') tryResume();}); } tryResume(); },
     webAudioOk(){ return !!(this.ctx && this.ctx.state==='running'); },
-    playWebAudio(){ const tnow=now(); if(tnow-this.lastPlayAt<500) return false; if(!this.webAudioOk()) return false; const ctx=this.ctx,t0=ctx.currentTime,g=ctx.createGain(); g.gain.value=0.0001; const notes=[{t:0.00,f:880},{t:0.18,f:1108},{t:0.36,f:1319}]; const oscs=notes.map(n=>{const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(n.f,t0+n.t); o.connect(g); return o;}); g.connect(ctx.destination); g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(0.30,t0+0.05); g.gain.exponentialRampToValueAtTime(0.20,t0+0.40); g.gain.exponentialRampToValueAtTime(0.0001,t0+1.20); oscs.forEach((o,i)=>{o.start(t0+notes[i].t); o.stop(t0+1.25);}); this.lastPlayAt=tnow; return true; },
+    playWebAudio(){ const tnow=now(); if(tnow-this.lastPlayAt<500) return false; if(!this.webAudioOk()) return false; const ctx=this.ctx,t0=ctx.currentTime,g=ctx.createGain(); g.gain.value=0.0001;
+      const notes=[{t:0.00,f:880},{t:0.18,f:1108},{t:0.36,f:1319}];
+      const oscs=notes.map(n=>{const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(n.f,t0+n.t); o.connect(g); return o;});
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001,t0); g.gain.exponentialRampToValueAtTime(0.30,t0+0.05); g.gain.exponentialRampToValueAtTime(0.20,t0+0.40); g.gain.exponentialRampToValueAtTime(0.0001,t0+1.20);
+      oscs.forEach((o,i)=>{o.start(t0+notes[i].t); o.stop(t0+1.25);}); this.lastPlayAt=tnow; return true; },
     ensureHtml5Audio(){ if(this.el) return; const {url}=generateChimeWavUrl(); this.wavUrl=url; const a=document.createElement('audio'); a.src=url; a.preload='auto'; a.setAttribute('playsinline','true'); a.style.display='none'; document.body.appendChild(a); this.el=a; },
     tryPlayHtml5(){ const tnow=now(); if(tnow-this.lastPlayAt<500) return true; this.ensureHtml5Audio(); if(!this.el) return false; try{ const p=this.el.play(); if(p&&p.then){ p.then(()=>{this.lastPlayAt=tnow;}).catch(()=>{}); } else { this.lastPlayAt=tnow; } return true; } catch { return false; } },
     playRobust(){ if(this.playWebAudio()) return; if(this.tryPlayHtml5()) return; this.scheduleRetries(); },
@@ -62,6 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
       payClose: Object.fromEntries(Object.entries(payClose).map(([tid,v])=>[tid,{closeAt:v.closeAt}])),
       alertedTickets: Object.fromEntries(Object.entries(alertedTickets).map(([tid,set])=>[tid,Array.from(set||[])])),
       lastKnownStatus,
+      prevStatusBeforePay
     };
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(json)); }catch{}
   }
@@ -75,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if(s.payClose ) Object.entries(s.payClose ).forEach(([tid,v])=>payClose[tid] ={closeAt:v.closeAt});
       if(s.alertedTickets) Object.entries(s.alertedTickets).forEach(([tid,arr])=>alertedTickets[tid]=new Set(arr||[]));
       if(s.lastKnownStatus) Object.assign(window.lastKnownStatus,s.lastKnownStatus);
+      if(s.prevStatusBeforePay) Object.assign(prevStatusBeforePay, s.prevStatusBeforePay);
     }catch{}
   }
 
@@ -132,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }catch{ return []; }
   }
 
-  // --- Clôture (Payée → 30s → Vide)
+  // --- Clôture
   async function closeTableAndIgnoreCurrentTickets(tableId){
     const base=getApiBase(); const id=normId(tableId);
     window.lastKnownStatus[id]='Vide';
@@ -143,6 +151,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if(!tableMemory[id]) tableMemory[id]={isClosed:true,ignoreIds:new Set()};
     tableMemory[id].isClosed=true;
     ids.forEach(tid=>tableMemory[id].ignoreIds.add(String(tid)));
+
+    // nettoyage de l'état précédent au cas où
+    delete prevStatusBeforePay[id];
 
     delete payClose[id];
     saveState();
@@ -161,10 +172,9 @@ document.addEventListener('DOMContentLoaded', () => {
     delete payClose[id];
     saveState();
   }
-  // expose pour table-detail au cas où
   window.cancelPayClose = cancelPayClose;
 
-  // --- Rendu LISTE TABLES (boutons masqués si "Vide" + toggle Pay/Cancel)
+  // --- Rendu LISTE TABLES
   function renderTables(tables){
     if(!tablesContainer) return;
     tablesContainer.innerHTML='';
@@ -193,7 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if(finalStatus!=='Commandée') cancelAutoBuffer(id);
 
       const showActions = finalStatus!=='Vide';
-      const isPaymentPending = !!payClose[id]; // si un paiement est en cours de clôture (30s)
+      const isPaymentPending = !!payClose[id];
 
       const card=document.createElement('div');
       card.className='table';
@@ -209,7 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button class="btn btn-primary btn-print">Imprimer maintenant</button>
             ${
               isPaymentPending
-                ? `<button class="btn btn-secondary btn-cancel-pay">Annuler le paiement</button>`
+                ? `<button class="btn btn-warning btn-cancel-pay" style="background:#f59e0b;border-color:#f59e0b;">Annuler le paiement</button>`
                 : `<button class="btn btn-primary btn-paid">Paiement confirmé</button>`
             }
           </div>` : `` }
@@ -242,14 +252,21 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             const base=getApiBase();
             cancelAutoBuffer(id);
+            // mémoriser statut précédent (label + copie profonde de l'état local)
+            prevStatusBeforePay[id] = {
+              label: window.lastKnownStatus[id] || 'Commandée',
+              local: localTableStatus[id] ? { ...localTableStatus[id] } : null
+            };
+            saveState();
+
             if(base){
               try{ await fetch(`${base}/confirm`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:id})}); }catch{}
             }
             window.lastKnownStatus[id]='Payée';
             delete localTableStatus[id];
-            scheduleCloseIn30s(id);      // démarre la fenêtre 30s
+            scheduleCloseIn30s(id);
             saveState();
-            refreshTables();             // re-render → montre "Annuler le paiement"
+            refreshTables();
           });
         }
 
@@ -257,11 +274,22 @@ document.addEventListener('DOMContentLoaded', () => {
         if(btnCancel){
           btnCancel.addEventListener('click',(e)=>{
             e.stopPropagation();
-            // annule la clôture programmée
             cancelPayClose(id);
-            // revient à "Doit payé"
-            window.lastKnownStatus[id]='Doit payé';
-            localTableStatus[id]={phase:'PAY',until:null};
+            // restaurer statut précédent si connu
+            const prevState = prevStatusBeforePay[id];
+            if (prevState) {
+              window.lastKnownStatus[id] = prevState.label;
+              if (prevState.local) {
+                localTableStatus[id] = { ...prevState.local };
+              } else {
+                delete localTableStatus[id];
+              }
+              delete prevStatusBeforePay[id];
+            } else {
+              // fallback
+              window.lastKnownStatus[id]='Doit payé';
+              localTableStatus[id]={phase:'PAY',until:null};
+            }
             saveState();
             refreshTables();
           });
@@ -272,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Résumé du jour (inchangé)
+  // --- Résumé du jour
   function renderSummary(tickets){
     if(!summaryContainer) return;
     summaryContainer.innerHTML='';

@@ -1,4 +1,4 @@
-// table-detail.js — toggle pay/cancel dans le panneau + annulation propre
+// table-detail.js — annulation restaure le statut précédent (+ bouton orange)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -104,7 +104,6 @@
     return await res.json();
   }
 
-  // pour gérer l'annulation si le paiement a été déclenché depuis ce panneau
   const detailPayTimeouts = (window.detailPayTimeouts = window.detailPayTimeouts || {});
 
   async function showTableDetail(tableId) {
@@ -113,6 +112,7 @@
     const id = normId(tableId);
 
     const tableMemory = (window.tableMemory = window.tableMemory || {});
+    const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {});
     const mem = (tableMemory[id] = tableMemory[id] || { isClosed: false, ignoreIds: new Set() });
 
     panel.innerHTML = '';
@@ -200,15 +200,16 @@
 
     const btnCancelPay = document.createElement('button');
     btnCancelPay.textContent = 'Annuler le paiement';
-    btnCancelPay.className = 'btn btn-secondary';
+    btnCancelPay.className = 'btn btn-warning';
     btnCancelPay.style.width = '100%';
+    btnCancelPay.style.background = '#f59e0b';
+    btnCancelPay.style.borderColor = '#f59e0b';
 
     actions.appendChild(btnPrint);
     actions.appendChild(btnPay);
     actions.appendChild(btnCancelPay);
     panel.appendChild(actions);
 
-    // Affichage initial: si paiement en attente de clôture (depuis gauche ou ici) → montrer "Annuler"
     const paymentPendingLeft = !!(window.payClose && window.payClose[id]);
     const paymentPendingHere = !!detailPayTimeouts[id];
     const showCancel = paymentPendingLeft || paymentPendingHere;
@@ -237,6 +238,11 @@
         });
       } catch {}
 
+      // mémoriser l'état précédent côté droit également
+      const prevLabel = (window.lastKnownStatus && window.lastKnownStatus[id]) || 'Commandée';
+      const prevLocal = window.localTableStatus && window.localTableStatus[id] ? { ...window.localTableStatus[id] } : null;
+      prevStatusBeforePay[id] = { label: prevLabel, local: prevLocal };
+
       // figer en Payée
       if (window.autoBuffer && window.autoBuffer[id]) {
         const b = window.autoBuffer[id];
@@ -250,7 +256,6 @@
 
       updateLeftTableStatus(id, 'Payée');
 
-      // programmer la clôture en 30s depuis ce panneau
       if (detailPayTimeouts[id]) clearTimeout(detailPayTimeouts[id]);
       detailPayTimeouts[id] = setTimeout(async () => {
         updateLeftTableStatus(id, 'Vide');
@@ -263,35 +268,47 @@
             });
         } catch {}
         mem.isClosed = true;
+        // purge état précédent puisque la table est clôturée
+        if (window.prevStatusBeforePay) delete window.prevStatusBeforePay[id];
         detailPayTimeouts[id] = null;
       }, 30 * 1000);
 
-      // toggle boutons
       btnPay.style.display = 'none';
       btnCancelPay.style.display = 'block';
     });
 
     btnCancelPay.addEventListener('click', () => {
-      // 1) annuler le timer 30s lancé par ce panneau (si présent)
       if (detailPayTimeouts[id]) {
         clearTimeout(detailPayTimeouts[id]);
         detailPayTimeouts[id] = null;
       }
-      // 2) annuler la clôture programmée côté app.js (si déclenchée depuis la liste)
       if (window.payClose && window.payClose[id]) {
         const pc = window.payClose[id];
         if (pc.timeoutId) clearTimeout(pc.timeoutId);
         delete window.payClose[id];
       }
-      // 3) revenir à "Doit payé"
-      if (!window.localTableStatus) window.localTableStatus = {};
-      window.localTableStatus[id] = { phase: 'PAY', until: null };
-      if (window.lastKnownStatus) window.lastKnownStatus[id] = 'Doit payé';
-      mem.isClosed = false;
 
-      updateLeftTableStatus(id, 'Doit payé');
+      const prevState = prevStatusBeforePay[id];
+      if (prevState) {
+        if (!window.localTableStatus) window.localTableStatus = {};
+        window.lastKnownStatus[id] = prevState.label;
+        if (prevState.local) {
+          window.localTableStatus[id] = { ...prevState.local };
+        } else {
+          delete window.localTableStatus[id];
+        }
+        delete prevStatusBeforePay[id];
+        mem.isClosed = false;
+        updateLeftTableStatus(id, prevState.label);
+      } else {
+        // fallback si pas trouvé
+        if (!window.localTableStatus) window.localTableStatus = {};
+        window.lastKnownStatus[id] = 'Doit payé';
+        window.localTableStatus[id] = { phase: 'PAY', until: null };
+        mem.isClosed = false;
+        updateLeftTableStatus(id, 'Doit payé');
+      }
 
-      // toggle boutons
       btnCancelPay.style.display = 'none';
       btnPay.style.display = 'block';
     });

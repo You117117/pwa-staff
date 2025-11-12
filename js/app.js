@@ -1,4 +1,4 @@
-// app.js — clôture fiable + réouverture sur nouveau ticket (ignore des anciens)
+// app.js — ignore persistant des anciens tickets + réouverture propre
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -15,11 +15,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  // Stores partagés
+  // Stores partagés (persistés en mémoire runtime)
   const localTableStatus =
     (window.localTableStatus = window.localTableStatus || {});
-  const closedTables =
-    (window.closedTables = window.closedTables || {}); // { [TID]: { ignoreIds: Set<string> } }
+  // tableMemory[TID] = { isClosed: boolean, ignoreIds: Set<string> }
+  const tableMemory =
+    (window.tableMemory = window.tableMemory || {});
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
   // Utils
@@ -65,25 +66,26 @@ document.addEventListener('DOMContentLoaded', () => {
       );
       return tickets
         .map((t) => t.id)
-        .filter((id) => typeof id === 'string' || typeof id === 'number')
+        .filter((id) => id !== undefined && id !== null)
         .map(String);
     } catch {
       return [];
     }
   }
 
-  // Marque une table comme clôturée et mémorise les tickets à ignorer
+  // Clôture : marque "Vide", isClosed=true et mémorise les IDS à ignorer (persistant)
   async function closeTableAndIgnoreCurrentTickets(tableId) {
     const base = getApiBase();
     const id = normId(tableId);
+
     window.lastKnownStatus[id] = 'Vide';
     delete localTableStatus[id];
 
-    // on lit une fois /summary pour mémoriser les tickets actuels
     const ids = base ? await fetchTicketIdsForTable(base, id) : [];
-    closedTables[id] = {
-      ignoreIds: new Set(ids), // anciens tickets à ignorer définitivement côté front
-    };
+    if (!tableMemory[id]) tableMemory[id] = { isClosed: true, ignoreIds: new Set() };
+    tableMemory[id].isClosed = true;
+    // on cumule les anciens tickets, on ne les perd jamais
+    ids.forEach((tid) => tableMemory[id].ignoreIds.add(String(tid)));
   }
 
   function renderTables(tables) {
@@ -136,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // Ouvrir panneau
+      // Ouvre le panneau
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
@@ -159,8 +161,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           setPreparationFor20min(id);
           window.lastKnownStatus[id] = 'En préparation';
-          // si elle était marquée clôturée par le passé, on la ré-ouvre explicitement
-          delete closedTables[id];
+          // réouverture : on garde les ignoreIds mais on enlève le flag fermé
+          if (!tableMemory[id]) tableMemory[id] = { isClosed: false, ignoreIds: new Set() };
+          tableMemory[id].isClosed = false;
           refreshTables();
         });
       }
@@ -184,7 +187,7 @@ document.addEventListener('DOMContentLoaded', () => {
           delete localTableStatus[id];
           refreshTables();
 
-          // 30s plus tard → clôture + mémorise les tickets à ignorer
+          // 30s plus tard → clôture + mémorise les tickets à ignorer (on ne les oubliera plus)
           setTimeout(async () => {
             await closeTableAndIgnoreCurrentTickets(id);
             refreshTables();
@@ -196,7 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Résumé du jour (inchangé, déjà corrigé)
+  // Résumé du jour
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -243,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Merge /tables + /summary avec logique de clôture/ignores
+  // Merge /tables + /summary avec prise en compte de isClosed/ignoreIds
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -257,7 +260,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       const tables = data.tables || [];
 
-      // 2) summary → map par table + liste d'IDs par table
+      // 2) summary → par table : liste d'IDs
       let summaryByTable = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -266,39 +269,33 @@ document.addEventListener('DOMContentLoaded', () => {
         tickets.forEach((t) => {
           const tid = normId(t.table);
           if (!tid) return;
-          const idStr = (t.id !== undefined && t.id !== null) ? String(t.id) : null;
-          if (!summaryByTable[tid]) summaryByTable[tid] = { has: true, ids: [] };
-          if (idStr) summaryByTable[tid].ids.push(idStr);
+          const idStr =
+            t.id !== undefined && t.id !== null ? String(t.id) : null;
+          if (!summaryByTable[tid]) summaryByTable[tid] = [];
+          if (idStr) summaryByTable[tid].push(idStr);
         });
       } catch {}
 
-      // 2b) SI table clôturée ET nouveau ticket non ignoré → réouverture auto
-      Object.keys(closedTables).forEach((tid) => {
-        const entry = summaryByTable[tid];
-        if (entry && entry.ids && entry.ids.length) {
-          const ignore = closedTables[tid]?.ignoreIds || new Set();
-          const hasNew = entry.ids.some((id) => !ignore.has(id));
-          if (hasNew) {
-            // on ré-ouvre : on supprime l'état clôturé
-            delete closedTables[tid];
-            // le merge la fera passer en "Commandée"
-          }
-        }
-      });
-
-      // 3) enrichit tables pour affichage
+      // 3) pour chaque table : calcule s'il y a **un nouveau ticket non ignoré**
       const enriched = tables.map((tb) => {
         const idNorm = normId(tb.id);
         if (!idNorm) return tb;
 
-        // table clôturée → toujours Vide (le panneau de droite ne montrera pas d'anciens tickets)
-        if (closedTables[idNorm]) {
+        const mem = (tableMemory[idNorm] =
+          tableMemory[idNorm] || { isClosed: false, ignoreIds: new Set() });
+        const idsInSummary = summaryByTable[idNorm] || [];
+        const hasNew = idsInSummary.some((tid) => !mem.ignoreIds.has(tid));
+
+        // réouverture auto s'il y a un nouveau ticket non ignoré
+        if (mem.isClosed && hasNew) mem.isClosed = false;
+
+        // si fermé → force "Vide" (même si /tables dit autre chose)
+        if (mem.isClosed) {
           return { ...tb, id: idNorm, status: 'Vide' };
         }
 
-        // sinon : si Vide mais table vue dans summary → Commandée
-        const inSum = !!summaryByTable[idNorm];
-        if ((!tb.status || tb.status === 'Vide') && inSum) {
+        // si Vide mais **nouveau ticket** → Commandée
+        if ((!tb.status || tb.status === 'Vide') && hasNew) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
 

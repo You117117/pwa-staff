@@ -1,4 +1,4 @@
-// table-detail.js — filtre les anciens tickets et ré-ouvre si nouveau ticket non ignoré
+// table-detail.js — n'affiche jamais les tickets "ignorés" même après réouverture
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -119,8 +119,12 @@
     if (!base) return;
     const id = normId(tableId);
 
-    const closedTables = (window.closedTables = window.closedTables || {});
-    const ignore = closedTables[id]?.ignoreIds || new Set();
+    // mémoire partagée avec app.js
+    const tableMemory = (window.tableMemory = window.tableMemory || {});
+    const mem = (tableMemory[id] = tableMemory[id] || {
+      isClosed: false,
+      ignoreIds: new Set(),
+    });
 
     panel.innerHTML = '';
     panel.style.display = 'flex';
@@ -152,31 +156,21 @@
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
-    // on lit /summary
+    // lecture /summary
     let tickets = [];
     try {
       const data = await fetchSummary(base);
-      const all = data.tickets || [];
-      // filtre par table
-      tickets = all.filter((t) => normId(t.table) === id);
+      tickets = (data.tickets || []).filter((t) => normId(t.table) === id);
     } catch {
       info.textContent = 'Erreur de chargement';
     }
 
-    // Si table clôturée : on garde seulement les tickets NON ignorés
-    let displayable = tickets;
-    if (closedTables[id]) {
-      const ign = closedTables[id].ignoreIds || new Set();
-      displayable = tickets.filter((t) => {
-        const tid = t.id !== undefined && t.id !== null ? String(t.id) : '';
-        return tid && !ign.has(tid);
-      });
-
-      // s'il existe un ticket non ignoré → réouverture automatique
-      if (displayable.length > 0) {
-        delete closedTables[id];
-      }
-    }
+    // on filtre TOUJOURS les tickets ignorés (même après réouverture)
+    const displayable = tickets.filter((t) => {
+      const tid =
+        t.id !== undefined && t.id !== null ? String(t.id) : '';
+      return tid && !mem.ignoreIds.has(tid);
+    });
 
     if (displayable.length === 0) {
       info.textContent = 'Aucune commande pour cette table.';
@@ -185,7 +179,7 @@
       displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
     }
 
-    // total visible (sur les tickets affichés)
+    // total sur les tickets affichés
     const total = displayable.reduce((acc, t) => {
       if (typeof t.total === 'number') return acc + t.total;
       return acc;
@@ -225,7 +219,7 @@
     actions.appendChild(btnCancelPay);
     panel.appendChild(actions);
 
-    // actions handlers
+    // handlers
     btnPrint.addEventListener('click', async () => {
       try {
         await fetch(`${base}/print`, {
@@ -234,8 +228,9 @@
           body: JSON.stringify({ table: id }),
         });
       } catch {}
+      // réouverture : on ne touche pas aux ignoreIds
+      mem.isClosed = false;
       updateLeftTableStatus(id, 'En préparation');
-      delete closedTables[id]; // si on réimprime, on assume réouverture
     });
 
     btnPay.addEventListener('click', async () => {
@@ -248,30 +243,28 @@
       } catch {}
       updateLeftTableStatus(id, 'Payée');
 
-      // 30s → Vide + mémoriser tickets courants à ignorer
+      // 30s → Vide + ajoute les tickets courants à ignoreIds (cumul)
       setTimeout(async () => {
         updateLeftTableStatus(id, 'Vide');
-        // mémorise la liste des tickets actuels pour ne plus les afficher
-        const ids = await (async () => {
-          try {
-            const data = await fetchSummary(base);
-            const all = data.tickets || [];
-            return all
-              .filter((t) => normId(t.table) === id)
-              .map((t) => t.id)
-              .filter((v) => v !== undefined && v !== null)
-              .map(String);
-          } catch {
-            return [];
-          }
-        })();
-        closedTables[id] = { ignoreIds: new Set(ids) };
+
+        // mémorise la liste des tickets existants pour ne plus les afficher
+        try {
+          const data = await fetchSummary(base);
+          const all = (data.tickets || []).filter((t) => normId(t.table) === id);
+          all.forEach((t) => {
+            if (t.id !== undefined && t.id !== null) {
+              mem.ignoreIds.add(String(t.id));
+            }
+          });
+        } catch {}
+
+        mem.isClosed = true; // fermé jusqu'à prochain "nouveau ticket"
       }, 30 * 1000);
     });
 
     btnCancelPay.addEventListener('click', () => {
+      mem.isClosed = false; // ré-ouvre
       updateLeftTableStatus(id, 'Commandée');
-      delete closedTables[id];
     });
   }
 

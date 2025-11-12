@@ -1,4 +1,4 @@
-// app.js — persistance état + buffers + timers + SON nouvel ordre + masquage boutons si "Vide"
+// app.js — persistance état + buffers + timers + SON nouvelle commande (auto-unlock best effort) + masquage boutons si "Vide"
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -31,22 +31,17 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // --- Stores (runtime) ET persistance
-  // localTableStatus[TID] = { phase:'PREPARATION'|'PAY', until:number }
-  const localTableStatus = (window.localTableStatus = window.localTableStatus || {});
-  // tableMemory[TID] = { isClosed:boolean, ignoreIds:Set<string> }
-  const tableMemory = (window.tableMemory = window.tableMemory || {});
-  // autoBuffer[TID] = { until:number, timeoutId?:number }
-  const autoBuffer = (window.autoBuffer = window.autoBuffer || {});
-  // payClose[TID] = { closeAt:number, timeoutId?:number }
-  const payClose = (window.payClose = window.payClose || {});
-  // alertedTickets[TID] = Set<string>   → tickets déjà “bipés”
-  const alertedTickets = (window.alertedTickets = window.alertedTickets || {});
+  const localTableStatus = (window.localTableStatus = window.localTableStatus || {}); // { phase, until }
+  const tableMemory = (window.tableMemory = window.tableMemory || {}); // { isClosed, ignoreIds:Set }
+  const autoBuffer = (window.autoBuffer = window.autoBuffer || {}); // { until, timeoutId }
+  const payClose  = (window.payClose  = window.payClose  || {}); // { closeAt, timeoutId }
+  const alertedTickets = (window.alertedTickets = window.alertedTickets || {}); // { tid -> Set(ids) }
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
-  // --- Audio (son discret nouvelle commande)
+  // --- Audio (son nouvelle commande)
   const audio = {
     ctx: null,
-    unlocked: false,
+    unlockTimer: null,
     lastPlayAt: 0,
   };
   function ensureAudioContext() {
@@ -55,55 +50,69 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!AC) return;
       audio.ctx = new AC();
     }
-    if (audio.ctx && audio.ctx.state === 'suspended') {
-      audio.ctx.resume?.().then(() => (audio.unlocked = true)).catch(() => {});
-    } else {
-      audio.unlocked = true;
-    }
   }
-  function hookFirstInteractionToUnlockAudio() {
-    const resume = () => {
-      ensureAudioContext();
-      document.removeEventListener('pointerdown', resume);
-      document.removeEventListener('keydown', resume);
-    };
-    document.addEventListener('pointerdown', resume, { once: true });
-    document.addEventListener('keydown', resume, { once: true });
-  }
-  function playNewOrderChime() {
-    // anti-spam (min 700ms entre deux sons)
-    const tnow = now();
-    if (tnow - audio.lastPlayAt < 700) return;
+  // Best-effort auto unlocker (essaie régulièrement de resume l’audio sans interaction)
+  function startAutoAudioUnlocker() {
     ensureAudioContext();
     if (!audio.ctx) return;
+    const tryResume = () => {
+      if (!audio.ctx) return;
+      if (audio.ctx.state === 'running') return;
+      audio.ctx.resume?.().catch(() => {});
+    };
+    // interval régulier
+    if (!audio.unlockTimer) {
+      audio.unlockTimer = setInterval(tryResume, 1500);
+    }
+    // on ré-essaie aussi quand l’onglet redevient visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') tryResume();
+    });
+    // tentative immédiate
+    tryResume();
+  }
+  // Chime plus long (~1.2s), arpeggio discret
+  function playNewOrderChime() {
+    const tnow = now();
+    if (tnow - audio.lastPlayAt < 700) return; // anti-spam
+    ensureAudioContext();
+    if (!audio.ctx || audio.ctx.state !== 'running') return; // si bloqué par le navigateur, on ne force pas
 
     const ctx = audio.ctx;
     const gain = ctx.createGain();
     gain.gain.value = 0.0001;
 
-    // petit “pling” à deux notes
-    const o1 = ctx.createOscillator();
+    const o1 = ctx.createOscillator(); // note 1
+    const o2 = ctx.createOscillator(); // note 2
+    const o3 = ctx.createOscillator(); // note 3
+
     o1.type = 'sine';
-    o1.frequency.setValueAtTime(880, ctx.currentTime); // A5
-    const o2 = ctx.createOscillator();
     o2.type = 'sine';
-    o2.frequency.setValueAtTime(1320, ctx.currentTime + 0.18); // E6 (arrive un peu après)
+    o3.type = 'sine';
+
+    // Arpège A5 → C#6 → E6
+    const t0 = ctx.currentTime;
+    o1.frequency.setValueAtTime(880,  t0);       // A5
+    o2.frequency.setValueAtTime(1108, t0 + 0.18); // C#6
+    o3.frequency.setValueAtTime(1319, t0 + 0.36); // E6
 
     o1.connect(gain);
     o2.connect(gain);
+    o3.connect(gain);
     gain.connect(ctx.destination);
 
-    const t0 = ctx.currentTime;
-    // envelope courte
+    // ADSR douce, durée ~1.2s
     gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.25, t0 + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.08, t0 + 0.20);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+    gain.gain.exponentialRampToValueAtTime(0.28, t0 + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.35);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
 
     o1.start(t0);
     o2.start(t0 + 0.18);
-    o1.stop(t0 + 0.6);
-    o2.stop(t0 + 0.6);
+    o3.start(t0 + 0.36);
+    o1.stop(t0 + 1.25);
+    o2.stop(t0 + 1.25);
+    o3.stop(t0 + 1.25);
 
     audio.lastPlayAt = tnow;
   }
@@ -114,8 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const json = {
       tableMemory: Object.fromEntries(
         Object.entries(tableMemory).map(([tid, v]) => [
-          tid,
-          { isClosed: !!v.isClosed, ignoreIds: Array.from(v.ignoreIds || []) },
+          tid, { isClosed: !!v.isClosed, ignoreIds: Array.from(v.ignoreIds || []) },
         ])
       ),
       localTableStatus,
@@ -130,34 +138,25 @@ document.addEventListener('DOMContentLoaded', () => {
       ),
       lastKnownStatus,
     };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(json));
-    } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(json)); } catch {}
   }
   function loadState() {
     try {
-      const txt = localStorage.getItem(STORAGE_KEY);
-      if (!txt) return;
-      const state = JSON.parse(txt);
-
-      if (state.tableMemory) {
-        Object.entries(state.tableMemory).forEach(([tid, v]) => {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (s.tableMemory) {
+        Object.entries(s.tableMemory).forEach(([tid, v]) => {
           tableMemory[tid] = { isClosed: !!v.isClosed, ignoreIds: new Set(v.ignoreIds || []) };
         });
       }
-      if (state.localTableStatus) Object.assign(localTableStatus, state.localTableStatus);
-      if (state.autoBuffer) {
-        Object.entries(state.autoBuffer).forEach(([tid, v]) => (autoBuffer[tid] = { until: v.until }));
+      if (s.localTableStatus) Object.assign(localTableStatus, s.localTableStatus);
+      if (s.autoBuffer) Object.entries(s.autoBuffer).forEach(([tid, v]) => autoBuffer[tid] = { until: v.until });
+      if (s.payClose)  Object.entries(s.payClose ).forEach(([tid, v]) => payClose[tid]  = { closeAt: v.closeAt });
+      if (s.alertedTickets) {
+        Object.entries(s.alertedTickets).forEach(([tid, arr]) => alertedTickets[tid] = new Set(arr || []));
       }
-      if (state.payClose) {
-        Object.entries(state.payClose).forEach(([tid, v]) => (payClose[tid] = { closeAt: v.closeAt }));
-      }
-      if (state.alertedTickets) {
-        Object.entries(state.alertedTickets).forEach(([tid, arr]) => {
-          alertedTickets[tid] = new Set(arr || []);
-        });
-      }
-      if (state.lastKnownStatus) Object.assign(window.lastKnownStatus, state.lastKnownStatus);
+      if (s.lastKnownStatus) Object.assign(window.lastKnownStatus, s.lastKnownStatus);
     } catch {}
   }
 
@@ -172,7 +171,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const st = localTableStatus[id];
     if (!st) return null;
     const t = now();
-
     if (st.phase === 'PREPARATION') {
       if (t < st.until) return 'En préparation';
       localTableStatus[id] = { phase: 'PAY', until: null };
@@ -218,22 +216,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- /summary helpers
+  // --- /summary helper
   async function fetchTicketIdsForTable(base, tableIdNorm) {
     try {
       const res = await fetch(`${base}/summary`, { cache: 'no-store' });
       const data = await res.json();
-      const tickets = (data.tickets || []).filter((t) => normId(t.table) === tableIdNorm);
-      return tickets
+      return (data.tickets || [])
+        .filter((t) => normId(t.table) === tableIdNorm)
         .map((t) => t.id)
         .filter((id) => id !== undefined && id !== null)
         .map(String);
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
 
-  // --- Clôture (Payée → 30s → Vide + ignore)
+  // --- Clôture
   async function closeTableAndIgnoreCurrentTickets(tableId) {
     const base = getApiBase();
     const id = normId(tableId);
@@ -255,12 +251,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (payClose[id] && payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
     const timeoutId = setTimeout(() => closeTableAndIgnoreCurrentTickets(id), 30_000);
     payClose[id] = { closeAt, timeoutId };
-    saveState();
-  }
-  function cancelPayClose(id) {
-    id = normId(id);
-    if (payClose[id] && payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
-    delete payClose[id];
     saveState();
   }
 
@@ -301,7 +291,6 @@ document.addEventListener('DOMContentLoaded', () => {
       window.lastKnownStatus[id] = finalStatus;
       if (finalStatus !== 'Commandée') cancelAutoBuffer(id);
 
-      // Boutons visibles seulement si != "Vide"
       const showActions = finalStatus !== 'Vide';
 
       const card = document.createElement('div');
@@ -423,7 +412,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Refresh tables : merge + auto-buffer + réouverture si nouveau ticket + SON
+  // --- Refresh tables : merge + auto-buffer + SON
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -461,19 +450,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const list = summaryByTable[tid] || [];
 
-        // liste des tickets "nouveaux" (non ignorés + pas déjà alertés)
         const seen = (alertedTickets[tid] = alertedTickets[tid] || new Set());
         const fresh = list.filter((tk) => !mem.ignoreIds.has(tk) && !seen.has(tk));
-
         hasNewById[tid] = list.some((tk) => !mem.ignoreIds.has(tk));
 
-        // si nouveaux tickets → bip + marquer comme alertés
         if (fresh.length > 0) {
           playNewOrderChime();
           fresh.forEach((tk) => seen.add(tk));
         }
-
-        // réouverture auto si fermée et nouveau ticket
         if (mem.isClosed && hasNewById[tid]) mem.isClosed = false;
       });
 
@@ -575,7 +559,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadState();
   rearmTimersAfterLoad();
-  hookFirstInteractionToUnlockAudio(); // important pour autoriser le son
+
+  // Démarre l’auto-unlock Audio (meilleure chance d’autoplay sans clic)
+  startAutoAudioUnlocker();
 
   refreshTables();
   refreshSummary();

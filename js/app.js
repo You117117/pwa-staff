@@ -1,6 +1,7 @@
-// app.js — (ajout) cache les boutons si statut = "Vide" ; le reste inchangé
+// app.js — persistance état + buffers + timers + SON nouvel ordre + masquage boutons si "Vide"
 
 document.addEventListener('DOMContentLoaded', () => {
+  // --- Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
   const btnMemorize = document.querySelector('#btnMemorize');
   const btnHealth = document.querySelector('#btnHealth');
@@ -12,10 +13,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryEmpty = document.querySelector('#summaryEmpty');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
+  // --- Constantes
   const REFRESH_MS = 5000;
-  const PREP_MS = 20 * 60 * 1000;
-  const BUFFER_MS = 120 * 1000;
+  const PREP_MS = 20 * 60 * 1000;  // 20 min
+  const BUFFER_MS = 120 * 1000;    // 120 s
 
+  // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
   const now = () => Date.now();
   const getApiBase = () => (apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '');
@@ -27,12 +30,85 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${h}:${m}`;
   };
 
+  // --- Stores (runtime) ET persistance
+  // localTableStatus[TID] = { phase:'PREPARATION'|'PAY', until:number }
   const localTableStatus = (window.localTableStatus = window.localTableStatus || {});
+  // tableMemory[TID] = { isClosed:boolean, ignoreIds:Set<string> }
   const tableMemory = (window.tableMemory = window.tableMemory || {});
+  // autoBuffer[TID] = { until:number, timeoutId?:number }
   const autoBuffer = (window.autoBuffer = window.autoBuffer || {});
+  // payClose[TID] = { closeAt:number, timeoutId?:number }
   const payClose = (window.payClose = window.payClose || {});
+  // alertedTickets[TID] = Set<string>   → tickets déjà “bipés”
+  const alertedTickets = (window.alertedTickets = window.alertedTickets || {});
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
+  // --- Audio (son discret nouvelle commande)
+  const audio = {
+    ctx: null,
+    unlocked: false,
+    lastPlayAt: 0,
+  };
+  function ensureAudioContext() {
+    if (!audio.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audio.ctx = new AC();
+    }
+    if (audio.ctx && audio.ctx.state === 'suspended') {
+      audio.ctx.resume?.().then(() => (audio.unlocked = true)).catch(() => {});
+    } else {
+      audio.unlocked = true;
+    }
+  }
+  function hookFirstInteractionToUnlockAudio() {
+    const resume = () => {
+      ensureAudioContext();
+      document.removeEventListener('pointerdown', resume);
+      document.removeEventListener('keydown', resume);
+    };
+    document.addEventListener('pointerdown', resume, { once: true });
+    document.addEventListener('keydown', resume, { once: true });
+  }
+  function playNewOrderChime() {
+    // anti-spam (min 700ms entre deux sons)
+    const tnow = now();
+    if (tnow - audio.lastPlayAt < 700) return;
+    ensureAudioContext();
+    if (!audio.ctx) return;
+
+    const ctx = audio.ctx;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+
+    // petit “pling” à deux notes
+    const o1 = ctx.createOscillator();
+    o1.type = 'sine';
+    o1.frequency.setValueAtTime(880, ctx.currentTime); // A5
+    const o2 = ctx.createOscillator();
+    o2.type = 'sine';
+    o2.frequency.setValueAtTime(1320, ctx.currentTime + 0.18); // E6 (arrive un peu après)
+
+    o1.connect(gain);
+    o2.connect(gain);
+    gain.connect(ctx.destination);
+
+    const t0 = ctx.currentTime;
+    // envelope courte
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.25, t0 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.08, t0 + 0.20);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+
+    o1.start(t0);
+    o2.start(t0 + 0.18);
+    o1.stop(t0 + 0.6);
+    o2.stop(t0 + 0.6);
+
+    audio.lastPlayAt = tnow;
+  }
+
+  // --- Persistance
   const STORAGE_KEY = 'staff-state-v1';
   function saveState() {
     const json = {
@@ -49,6 +125,9 @@ document.addEventListener('DOMContentLoaded', () => {
       payClose: Object.fromEntries(
         Object.entries(payClose).map(([tid, v]) => [tid, { closeAt: v.closeAt }])
       ),
+      alertedTickets: Object.fromEntries(
+        Object.entries(alertedTickets).map(([tid, set]) => [tid, Array.from(set || [])])
+      ),
       lastKnownStatus,
     };
     try {
@@ -60,6 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const txt = localStorage.getItem(STORAGE_KEY);
       if (!txt) return;
       const state = JSON.parse(txt);
+
       if (state.tableMemory) {
         Object.entries(state.tableMemory).forEach(([tid, v]) => {
           tableMemory[tid] = { isClosed: !!v.isClosed, ignoreIds: new Set(v.ignoreIds || []) };
@@ -72,10 +152,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (state.payClose) {
         Object.entries(state.payClose).forEach(([tid, v]) => (payClose[tid] = { closeAt: v.closeAt }));
       }
+      if (state.alertedTickets) {
+        Object.entries(state.alertedTickets).forEach(([tid, arr]) => {
+          alertedTickets[tid] = new Set(arr || []);
+        });
+      }
       if (state.lastKnownStatus) Object.assign(window.lastKnownStatus, state.lastKnownStatus);
     } catch {}
   }
 
+  // --- Timers statut (préparation / doit payé)
   function setPreparationFor20min(tableId) {
     const id = normId(tableId);
     localTableStatus[id] = { phase: 'PREPARATION', until: now() + PREP_MS };
@@ -86,6 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const st = localTableStatus[id];
     if (!st) return null;
     const t = now();
+
     if (st.phase === 'PREPARATION') {
       if (t < st.until) return 'En préparation';
       localTableStatus[id] = { phase: 'PAY', until: null };
@@ -96,6 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return null;
   }
 
+  // --- Buffer 120s
   async function autoPrintAndPrep(id) {
     const base = getApiBase();
     if (base) {
@@ -130,6 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- /summary helpers
   async function fetchTicketIdsForTable(base, tableIdNorm) {
     try {
       const res = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -144,6 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- Clôture (Payée → 30s → Vide + ignore)
   async function closeTableAndIgnoreCurrentTickets(tableId) {
     const base = getApiBase();
     const id = normId(tableId);
@@ -211,7 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
       window.lastKnownStatus[id] = finalStatus;
       if (finalStatus !== 'Commandée') cancelAutoBuffer(id);
 
-      // >>> CHANGEMENT: on rend les boutons UNIQUEMENT si status !== "Vide"
+      // Boutons visibles seulement si != "Vide"
       const showActions = finalStatus !== 'Vide';
 
       const card = document.createElement('div');
@@ -238,7 +328,6 @@ document.addEventListener('DOMContentLoaded', () => {
         openTableDetail(id);
       });
 
-      // listeners seulement si actions rendues
       if (showActions) {
         const btnPrint = card.querySelector('.btn-print');
         if (btnPrint) {
@@ -292,6 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Résumé du jour
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -333,6 +423,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Refresh tables : merge + auto-buffer + réouverture si nouveau ticket + SON
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -341,10 +432,12 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
+      // 1) /tables
       const res = await fetch(`${base}/tables`);
       const data = await res.json();
       const tables = data.tables || [];
 
+      // 2) /summary → {tid: [ticketIds]}
       let summaryByTable = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -359,26 +452,50 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       } catch {}
 
+      // 3) hasNew & SON
       const hasNewById = {};
       Object.keys(summaryByTable).forEach((tid) => {
-        const mem = (tableMemory[tid] = tableMemory[tid] || { isClosed: false, ignoreIds: new Set() });
+        const mem = (tableMemory[tid] = tableMemory[tid] || {
+          isClosed: false,
+          ignoreIds: new Set(),
+        });
         const list = summaryByTable[tid] || [];
-        hasNewById[tid] = list.some((id) => !mem.ignoreIds.has(id));
+
+        // liste des tickets "nouveaux" (non ignorés + pas déjà alertés)
+        const seen = (alertedTickets[tid] = alertedTickets[tid] || new Set());
+        const fresh = list.filter((tk) => !mem.ignoreIds.has(tk) && !seen.has(tk));
+
+        hasNewById[tid] = list.some((tk) => !mem.ignoreIds.has(tk));
+
+        // si nouveaux tickets → bip + marquer comme alertés
+        if (fresh.length > 0) {
+          playNewOrderChime();
+          fresh.forEach((tk) => seen.add(tk));
+        }
+
+        // réouverture auto si fermée et nouveau ticket
         if (mem.isClosed && hasNewById[tid]) mem.isClosed = false;
       });
 
+      // 4) enrichit tables
       const enriched = tables.map((tb) => {
         const idNorm = normId(tb.id);
         if (!idNorm) return tb;
-        const mem = (tableMemory[idNorm] = tableMemory[idNorm] || { isClosed: false, ignoreIds: new Set() });
+        const mem = (tableMemory[idNorm] = tableMemory[idNorm] || {
+          isClosed: false,
+          ignoreIds: new Set(),
+        });
 
-        if (mem.isClosed) return { ...tb, id: idNorm, status: 'Vide' };
+        if (mem.isClosed) {
+          return { ...tb, id: idNorm, status: 'Vide' };
+        }
         if ((!tb.status || tb.status === 'Vide') && hasNewById[idNorm]) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
         return { ...tb, id: idNorm };
       });
 
+      // 5) buffers
       enriched.forEach((t) => {
         const id = normId(t.id);
         if (t.status === 'Commandée') {
@@ -415,6 +532,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.showTableDetail) window.showTableDetail(tableId);
   }
 
+  // --- Reprise timers/après load
   function rearmTimersAfterLoad() {
     Object.entries(autoBuffer).forEach(([tid, v]) => {
       const remaining = v.until - now();
@@ -428,6 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Topbar & init
   if (btnMemorize) {
     btnMemorize.addEventListener('click', () => {
       const url = getApiBase();
@@ -456,6 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   loadState();
   rearmTimersAfterLoad();
+  hookFirstInteractionToUnlockAudio(); // important pour autoriser le son
 
   refreshTables();
   refreshSummary();

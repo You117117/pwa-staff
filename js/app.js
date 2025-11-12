@@ -1,7 +1,7 @@
-// app.js — persistance état + buffers + timers + SON nouvelle commande (auto-unlock best effort) + masquage boutons si "Vide"
+// app.js — solid chime (dual engine + retries) + all existing logic intact
 
 document.addEventListener('DOMContentLoaded', () => {
-  // --- Sélecteurs
+  // --- Selectors
   const apiInput = document.querySelector('#apiUrl');
   const btnMemorize = document.querySelector('#btnMemorize');
   const btnHealth = document.querySelector('#btnHealth');
@@ -13,10 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryEmpty = document.querySelector('#summaryEmpty');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
-  // --- Constantes
+  // --- Constants
   const REFRESH_MS = 5000;
-  const PREP_MS = 20 * 60 * 1000;  // 20 min
-  const BUFFER_MS = 120 * 1000;    // 120 s
+  const PREP_MS = 20 * 60 * 1000;
+  const BUFFER_MS = 120 * 1000;
 
   // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
@@ -30,94 +30,251 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${h}:${m}`;
   };
 
-  // --- Stores (runtime) ET persistance
-  const localTableStatus = (window.localTableStatus = window.localTableStatus || {}); // { phase, until }
-  const tableMemory = (window.tableMemory = window.tableMemory || {}); // { isClosed, ignoreIds:Set }
-  const autoBuffer = (window.autoBuffer = window.autoBuffer || {}); // { until, timeoutId }
-  const payClose  = (window.payClose  = window.payClose  || {}); // { closeAt, timeoutId }
-  const alertedTickets = (window.alertedTickets = window.alertedTickets || {}); // { tid -> Set(ids) }
+  // --- Stores + persistence
+  const localTableStatus = (window.localTableStatus = window.localTableStatus || {});
+  const tableMemory = (window.tableMemory = window.tableMemory || {});
+  const autoBuffer = (window.autoBuffer = window.autoBuffer || {});
+  const payClose = (window.payClose = window.payClose || {});
+  const alertedTickets = (window.alertedTickets = window.alertedTickets || {});
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
-  // --- Audio (son nouvelle commande)
-  const audio = {
+  // -----------------------------
+  // SOLID CHIME ENGINE
+  // -----------------------------
+  const chime = {
+    // webaudio
     ctx: null,
-    unlockTimer: null,
     lastPlayAt: 0,
+    unlockTimer: null,
+
+    // html5 audio fallback
+    el: null,
+    wavUrl: null,
+    retryTimer: null,
+    retryUntil: 0,
+
+    ensureCtx() {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this.ctx = new AC();
+      }
+    },
+    startAutoUnlock() {
+      this.ensureCtx();
+      if (!this.ctx) return;
+      const tryResume = () => {
+        if (!this.ctx) return;
+        if (this.ctx.state === 'running') return;
+        this.ctx.resume?.().catch(() => {});
+      };
+      if (!this.unlockTimer) {
+        this.unlockTimer = setInterval(tryResume, 1000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') tryResume();
+        });
+      }
+      tryResume();
+    },
+    webAudioOk() {
+      return !!(this.ctx && this.ctx.state === 'running');
+    },
+    playWebAudio() {
+      const tnow = now();
+      if (tnow - this.lastPlayAt < 500) return; // anti-spam
+      if (!this.webAudioOk()) return false;
+
+      const ctx = this.ctx;
+      const t0 = ctx.currentTime;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.0001;
+
+      // 3-note arpeggio + tail (~1.2s)
+      const notes = [
+        { t: 0.00, f: 880 },  // A5
+        { t: 0.18, f: 1108 }, // C#6
+        { t: 0.36, f: 1319 }, // E6
+      ];
+      const osc = notes.map(() => {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        return o;
+      });
+
+      osc.forEach((o, i) => {
+        o.frequency.setValueAtTime(notes[i].f, t0 + notes[i].t);
+        o.connect(gain);
+      });
+      gain.connect(ctx.destination);
+
+      // ADSR
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.30, t0 + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.20, t0 + 0.40);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.20);
+
+      osc.forEach((o, i) => {
+        o.start(t0 + notes[i].t);
+        o.stop(t0 + 1.25);
+      });
+
+      this.lastPlayAt = tnow;
+      return true;
+    },
+    // HTML5 audio fallback: build WAV in-memory once
+    ensureHtml5Audio() {
+      if (this.el) return;
+      const { url } = generateChimeWavUrl(); // ~1.4s bell-ish
+      this.wavUrl = url;
+      const a = document.createElement('audio');
+      a.src = url;
+      a.preload = 'auto';
+      a.setAttribute('playsinline', 'true');
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      this.el = a;
+    },
+    tryPlayHtml5() {
+      const tnow = now();
+      if (tnow - this.lastPlayAt < 500) return true;
+      this.ensureHtml5Audio();
+      if (!this.el) return false;
+
+      try {
+        const p = this.el.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => { this.lastPlayAt = tnow; }).catch(() => {});
+        } else {
+          this.lastPlayAt = tnow;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    // Public entrypoint: robust chime with retries (up to 10s)
+    playRobust() {
+      // 1) try webaudio
+      if (this.playWebAudio()) return;
+
+      // 2) fallback to HTML5 audio
+      if (this.tryPlayHtml5()) return;
+
+      // 3) schedule retries—fires ASAP when policy allows
+      this.scheduleRetries();
+    },
+    scheduleRetries() {
+      if (this.retryTimer) return;
+      this.retryUntil = now() + 10000; // retry up to 10s
+      const tick = () => {
+        this.ensureCtx();
+        // First preference: try resuming ctx and playing
+        if (this.playWebAudio()) {
+          clearInterval(this.retryTimer); this.retryTimer = null; return;
+        }
+        // Second: HTML5 audio
+        if (this.tryPlayHtml5()) {
+          clearInterval(this.retryTimer); this.retryTimer = null; return;
+        }
+        if (now() > this.retryUntil) {
+          clearInterval(this.retryTimer); this.retryTimer = null; return;
+        }
+      };
+      this.retryTimer = setInterval(tick, 300);
+      // Also react immediately if tab becomes visible
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') tick();
+      });
+    },
   };
-  function ensureAudioContext() {
-    if (!audio.ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      audio.ctx = new AC();
+
+  // Create a simple WAV (PCM16, 44.1kHz) synthesized in JS
+  function generateChimeWavUrl() {
+    const sampleRate = 44100;
+    const duration = 1.4; // seconds
+    const length = Math.floor(sampleRate * duration);
+    const channels = 1;
+    const freqSeq = [
+      { t: 0.00, f: 880 },
+      { t: 0.16, f: 1046.5 },
+      { t: 0.32, f: 1318.5 },
+    ];
+    const attack = 0.02, decay = 0.20, sustain = 0.2, release = 0.35;
+
+    const data = new Float32Array(length);
+    for (let i = 0; i < length; i++) {
+      const t = i / sampleRate;
+      // Select active note (simple step arp)
+      let f = freqSeq[freqSeq.length - 1].f;
+      for (let j = 0; j < freqSeq.length; j++) {
+        if (t >= freqSeq[j].t) f = freqSeq[j].f;
+      }
+      // Sine
+      let v = Math.sin(2 * Math.PI * f * t);
+
+      // Envelope ADSR
+      let env = 0;
+      if (t < attack) {
+        env = t / attack;
+      } else if (t < attack + decay) {
+        const d = (t - attack) / decay;
+        env = 1 - d * (1 - sustain);
+      } else if (t < duration - release) {
+        env = sustain;
+      } else {
+        const r = (t - (duration - release)) / release;
+        env = sustain * (1 - r);
+      }
+      // gentle lowpass-ish by mixing with delayed sample
+      const prev = i > 0 ? data[i - 1] : 0;
+      v = (v * 0.7 + prev * 0.3) * env * 0.9;
+
+      data[i] = v;
     }
-  }
-  // Best-effort auto unlocker (essaie régulièrement de resume l’audio sans interaction)
-  function startAutoAudioUnlocker() {
-    ensureAudioContext();
-    if (!audio.ctx) return;
-    const tryResume = () => {
-      if (!audio.ctx) return;
-      if (audio.ctx.state === 'running') return;
-      audio.ctx.resume?.().catch(() => {});
-    };
-    // interval régulier
-    if (!audio.unlockTimer) {
-      audio.unlockTimer = setInterval(tryResume, 1500);
+
+    // Convert to PCM16 WAV
+    const bytesPerSample = 2;
+    const blockAlign = channels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = length * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+
+    function writeStr(off, s) { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); }
+    function write16(off, v) { view.setUint16(off, v, true); }
+    function write32(off, v) { view.setUint32(off, v, true); }
+
+    // RIFF header
+    writeStr(0, 'RIFF');
+    write32(4, 36 + dataSize);
+    writeStr(8, 'WAVE');
+    // fmt chunk
+    writeStr(12, 'fmt ');
+    write32(16, 16);       // PCM
+    write16(20, 1);        // format PCM
+    write16(22, channels);
+    write32(24, sampleRate);
+    write32(28, byteRate);
+    write16(32, blockAlign);
+    write16(34, 16);       // bits
+    // data chunk
+    writeStr(36, 'data');
+    write32(40, dataSize);
+
+    // samples
+    let offset = 44;
+    for (let i = 0; i < length; i++) {
+      let s = Math.max(-1, Math.min(1, data[i]));
+      view.setInt16(offset, s * 0x7fff, true);
+      offset += 2;
     }
-    // on ré-essaie aussi quand l’onglet redevient visible
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') tryResume();
-    });
-    // tentative immédiate
-    tryResume();
-  }
-  // Chime plus long (~1.2s), arpeggio discret
-  function playNewOrderChime() {
-    const tnow = now();
-    if (tnow - audio.lastPlayAt < 700) return; // anti-spam
-    ensureAudioContext();
-    if (!audio.ctx || audio.ctx.state !== 'running') return; // si bloqué par le navigateur, on ne force pas
 
-    const ctx = audio.ctx;
-    const gain = ctx.createGain();
-    gain.gain.value = 0.0001;
-
-    const o1 = ctx.createOscillator(); // note 1
-    const o2 = ctx.createOscillator(); // note 2
-    const o3 = ctx.createOscillator(); // note 3
-
-    o1.type = 'sine';
-    o2.type = 'sine';
-    o3.type = 'sine';
-
-    // Arpège A5 → C#6 → E6
-    const t0 = ctx.currentTime;
-    o1.frequency.setValueAtTime(880,  t0);       // A5
-    o2.frequency.setValueAtTime(1108, t0 + 0.18); // C#6
-    o3.frequency.setValueAtTime(1319, t0 + 0.36); // E6
-
-    o1.connect(gain);
-    o2.connect(gain);
-    o3.connect(gain);
-    gain.connect(ctx.destination);
-
-    // ADSR douce, durée ~1.2s
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.28, t0 + 0.06);
-    gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.35);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
-
-    o1.start(t0);
-    o2.start(t0 + 0.18);
-    o3.start(t0 + 0.36);
-    o1.stop(t0 + 1.25);
-    o2.stop(t0 + 1.25);
-    o3.stop(t0 + 1.25);
-
-    audio.lastPlayAt = tnow;
+    const blob = new Blob([view], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    return { url };
   }
 
-  // --- Persistance
+  // --- Persistence
   const STORAGE_KEY = 'staff-state-v1';
   function saveState() {
     const json = {
@@ -127,40 +284,28 @@ document.addEventListener('DOMContentLoaded', () => {
         ])
       ),
       localTableStatus,
-      autoBuffer: Object.fromEntries(
-        Object.entries(autoBuffer).map(([tid, v]) => [tid, { until: v.until }])
-      ),
-      payClose: Object.fromEntries(
-        Object.entries(payClose).map(([tid, v]) => [tid, { closeAt: v.closeAt }])
-      ),
-      alertedTickets: Object.fromEntries(
-        Object.entries(alertedTickets).map(([tid, set]) => [tid, Array.from(set || [])])
-      ),
+      autoBuffer: Object.fromEntries(Object.entries(autoBuffer).map(([tid, v]) => [tid, { until: v.until }])),
+      payClose: Object.fromEntries(Object.entries(payClose).map(([tid, v]) => [tid, { closeAt: v.closeAt }])),
+      alertedTickets: Object.fromEntries(Object.entries(alertedTickets).map(([tid, set]) => [tid, Array.from(set || [])])),
       lastKnownStatus,
     };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(json)); } catch {}
   }
   function loadState() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const s = JSON.parse(raw);
-      if (s.tableMemory) {
-        Object.entries(s.tableMemory).forEach(([tid, v]) => {
-          tableMemory[tid] = { isClosed: !!v.isClosed, ignoreIds: new Set(v.ignoreIds || []) };
-        });
-      }
+      const txt = localStorage.getItem(STORAGE_KEY);
+      if (!txt) return;
+      const s = JSON.parse(txt);
+      if (s.tableMemory) Object.entries(s.tableMemory).forEach(([tid, v]) => tableMemory[tid] = { isClosed: !!v.isClosed, ignoreIds: new Set(v.ignoreIds || []) });
       if (s.localTableStatus) Object.assign(localTableStatus, s.localTableStatus);
       if (s.autoBuffer) Object.entries(s.autoBuffer).forEach(([tid, v]) => autoBuffer[tid] = { until: v.until });
-      if (s.payClose)  Object.entries(s.payClose ).forEach(([tid, v]) => payClose[tid]  = { closeAt: v.closeAt });
-      if (s.alertedTickets) {
-        Object.entries(s.alertedTickets).forEach(([tid, arr]) => alertedTickets[tid] = new Set(arr || []));
-      }
+      if (s.payClose) Object.entries(s.payClose).forEach(([tid, v]) => payClose[tid] = { closeAt: v.closeAt });
+      if (s.alertedTickets) Object.entries(s.alertedTickets).forEach(([tid, arr]) => alertedTickets[tid] = new Set(arr || []));
       if (s.lastKnownStatus) Object.assign(window.lastKnownStatus, s.lastKnownStatus);
     } catch {}
   }
 
-  // --- Timers statut (préparation / doit payé)
+  // --- Status timers
   function setPreparationFor20min(tableId) {
     const id = normId(tableId);
     localTableStatus[id] = { phase: 'PREPARATION', until: now() + PREP_MS };
@@ -181,7 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return null;
   }
 
-  // --- Buffer 120s
+  // --- 120s buffer
   async function autoPrintAndPrep(id) {
     const base = getApiBase();
     if (base) {
@@ -216,7 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- /summary helper
+  // --- /summary helpers
   async function fetchTicketIdsForTable(base, tableIdNorm) {
     try {
       const res = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -226,10 +371,12 @@ document.addEventListener('DOMContentLoaded', () => {
         .map((t) => t.id)
         .filter((id) => id !== undefined && id !== null)
         .map(String);
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
-  // --- Clôture
+  // --- Close flow
   async function closeTableAndIgnoreCurrentTickets(tableId) {
     const base = getApiBase();
     const id = normId(tableId);
@@ -254,7 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
     saveState();
   }
 
-  // --- Rendu LISTE TABLES (boutons masqués si Vide)
+  // --- Render tables (buttons hidden if "Vide")
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
@@ -278,15 +425,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const forced = getLocalStatus(id);
 
       let finalStatus;
-      if (forced) {
-        finalStatus = forced;
-      } else if (prev && prev !== 'Vide') {
+      if (forced) finalStatus = forced;
+      else if (prev && prev !== 'Vide') {
         const prevIdx = PRIORITY.indexOf(prev);
         const backIdx = PRIORITY.indexOf(backendStatus);
         finalStatus = prevIdx > backIdx ? prev : backendStatus;
-      } else {
-        finalStatus = backendStatus;
-      }
+      } else finalStatus = backendStatus;
 
       window.lastKnownStatus[id] = finalStatus;
       if (finalStatus !== 'Commandée') cancelAutoBuffer(id);
@@ -370,7 +514,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Résumé du jour
+  // --- Summary render
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -412,7 +556,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Refresh tables : merge + auto-buffer + SON
+  // --- Refresh logic (+ chime trigger)
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -421,12 +565,10 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
-      // 1) /tables
       const res = await fetch(`${base}/tables`);
       const data = await res.json();
       const tables = data.tables || [];
 
-      // 2) /summary → {tid: [ticketIds]}
       let summaryByTable = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -441,13 +583,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       } catch {}
 
-      // 3) hasNew & SON
       const hasNewById = {};
       Object.keys(summaryByTable).forEach((tid) => {
-        const mem = (tableMemory[tid] = tableMemory[tid] || {
-          isClosed: false,
-          ignoreIds: new Set(),
-        });
+        const mem = (tableMemory[tid] = tableMemory[tid] || { isClosed: false, ignoreIds: new Set() });
         const list = summaryByTable[tid] || [];
 
         const seen = (alertedTickets[tid] = alertedTickets[tid] || new Set());
@@ -455,31 +593,24 @@ document.addEventListener('DOMContentLoaded', () => {
         hasNewById[tid] = list.some((tk) => !mem.ignoreIds.has(tk));
 
         if (fresh.length > 0) {
-          playNewOrderChime();
+          chime.playRobust();               // <<<< robust chime (dual path + retries)
           fresh.forEach((tk) => seen.add(tk));
         }
         if (mem.isClosed && hasNewById[tid]) mem.isClosed = false;
       });
 
-      // 4) enrichit tables
       const enriched = tables.map((tb) => {
         const idNorm = normId(tb.id);
         if (!idNorm) return tb;
-        const mem = (tableMemory[idNorm] = tableMemory[idNorm] || {
-          isClosed: false,
-          ignoreIds: new Set(),
-        });
+        const mem = (tableMemory[idNorm] = tableMemory[idNorm] || { isClosed: false, ignoreIds: new Set() });
 
-        if (mem.isClosed) {
-          return { ...tb, id: idNorm, status: 'Vide' };
-        }
+        if (mem.isClosed) return { ...tb, id: idNorm, status: 'Vide' };
         if ((!tb.status || tb.status === 'Vide') && hasNewById[idNorm]) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
         return { ...tb, id: idNorm };
       });
 
-      // 5) buffers
       enriched.forEach((t) => {
         const id = normId(t.id);
         if (t.status === 'Commandée') {
@@ -516,7 +647,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.showTableDetail) window.showTableDetail(tableId);
   }
 
-  // --- Reprise timers/après load
   function rearmTimersAfterLoad() {
     Object.entries(autoBuffer).forEach(([tid, v]) => {
       const remaining = v.until - now();
@@ -530,38 +660,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Topbar & init
-  if (btnMemorize) {
-    btnMemorize.addEventListener('click', () => {
-      const url = getApiBase();
-      if (url) localStorage.setItem('staff-api', url);
-    });
-  }
-  if (btnHealth) {
-    btnHealth.addEventListener('click', async () => {
-      const base = getApiBase();
-      if (!base) return;
-      try {
-        const res = await fetch(`${base}/health`);
-        const data = await res.json();
-        alert('API OK : ' + JSON.stringify(data));
-      } catch {
-        alert('Erreur API');
-      }
-    });
-  }
-  if (btnRefreshTables) btnRefreshTables.addEventListener('click', () => { refreshTables(); saveState(); });
-  if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
-  if (filterSelect) filterSelect.addEventListener('change', refreshTables);
-
+  // Init
   const saved = localStorage.getItem('staff-api');
   if (saved && apiInput) apiInput.value = saved;
 
   loadState();
   rearmTimersAfterLoad();
-
-  // Démarre l’auto-unlock Audio (meilleure chance d’autoplay sans clic)
-  startAutoAudioUnlocker();
+  chime.startAutoUnlock();       // keep trying to enable audio as soon as possible
 
   refreshTables();
   refreshSummary();

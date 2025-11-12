@@ -1,4 +1,4 @@
-// app.js — buffer auto 120s + auto-print + synchro statuts + ignore anciens tickets
+// app.js — persistance état (buffers, timers, clôtures) + reprise après refresh
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -15,19 +15,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Constantes
   const REFRESH_MS = 5000;
-  const PREP_MS = 20 * 60 * 1000;    // 20 min
-  const BUFFER_MS = 120 * 1000;      // 120 s (agrégation)
-
-  // --- Stores partagés runtime
-  const localTableStatus = (window.localTableStatus = window.localTableStatus || {});
-  // tableMemory[TID] = { isClosed: boolean, ignoreIds: Set<string> }
-  const tableMemory = (window.tableMemory = window.tableMemory || {});
-  // autoBuffer[TID] = { until:number, timeoutId:number }
-  const autoBuffer = (window.autoBuffer = window.autoBuffer || {});
-  if (!window.lastKnownStatus) window.lastKnownStatus = {};
+  const PREP_MS = 20 * 60 * 1000;  // 20 min
+  const BUFFER_MS = 120 * 1000;    // 120 s
 
   // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
+  const now = () => Date.now();
   const getApiBase = () => (apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '');
   const formatTime = (dateString) => {
     if (!dateString) return '--:--';
@@ -37,58 +30,137 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${h}:${m}`;
   };
 
-  // --- Timers statut
+  // --- Stores (runtimes) ET persistance
+  // localTableStatus[TID] = { phase:'PREPARATION'|'PAY', until:number }
+  const localTableStatus = (window.localTableStatus = window.localTableStatus || {});
+  // tableMemory[TID] = { isClosed:boolean, ignoreIds:Set<string> }
+  const tableMemory = (window.tableMemory = window.tableMemory || {});
+  // autoBuffer[TID] = { until:number, timeoutId?:number }
+  const autoBuffer = (window.autoBuffer = window.autoBuffer || {});
+  // payClose[TID] = { closeAt:number, timeoutId?:number }
+  const payClose = (window.payClose = window.payClose || {});
+  if (!window.lastKnownStatus) window.lastKnownStatus = {};
+
+  // --- Persistance
+  const STORAGE_KEY = 'staff-state-v1';
+  function saveState() {
+    const json = {
+      tableMemory: Object.fromEntries(
+        Object.entries(tableMemory).map(([tid, v]) => [
+          tid,
+          { isClosed: !!v.isClosed, ignoreIds: Array.from(v.ignoreIds || []) },
+        ])
+      ),
+      localTableStatus,
+      autoBuffer: Object.fromEntries(
+        Object.entries(autoBuffer).map(([tid, v]) => [tid, { until: v.until }])
+      ),
+      payClose: Object.fromEntries(
+        Object.entries(payClose).map(([tid, v]) => [tid, { closeAt: v.closeAt }])
+      ),
+      lastKnownStatus,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(json));
+    } catch {}
+  }
+  function loadState() {
+    try {
+      const txt = localStorage.getItem(STORAGE_KEY);
+      if (!txt) return;
+      const state = JSON.parse(txt);
+
+      // tableMemory
+      if (state.tableMemory) {
+        Object.entries(state.tableMemory).forEach(([tid, v]) => {
+          tableMemory[tid] = {
+            isClosed: !!v.isClosed,
+            ignoreIds: new Set(v.ignoreIds || []),
+          };
+        });
+      }
+      // localTableStatus
+      if (state.localTableStatus) {
+        Object.assign(localTableStatus, state.localTableStatus);
+      }
+      // autoBuffer
+      if (state.autoBuffer) {
+        Object.entries(state.autoBuffer).forEach(([tid, v]) => {
+          autoBuffer[tid] = { until: v.until };
+        });
+      }
+      // payClose
+      if (state.payClose) {
+        Object.entries(state.payClose).forEach(([tid, v]) => {
+          payClose[tid] = { closeAt: v.closeAt };
+        });
+      }
+      // lastKnownStatus
+      if (state.lastKnownStatus) {
+        Object.assign(window.lastKnownStatus, state.lastKnownStatus);
+      }
+    } catch {}
+  }
+
+  // --- Timers statut (préparation / doit payé)
   function setPreparationFor20min(tableId) {
     const id = normId(tableId);
-    localTableStatus[id] = { phase: 'PREPARATION', until: Date.now() + PREP_MS };
+    localTableStatus[id] = { phase: 'PREPARATION', until: now() + PREP_MS };
+    saveState();
   }
   function getLocalStatus(tableId) {
     const id = normId(tableId);
     const st = localTableStatus[id];
     if (!st) return null;
-    const now = Date.now();
+    const t = now();
+
     if (st.phase === 'PREPARATION') {
-      if (now < st.until) return 'En préparation';
+      if (t < st.until) return 'En préparation';
+      // 20 min passées → bascule persistée
       localTableStatus[id] = { phase: 'PAY', until: null };
+      saveState();
       return 'Doit payé';
     }
     if (st.phase === 'PAY') return 'Doit payé';
     return null;
   }
 
-  // --- Buffer d’agrégation automatique 120s
+  // --- Buffer 120s
+  async function autoPrintAndPrep(id) {
+    const base = getApiBase();
+    if (base) {
+      try {
+        await fetch(`${base}/print`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: id }),
+        });
+      } catch {}
+    }
+    setPreparationFor20min(id);
+    window.lastKnownStatus[id] = 'En préparation';
+    delete autoBuffer[id];
+    saveState();
+    refreshTables();
+  }
   function startAutoBuffer(id) {
     id = normId(id);
-    if (autoBuffer[id]) return; // déjà actif
-    const until = Date.now() + BUFFER_MS;
-    const timeoutId = setTimeout(async () => {
-      // À l’expiration du buffer → auto-print + préparation 20min
-      const base = getApiBase();
-      if (base) {
-        try {
-          await fetch(`${base}/print`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id }),
-          });
-        } catch {}
-      }
-      setPreparationFor20min(id);
-      window.lastKnownStatus[id] = 'En préparation';
-      delete autoBuffer[id];
-      refreshTables();
-    }, BUFFER_MS);
+    if (autoBuffer[id]) return;
+    const until = now() + BUFFER_MS;
+    const timeoutId = setTimeout(() => autoPrintAndPrep(id), BUFFER_MS);
     autoBuffer[id] = { until, timeoutId };
+    saveState();
   }
   function cancelAutoBuffer(id) {
     id = normId(id);
     if (autoBuffer[id]) {
-      clearTimeout(autoBuffer[id].timeoutId);
+      if (autoBuffer[id].timeoutId) clearTimeout(autoBuffer[id].timeoutId);
       delete autoBuffer[id];
+      saveState();
     }
   }
 
-  // --- Aide /summary
+  // --- /summary helpers
   async function fetchTicketIdsForTable(base, tableIdNorm) {
     try {
       const res = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -103,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Clôture : passe Vide + isClosed=true et mémorise les IDs à ignorer (persiste en mémoire runtime)
+  // --- Clôture (Payée → après 30s → Vide + ignore anciens tickets)
   async function closeTableAndIgnoreCurrentTickets(tableId) {
     const base = getApiBase();
     const id = normId(tableId);
@@ -115,9 +187,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!tableMemory[id]) tableMemory[id] = { isClosed: true, ignoreIds: new Set() };
     tableMemory[id].isClosed = true;
     ids.forEach((tid) => tableMemory[id].ignoreIds.add(String(tid)));
+
+    delete payClose[id];
+    saveState();
+  }
+  function scheduleCloseIn30s(id) {
+    id = normId(id);
+    const closeAt = now() + 30_000;
+    if (payClose[id] && payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
+    const timeoutId = setTimeout(() => closeTableAndIgnoreCurrentTickets(id), 30_000);
+    payClose[id] = { closeAt, timeoutId };
+    saveState();
+  }
+  function cancelPayClose(id) {
+    id = normId(id);
+    if (payClose[id] && payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
+    delete payClose[id];
+    saveState();
   }
 
-  // --- UI : rendu des tables
+  // --- Rendu des tables
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
@@ -144,6 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (forced) {
         finalStatus = forced;
       } else if (prev && prev !== 'Vide') {
+        // empêcher le downgrade après refresh
         const prevIdx = PRIORITY.indexOf(prev);
         const backIdx = PRIORITY.indexOf(backendStatus);
         finalStatus = prevIdx > backIdx ? prev : backendStatus;
@@ -153,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       window.lastKnownStatus[id] = finalStatus;
 
-      // Sécurité : si la table n’est pas “Commandée”, on annule le buffer auto
+      // Sécurité timers vis-à-vis du statut affiché
       if (finalStatus !== 'Commandée') cancelAutoBuffer(id);
 
       const card = document.createElement('div');
@@ -171,13 +261,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // Ouvrir panneau détail
+      // Ouvrir panneau
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
       });
 
-      // Imprimer (manuel) → annule le buffer auto si actif
+      // Imprimer maintenant (annule buffer)
       const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
@@ -195,14 +285,14 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           setPreparationFor20min(id);
           window.lastKnownStatus[id] = 'En préparation';
-          // réouverture si besoin
           if (!tableMemory[id]) tableMemory[id] = { isClosed: false, ignoreIds: new Set() };
           tableMemory[id].isClosed = false;
+          saveState();
           refreshTables();
         });
       }
 
-      // Paiement confirmé → Payée → 30s → Vide + clôture + annule buffer
+      // Paiement confirmé (planifie clôture 30s)
       const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
         btnPaid.addEventListener('click', async (e) => {
@@ -220,12 +310,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           window.lastKnownStatus[id] = 'Payée';
           delete localTableStatus[id];
+          scheduleCloseIn30s(id);
+          saveState();
           refreshTables();
-
-          setTimeout(async () => {
-            await closeTableAndIgnoreCurrentTickets(id);
-            refreshTables();
-          }, 30 * 1000);
         });
       }
 
@@ -233,7 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Résumé du jour (inchangé, déjà “safe”)
+  // --- Résumé du jour (identique)
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -280,7 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Refresh tables : merge /tables + /summary + auto-buffer sur “Commandée”
+  // --- Refresh tables : merge + auto-buffer + réouverture si nouveau ticket
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -294,7 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       const tables = data.tables || [];
 
-      // 2) /summary → map {tid: [ticketIds]}
+      // 2) /summary → {tid: [ticketIds]}
       let summaryByTable = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -309,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       } catch {}
 
-      // 3) calcul “hasNew” (nouveau ticket non ignoré)
+      // 3) hasNew : nouveau ticket non ignoré
       const hasNewById = {};
       Object.keys(summaryByTable).forEach((tid) => {
         const mem = (tableMemory[tid] = tableMemory[tid] || {
@@ -318,7 +405,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const list = summaryByTable[tid] || [];
         hasNewById[tid] = list.some((id) => !mem.ignoreIds.has(id));
-        // Réouverture auto si table fermée mais nouveau ticket
         if (mem.isClosed && hasNewById[tid]) mem.isClosed = false;
       });
 
@@ -340,16 +426,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return { ...tb, id: idNorm };
       });
 
-      // 5) démarrage/annulation du buffer selon statut
+      // 5) (re)starter / stopper buffer selon statut
       enriched.forEach((t) => {
         const id = normId(t.id);
         if (t.status === 'Commandée') {
-          startAutoBuffer(id);
+          // démarre buffer si pas déjà présent
+          if (!autoBuffer[id]) startAutoBuffer(id);
         } else {
           cancelAutoBuffer(id);
         }
       });
 
+      saveState();
       renderTables(enriched);
     } catch (err) {
       console.error('[STAFF] erreur tables', err);
@@ -376,6 +464,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.showTableDetail) window.showTableDetail(tableId);
   }
 
+  // --- Reprise des timers & état au chargement
+  function rearmTimersAfterLoad() {
+    // autoBuffer
+    Object.entries(autoBuffer).forEach(([tid, v]) => {
+      const remaining = v.until - now();
+      if (remaining <= 0) {
+        // buffer déjà échoué → déclenche immédiat
+        autoPrintAndPrep(tid);
+      } else {
+        v.timeoutId = setTimeout(() => autoPrintAndPrep(tid), remaining);
+      }
+    });
+    // payClose
+    Object.entries(payClose).forEach(([tid, v]) => {
+      const remaining = v.closeAt - now();
+      if (remaining <= 0) {
+        closeTableAndIgnoreCurrentTickets(tid);
+      } else {
+        v.timeoutId = setTimeout(() => closeTableAndIgnoreCurrentTickets(tid), remaining);
+      }
+    });
+  }
+
   // --- Topbar
   if (btnMemorize) {
     btnMemorize.addEventListener('click', () => {
@@ -396,7 +507,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-  if (btnRefreshTables) btnRefreshTables.addEventListener('click', refreshTables);
+  if (btnRefreshTables) btnRefreshTables.addEventListener('click', () => { refreshTables(); saveState(); });
   if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
   if (filterSelect) filterSelect.addEventListener('change', refreshTables);
 
@@ -404,8 +515,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const saved = localStorage.getItem('staff-api');
   if (saved && apiInput) apiInput.value = saved;
 
+  loadState();              // recharge l’état persistant
+  rearmTimersAfterLoad();   // reprogramme les timeouts au bon remaining
+
   refreshTables();
   refreshSummary();
+
   setInterval(() => {
     refreshTables();
     refreshSummary();

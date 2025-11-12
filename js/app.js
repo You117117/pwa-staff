@@ -1,7 +1,7 @@
-// app.js — ignore persistant des anciens tickets + réouverture propre
+// app.js — buffer auto 120s + auto-print + synchro statuts + ignore anciens tickets
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Sélecteurs
+  // --- Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
   const btnMemorize = document.querySelector('#btnMemorize');
   const btnHealth = document.querySelector('#btnHealth');
@@ -13,18 +13,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryEmpty = document.querySelector('#summaryEmpty');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
+  // --- Constantes
   const REFRESH_MS = 5000;
+  const PREP_MS = 20 * 60 * 1000;    // 20 min
+  const BUFFER_MS = 120 * 1000;      // 120 s (agrégation)
 
-  // Stores partagés (persistés en mémoire runtime)
-  const localTableStatus =
-    (window.localTableStatus = window.localTableStatus || {});
+  // --- Stores partagés runtime
+  const localTableStatus = (window.localTableStatus = window.localTableStatus || {});
   // tableMemory[TID] = { isClosed: boolean, ignoreIds: Set<string> }
-  const tableMemory =
-    (window.tableMemory = window.tableMemory || {});
+  const tableMemory = (window.tableMemory = window.tableMemory || {});
+  // autoBuffer[TID] = { until:number, timeoutId:number }
+  const autoBuffer = (window.autoBuffer = window.autoBuffer || {});
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
 
-  // Utils
+  // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
+  const getApiBase = () => (apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '');
   const formatTime = (dateString) => {
     if (!dateString) return '--:--';
     const d = new Date(dateString);
@@ -32,16 +36,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
   };
-  const getApiBase = () =>
-    apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '';
 
-  // Timers statut
+  // --- Timers statut
   function setPreparationFor20min(tableId) {
     const id = normId(tableId);
-    const TWENTY_MIN = 20 * 60 * 1000;
-    localTableStatus[id] = { phase: 'PREPARATION', until: Date.now() + TWENTY_MIN };
+    localTableStatus[id] = { phase: 'PREPARATION', until: Date.now() + PREP_MS };
   }
-
   function getLocalStatus(tableId) {
     const id = normId(tableId);
     const st = localTableStatus[id];
@@ -56,14 +56,44 @@ document.addEventListener('DOMContentLoaded', () => {
     return null;
   }
 
-  // Récupère tous les IDs de tickets d'une table dans /summary
+  // --- Buffer d’agrégation automatique 120s
+  function startAutoBuffer(id) {
+    id = normId(id);
+    if (autoBuffer[id]) return; // déjà actif
+    const until = Date.now() + BUFFER_MS;
+    const timeoutId = setTimeout(async () => {
+      // À l’expiration du buffer → auto-print + préparation 20min
+      const base = getApiBase();
+      if (base) {
+        try {
+          await fetch(`${base}/print`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: id }),
+          });
+        } catch {}
+      }
+      setPreparationFor20min(id);
+      window.lastKnownStatus[id] = 'En préparation';
+      delete autoBuffer[id];
+      refreshTables();
+    }, BUFFER_MS);
+    autoBuffer[id] = { until, timeoutId };
+  }
+  function cancelAutoBuffer(id) {
+    id = normId(id);
+    if (autoBuffer[id]) {
+      clearTimeout(autoBuffer[id].timeoutId);
+      delete autoBuffer[id];
+    }
+  }
+
+  // --- Aide /summary
   async function fetchTicketIdsForTable(base, tableIdNorm) {
     try {
       const res = await fetch(`${base}/summary`, { cache: 'no-store' });
       const data = await res.json();
-      const tickets = (data.tickets || []).filter(
-        (t) => normId(t.table) === tableIdNorm
-      );
+      const tickets = (data.tickets || []).filter((t) => normId(t.table) === tableIdNorm);
       return tickets
         .map((t) => t.id)
         .filter((id) => id !== undefined && id !== null)
@@ -73,21 +103,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Clôture : marque "Vide", isClosed=true et mémorise les IDS à ignorer (persistant)
+  // Clôture : passe Vide + isClosed=true et mémorise les IDs à ignorer (persiste en mémoire runtime)
   async function closeTableAndIgnoreCurrentTickets(tableId) {
     const base = getApiBase();
     const id = normId(tableId);
-
     window.lastKnownStatus[id] = 'Vide';
     delete localTableStatus[id];
+    cancelAutoBuffer(id);
 
     const ids = base ? await fetchTicketIdsForTable(base, id) : [];
     if (!tableMemory[id]) tableMemory[id] = { isClosed: true, ignoreIds: new Set() };
     tableMemory[id].isClosed = true;
-    // on cumule les anciens tickets, on ne les perd jamais
     ids.forEach((tid) => tableMemory[id].ignoreIds.add(String(tid)));
   }
 
+  // --- UI : rendu des tables
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
@@ -123,6 +153,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       window.lastKnownStatus[id] = finalStatus;
 
+      // Sécurité : si la table n’est pas “Commandée”, on annule le buffer auto
+      if (finalStatus !== 'Commandée') cancelAutoBuffer(id);
+
       const card = document.createElement('div');
       card.className = 'table';
       card.setAttribute('data-table', id);
@@ -138,18 +171,19 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // Ouvre le panneau
+      // Ouvrir panneau détail
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         openTableDetail(id);
       });
 
-      // Imprimer
+      // Imprimer (manuel) → annule le buffer auto si actif
       const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
+          cancelAutoBuffer(id);
           if (base) {
             try {
               await fetch(`${base}/print`, {
@@ -161,19 +195,20 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           setPreparationFor20min(id);
           window.lastKnownStatus[id] = 'En préparation';
-          // réouverture : on garde les ignoreIds mais on enlève le flag fermé
+          // réouverture si besoin
           if (!tableMemory[id]) tableMemory[id] = { isClosed: false, ignoreIds: new Set() };
           tableMemory[id].isClosed = false;
           refreshTables();
         });
       }
 
-      // Paiement confirmé
+      // Paiement confirmé → Payée → 30s → Vide + clôture + annule buffer
       const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
+          cancelAutoBuffer(id);
           if (base) {
             try {
               await fetch(`${base}/confirm`, {
@@ -187,7 +222,6 @@ document.addEventListener('DOMContentLoaded', () => {
           delete localTableStatus[id];
           refreshTables();
 
-          // 30s plus tard → clôture + mémorise les tickets à ignorer (on ne les oubliera plus)
           setTimeout(async () => {
             await closeTableAndIgnoreCurrentTickets(id);
             refreshTables();
@@ -199,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Résumé du jour
+  // --- Résumé du jour (inchangé, déjà “safe”)
   function renderSummary(tickets) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -246,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Merge /tables + /summary avec prise en compte de isClosed/ignoreIds
+  // --- Refresh tables : merge /tables + /summary + auto-buffer sur “Commandée”
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
@@ -255,12 +289,12 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
-      // 1) tables
+      // 1) /tables
       const res = await fetch(`${base}/tables`);
       const data = await res.json();
       const tables = data.tables || [];
 
-      // 2) summary → par table : liste d'IDs
+      // 2) /summary → map {tid: [ticketIds]}
       let summaryByTable = {};
       try {
         const resSum = await fetch(`${base}/summary`, { cache: 'no-store' });
@@ -269,37 +303,51 @@ document.addEventListener('DOMContentLoaded', () => {
         tickets.forEach((t) => {
           const tid = normId(t.table);
           if (!tid) return;
-          const idStr =
-            t.id !== undefined && t.id !== null ? String(t.id) : null;
+          const idStr = t.id !== undefined && t.id !== null ? String(t.id) : null;
           if (!summaryByTable[tid]) summaryByTable[tid] = [];
           if (idStr) summaryByTable[tid].push(idStr);
         });
       } catch {}
 
-      // 3) pour chaque table : calcule s'il y a **un nouveau ticket non ignoré**
+      // 3) calcul “hasNew” (nouveau ticket non ignoré)
+      const hasNewById = {};
+      Object.keys(summaryByTable).forEach((tid) => {
+        const mem = (tableMemory[tid] = tableMemory[tid] || {
+          isClosed: false,
+          ignoreIds: new Set(),
+        });
+        const list = summaryByTable[tid] || [];
+        hasNewById[tid] = list.some((id) => !mem.ignoreIds.has(id));
+        // Réouverture auto si table fermée mais nouveau ticket
+        if (mem.isClosed && hasNewById[tid]) mem.isClosed = false;
+      });
+
+      // 4) enrichit tables (force Vide si fermée, Commandée si nouveau ticket)
       const enriched = tables.map((tb) => {
         const idNorm = normId(tb.id);
         if (!idNorm) return tb;
+        const mem = (tableMemory[idNorm] = tableMemory[idNorm] || {
+          isClosed: false,
+          ignoreIds: new Set(),
+        });
 
-        const mem = (tableMemory[idNorm] =
-          tableMemory[idNorm] || { isClosed: false, ignoreIds: new Set() });
-        const idsInSummary = summaryByTable[idNorm] || [];
-        const hasNew = idsInSummary.some((tid) => !mem.ignoreIds.has(tid));
-
-        // réouverture auto s'il y a un nouveau ticket non ignoré
-        if (mem.isClosed && hasNew) mem.isClosed = false;
-
-        // si fermé → force "Vide" (même si /tables dit autre chose)
         if (mem.isClosed) {
           return { ...tb, id: idNorm, status: 'Vide' };
         }
-
-        // si Vide mais **nouveau ticket** → Commandée
-        if ((!tb.status || tb.status === 'Vide') && hasNew) {
+        if ((!tb.status || tb.status === 'Vide') && hasNewById[idNorm]) {
           return { ...tb, id: idNorm, status: 'Commandée' };
         }
-
         return { ...tb, id: idNorm };
+      });
+
+      // 5) démarrage/annulation du buffer selon statut
+      enriched.forEach((t) => {
+        const id = normId(t.id);
+        if (t.status === 'Commandée') {
+          startAutoBuffer(id);
+        } else {
+          cancelAutoBuffer(id);
+        }
       });
 
       renderTables(enriched);
@@ -325,19 +373,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function openTableDetail(tableId) {
-    if (window.showTableDetail) {
-      window.showTableDetail(tableId);
-    }
+    if (window.showTableDetail) window.showTableDetail(tableId);
   }
 
-  // Topbar
+  // --- Topbar
   if (btnMemorize) {
     btnMemorize.addEventListener('click', () => {
       const url = getApiBase();
       if (url) localStorage.setItem('staff-api', url);
     });
   }
-
   if (btnHealth) {
     btnHealth.addEventListener('click', async () => {
       const base = getApiBase();
@@ -346,25 +391,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch(`${base}/health`);
         const data = await res.json();
         alert('API OK : ' + JSON.stringify(data));
-      } catch (err) {
+      } catch {
         alert('Erreur API');
       }
     });
   }
-
   if (btnRefreshTables) btnRefreshTables.addEventListener('click', refreshTables);
   if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
   if (filterSelect) filterSelect.addEventListener('change', refreshTables);
 
-  // Init
+  // --- Init
   const saved = localStorage.getItem('staff-api');
-  if (saved && apiInput) {
-    apiInput.value = saved;
-  }
+  if (saved && apiInput) apiInput.value = saved;
 
   refreshTables();
   refreshSummary();
-
   setInterval(() => {
     refreshTables();
     refreshSummary();

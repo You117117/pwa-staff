@@ -1,17 +1,13 @@
-// app.js — gestion statuts, buffer 120s, paiement + reset journalier à 03:00
+// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par dernière commande)
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
-  const btnMemorize = document.querySelector('#btnMemorize');
-  const btnHealth = document.querySelector('#btnHealth');
   const tablesContainer = document.querySelector('#tables');
   const tablesEmpty = document.querySelector('#tablesEmpty');
-  const btnRefreshTables = document.querySelector('#btnRefresh');
   const filterSelect = document.querySelector('#filterTables');
   const summaryContainer = document.querySelector('#summary');
   const summaryEmpty = document.querySelector('#summaryEmpty');
-  const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
 
   // --- Constantes
   const REFRESH_MS = 5000;
@@ -133,7 +129,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function ensureBusinessDayFresh() {
     const currentKey = getBusinessDayKey();
     if (!window.businessDayKey || window.businessDayKey !== currentKey) {
-      // nouvelle journée de service
       resetForNewBusinessDay();
       window.businessDayKey = currentKey;
       saveState();
@@ -206,7 +201,6 @@ document.addEventListener('DOMContentLoaded', () => {
     tableMemory[id].isClosed=true;
     ids.forEach(tid=>tableMemory[id].ignoreIds.add(String(tid)));
 
-    // plus besoin de prevStatus
     delete prevStatusBeforePay[id];
 
     delete payClose[id];
@@ -228,7 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.cancelPayClose = cancelPayClose;
 
-  // --- Rendu LISTE TABLES (tri par dernière commande la plus récente)
+  // --- Rendu LISTE TABLES (TRI PAR lastTicketAt)
   function renderTables(tables){
     if(!tablesContainer) return;
     tablesContainer.innerHTML='';
@@ -242,15 +236,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const filter=filterSelect?normId(filterSelect.value):'TOUTES';
     const PRIORITY=['Vide','Commandée','En préparation','Doit payé','Payée'];
 
-    // Tri : table avec la commande la plus récente (lastTicketSortKey) en haut
+    // 👉 Tri simple : table avec lastTicketAt la plus récente en haut
     const sorted = [...tables].sort((a, b) => {
-      const sa = typeof a.lastTicketSortKey === 'number'
-        ? a.lastTicketSortKey
-        : (a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0);
-      const sb = typeof b.lastTicketSortKey === 'number'
-        ? b.lastTicketSortKey
-        : (b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0);
-      return sb - sa; // plus récent d'abord
+      const ta = a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0;
+      const tb = b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0;
+      return tb - ta; // plus récent d'abord
     });
 
     sorted.forEach((table)=>{
@@ -325,7 +315,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const base=getApiBase();
             cancelAutoBuffer(id);
 
-            // mémoriser statut précédent
             prevStatusBeforePay[id] = {
               label: window.lastKnownStatus[id] || 'Commandée',
               local: localTableStatus[id] ? { ...localTableStatus[id] } : null
@@ -403,7 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Refresh tables (+ chime)
   async function refreshTables(){
-    ensureBusinessDayFresh(); // vérifie si on a changé de journée
+    ensureBusinessDayFresh();
 
     const base=getApiBase();
     if(!base){ if(tablesContainer) tablesContainer.innerHTML=''; if(tablesEmpty) tablesEmpty.style.display='block'; return; }
@@ -427,21 +416,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }catch{}
 
       const hasNewById={};
-      const lastTicketSortKeyById = {};
       Object.keys(summaryByTable).forEach(tid=>{
         const mem=(tableMemory[tid]=tableMemory[tid]||{isClosed:false,ignoreIds:new Set()});
         const list=summaryByTable[tid]||[];
 
         const seen=(alertedTickets[tid]=alertedTickets[tid]||new Set());
-        const activeIds=list.filter(tk=>!mem.ignoreIds.has(tk)); // tickets non ignorés
+        const activeIds=list.filter(tk=>!mem.ignoreIds.has(tk));
         const fresh=activeIds.filter(tk=>!seen.has(tk));
         hasNewById[tid]=activeIds.length>0;
 
         if(fresh.length>0){ chime.playRobust(); fresh.forEach(tk=>seen.add(tk)); }
         if(mem.isClosed && hasNewById[tid]) mem.isClosed=false;
-
-        const nums = activeIds.map(x=>parseInt(x,10)).filter(n=>!Number.isNaN(n));
-        lastTicketSortKeyById[tid] = nums.length ? Math.max(...nums) : 0;
       });
 
       const enriched=tables.map(tb=>{
@@ -456,9 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
           status='Commandée';
         }
 
-        const sortKey = lastTicketSortKeyById[idNorm] ?? 0;
-
-        return {...tb,id:idNorm,status, lastTicketSortKey: sortKey};
+        return {...tb,id:idNorm,status};
       });
 
       enriched.forEach(t=>{
@@ -502,7 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if(saved&&apiInput) apiInput.value=saved;
 
   loadState();
-  ensureBusinessDayFresh();   // au démarrage : reset si on a changé de journée
+  ensureBusinessDayFresh();
   rearmTimersAfterLoad();
   chime.startAutoUnlock();
 

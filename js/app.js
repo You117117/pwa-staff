@@ -228,18 +228,28 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.cancelPayClose = cancelPayClose;
 
-  // --- Rendu LISTE TABLES
+  // --- Rendu LISTE TABLES (tri par dernière commande la plus récente)
   function renderTables(tables){
     if(!tablesContainer) return;
     tablesContainer.innerHTML='';
 
-    if(!tables||!tables.length){ if(tablesEmpty) tablesEmpty.style.display='block'; return; }
+    if(!tables||!tables.length){
+      if(tablesEmpty) tablesEmpty.style.display='block';
+      return;
+    }
     if(tablesEmpty) tablesEmpty.style.display='none';
 
     const filter=filterSelect?normId(filterSelect.value):'TOUTES';
     const PRIORITY=['Vide','Commandée','En préparation','Doit payé','Payée'];
 
-    tables.forEach((table)=>{
+    // 👉 Tri : table avec dernière commande la plus récente en haut
+    const sorted = [...tables].sort((a, b) => {
+      const ta = a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0;
+      const tb = b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0;
+      return tb - ta; // plus récent d'abord
+    });
+
+    sorted.forEach((table)=>{
       const id=normId(table.id);
       if(filter!=='TOUTES'&&filter!==id) return;
 
@@ -250,7 +260,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let finalStatus;
       if(forced){ finalStatus=forced; }
-      else if(prev&&prev!=='Vide'){ const prevIdx=PRIORITY.indexOf(prev); const backIdx=PRIORITY.indexOf(backendStatus); finalStatus=prevIdx>backIdx?prev:backendStatus; }
+      else if(prev&&prev!=='Vide'){
+        const prevIdx=PRIORITY.indexOf(prev);
+        const backIdx=PRIORITY.indexOf(backendStatus);
+        finalStatus=prevIdx>backIdx?prev:backendStatus;
+      }
       else { finalStatus=backendStatus; }
 
       window.lastKnownStatus[id]=finalStatus;

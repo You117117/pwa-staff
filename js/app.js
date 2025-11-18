@@ -1,4 +1,4 @@
-// app.js — gestion statuts, buffer 120s, paiement + reset journalier à 03:00
+// app.js — gestion statuts, buffer 120s, paiement + reset journalier à 19:00
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const REFRESH_MS = 5000;
   const PREP_MS = 20 * 60 * 1000;
   const BUFFER_MS = 120 * 1000;
-  const RESET_HOUR = 3; // heure de "fin de journée" (03:00)
+  const RESET_HOUR = 19; // heure de "fin de journée" (19:00)
 
   // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
   if (!window.businessDayKey) window.businessDayKey = null;
 
-  // --- Chime robuste (déjà vu)
+  // --- Chime robuste
   const chime = {
     ctx: null, lastPlayAt: 0, unlockTimer: null, el: null, wavUrl: null, retryTimer: null, retryUntil: 0,
     ensureCtx(){ const AC = window.AudioContext||window.webkitAudioContext; if(!this.ctx&&AC) this.ctx=new AC(); },
@@ -206,7 +206,6 @@ document.addEventListener('DOMContentLoaded', () => {
     tableMemory[id].isClosed=true;
     ids.forEach(tid=>tableMemory[id].ignoreIds.add(String(tid)));
 
-    // plus besoin de prevStatus
     delete prevStatusBeforePay[id];
 
     delete payClose[id];
@@ -307,7 +306,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const base=getApiBase();
             cancelAutoBuffer(id);
 
-            // mémoriser statut précédent
             prevStatusBeforePay[id] = {
               label: window.lastKnownStatus[id] || 'Commandée',
               local: localTableStatus[id] ? { ...localTableStatus[id] } : null

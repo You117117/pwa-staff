@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
   if (!window.businessDayKey) window.businessDayKey = null;
 
-  // --- Chime robuste (déjà vu)
+  // --- Chime robuste
   const chime = {
     ctx: null, lastPlayAt: 0, unlockTimer: null, el: null, wavUrl: null, retryTimer: null, retryUntil: 0,
     ensureCtx(){ const AC = window.AudioContext||window.webkitAudioContext; if(!this.ctx&&AC) this.ctx=new AC(); },
@@ -228,18 +228,32 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.cancelPayClose = cancelPayClose;
 
-  // --- Rendu LISTE TABLES
+  // --- Rendu LISTE TABLES (tri par dernière commande la plus récente)
   function renderTables(tables){
     if(!tablesContainer) return;
     tablesContainer.innerHTML='';
 
-    if(!tables||!tables.length){ if(tablesEmpty) tablesEmpty.style.display='block'; return; }
+    if(!tables||!tables.length){
+      if(tablesEmpty) tablesEmpty.style.display='block';
+      return;
+    }
     if(tablesEmpty) tablesEmpty.style.display='none';
 
     const filter=filterSelect?normId(filterSelect.value):'TOUTES';
     const PRIORITY=['Vide','Commandée','En préparation','Doit payé','Payée'];
 
-    tables.forEach((table)=>{
+    // Tri : table avec la commande la plus récente (lastTicketSortKey) en haut
+    const sorted = [...tables].sort((a, b) => {
+      const sa = typeof a.lastTicketSortKey === 'number'
+        ? a.lastTicketSortKey
+        : (a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0);
+      const sb = typeof b.lastTicketSortKey === 'number'
+        ? b.lastTicketSortKey
+        : (b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0);
+      return sb - sa; // plus récent d'abord
+    });
+
+    sorted.forEach((table)=>{
       const id=normId(table.id);
       if(filter!=='TOUTES'&&filter!==id) return;
 
@@ -250,7 +264,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let finalStatus;
       if(forced){ finalStatus=forced; }
-      else if(prev&&prev!=='Vide'){ const prevIdx=PRIORITY.indexOf(prev); const backIdx=PRIORITY.indexOf(backendStatus); finalStatus=prevIdx>backIdx?prev:backendStatus; }
+      else if(prev&&prev!=='Vide'){
+        const prevIdx=PRIORITY.indexOf(prev);
+        const backIdx=PRIORITY.indexOf(backendStatus);
+        finalStatus=prevIdx>backIdx?prev:backendStatus;
+      }
       else { finalStatus=backendStatus; }
 
       window.lastKnownStatus[id]=finalStatus;
@@ -409,25 +427,38 @@ document.addEventListener('DOMContentLoaded', () => {
       }catch{}
 
       const hasNewById={};
+      const lastTicketSortKeyById = {};
       Object.keys(summaryByTable).forEach(tid=>{
         const mem=(tableMemory[tid]=tableMemory[tid]||{isClosed:false,ignoreIds:new Set()});
         const list=summaryByTable[tid]||[];
 
         const seen=(alertedTickets[tid]=alertedTickets[tid]||new Set());
-        const fresh=list.filter(tk=>!mem.ignoreIds.has(tk)&&!seen.has(tk));
-        hasNewById[tid]=list.some(tk=>!mem.ignoreIds.has(tk));
+        const activeIds=list.filter(tk=>!mem.ignoreIds.has(tk)); // tickets non ignorés
+        const fresh=activeIds.filter(tk=>!seen.has(tk));
+        hasNewById[tid]=activeIds.length>0;
 
         if(fresh.length>0){ chime.playRobust(); fresh.forEach(tk=>seen.add(tk)); }
         if(mem.isClosed && hasNewById[tid]) mem.isClosed=false;
+
+        const nums = activeIds.map(x=>parseInt(x,10)).filter(n=>!Number.isNaN(n));
+        lastTicketSortKeyById[tid] = nums.length ? Math.max(...nums) : 0;
       });
 
       const enriched=tables.map(tb=>{
         const idNorm=normId(tb.id);
         if(!idNorm) return tb;
         const mem=(tableMemory[idNorm]=tableMemory[idNorm]||{isClosed:false,ignoreIds:new Set()});
-        if(mem.isClosed) return {...tb,id:idNorm,status:'Vide'};
-        if((!tb.status||tb.status==='Vide')&&hasNewById[idNorm]) return {...tb,id:idNorm,status:'Commandée'};
-        return {...tb,id:idNorm};
+
+        let status = tb.status;
+        if(mem.isClosed){
+          status='Vide';
+        } else if((!status||status==='Vide')&&hasNewById[idNorm]){
+          status='Commandée';
+        }
+
+        const sortKey = lastTicketSortKeyById[idNorm] ?? 0;
+
+        return {...tb,id:idNorm,status, lastTicketSortKey: sortKey};
       });
 
       enriched.forEach(t=>{

@@ -303,22 +303,35 @@ document.addEventListener('DOMContentLoaded', () => {
       const card=document.createElement('div');
       card.className='table';
       card.setAttribute('data-table',id);
-      card.innerHTML=`
-        <div class="card-head">
-          <span class="chip">${id}</span>
-          <span class="chip">${finalStatus}</span>
-          <span class="chip">Dernier : ${last}</span>
+      card.innerHTML = `
+  <div class="card-head">
+    <span class="chip">${id}</span>
+    <span class="chip">${finalStatus}</span>
+    <span class="chip">
+      ${
+        localLastActivity[id] 
+        ? `Commandé à : ${formatTime(new Date(localLastActivity[id]).toISOString())}`
+        : '—'
+      }
+    </span>
+  </div>
+
+  ${
+    showActions
+      ? `
+        <div class="card-actions">
+          <button class="btn btn-primary btn-print">Imprimer maintenant</button>
+          ${
+            isPaymentPending
+              ? `<button class="btn btn-warning btn-cancel-pay" style="background:#f59e0b;border-color:#f59e0b;">Annuler le paiement</button>`
+              : `<button class="btn btn-primary btn-paid">Paiement confirmé</button>`
+          }
         </div>
-        ${ showActions ? `
-          <div class="card-actions">
-            <button class="btn btn-primary btn-print">Imprimer maintenant</button>
-            ${
-              isPaymentPending
-                ? `<button class="btn btn-warning btn-cancel-pay" style="background:#f59e0b;border-color:#f59e0b;">Annuler le paiement</button>`
-                : `<button class="btn btn-primary btn-paid">Paiement confirmé</button>`
-            }
-          </div>` : `` }
-      `;
+      `
+      : ``
+  }
+`;
+
 
       card.addEventListener('click',(e)=>{ if(e.target.closest('button')) return; openTableDetail(id); });
 

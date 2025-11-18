@@ -1,4 +1,4 @@
-// app.js — restore statut précédent à l’annulation + bouton "Annuler le paiement" orange
+// app.js — gestion statuts, buffer 120s, paiement + reset journalier à 03:00
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const REFRESH_MS = 5000;
   const PREP_MS = 20 * 60 * 1000;
   const BUFFER_MS = 120 * 1000;
+  const RESET_HOUR = 3; // heure de "fin de journée" (03:00)
 
   // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
@@ -30,6 +31,19 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${h}:${m}`;
   };
 
+  // --- "Business day" (gestion de la journée de service)
+  function getBusinessDayKey() {
+    // Clé de type "YYYY-MM-DD" mais avec coupure à RESET_HOUR
+    const d = new Date();
+    const h = d.getHours();
+    if (h < RESET_HOUR) {
+      // Avant RESET_HOUR, on considère qu'on est encore sur la journée d'hier
+      d.setDate(d.getDate() - 1);
+    }
+    const iso = d.toISOString(); // ex: 2025-11-13T...
+    return iso.slice(0, 10); // "YYYY-MM-DD"
+  }
+
   // --- Stores & persistance
   const localTableStatus = (window.localTableStatus = window.localTableStatus || {}); // { phase, until }
   const tableMemory     = (window.tableMemory     = window.tableMemory     || {}); // { isClosed, ignoreIds:Set }
@@ -38,8 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {}); // { tid -> Set(ids) }
   const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {}); // { tableId: {label, local} }
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
+  if (!window.businessDayKey) window.businessDayKey = null;
 
-  // --- Chime robuste (version précédente)
+  // --- Chime robuste (déjà vu)
   const chime = {
     ctx: null, lastPlayAt: 0, unlockTimer: null, el: null, wavUrl: null, retryTimer: null, retryUntil: 0,
     ensureCtx(){ const AC = window.AudioContext||window.webkitAudioContext; if(!this.ctx&&AC) this.ctx=new AC(); },
@@ -68,7 +83,8 @@ document.addEventListener('DOMContentLoaded', () => {
       payClose: Object.fromEntries(Object.entries(payClose).map(([tid,v])=>[tid,{closeAt:v.closeAt}])),
       alertedTickets: Object.fromEntries(Object.entries(alertedTickets).map(([tid,set])=>[tid,Array.from(set||[])])),
       lastKnownStatus,
-      prevStatusBeforePay
+      prevStatusBeforePay,
+      businessDay: window.businessDayKey || getBusinessDayKey()
     };
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(json)); }catch{}
   }
@@ -82,8 +98,46 @@ document.addEventListener('DOMContentLoaded', () => {
       if(s.payClose ) Object.entries(s.payClose ).forEach(([tid,v])=>payClose[tid] ={closeAt:v.closeAt});
       if(s.alertedTickets) Object.entries(s.alertedTickets).forEach(([tid,arr])=>alertedTickets[tid]=new Set(arr||[]));
       if(s.lastKnownStatus) Object.assign(window.lastKnownStatus,s.lastKnownStatus);
-      if(s.prevStatusBeforePay) Object.assign(prevStatusBeforePay, s.prevStatusBeforePay);
+      if(s.prevStatusBeforePay) Object.assign(prevStatusBeforePay,s.prevStatusBeforePay);
+      if(s.businessDay) window.businessDayKey = s.businessDay;
     }catch{}
+  }
+
+  // --- Reset complet pour nouvelle journée
+  function resetForNewBusinessDay() {
+    // stop timers buffer
+    Object.values(autoBuffer).forEach(v => {
+      if (v && v.timeoutId) clearTimeout(v.timeoutId);
+    });
+    Object.keys(autoBuffer).forEach(k => delete autoBuffer[k]);
+
+    // stop timers clôture payClose
+    Object.values(payClose).forEach(v => {
+      if (v && v.timeoutId) clearTimeout(v.timeoutId);
+    });
+    Object.keys(payClose).forEach(k => delete payClose[k]);
+
+    // vider statuts & états locaux
+    Object.keys(localTableStatus).forEach(k => delete localTableStatus[k]);
+    Object.keys(prevStatusBeforePay).forEach(k => delete prevStatusBeforePay[k]);
+    Object.keys(alertedTickets).forEach(k => delete alertedTickets[k]);
+    Object.keys(window.lastKnownStatus || {}).forEach(k => delete window.lastKnownStatus[k]);
+
+    // remettre tables "ouvertes" et vider les ignoreIds
+    Object.values(tableMemory).forEach(mem => {
+      mem.isClosed = false;
+      if (mem.ignoreIds && mem.ignoreIds.clear) mem.ignoreIds.clear();
+    });
+  }
+
+  function ensureBusinessDayFresh() {
+    const currentKey = getBusinessDayKey();
+    if (!window.businessDayKey || window.businessDayKey !== currentKey) {
+      // nouvelle journée de service
+      resetForNewBusinessDay();
+      window.businessDayKey = currentKey;
+      saveState();
+    }
   }
 
   // --- Timers statut
@@ -152,7 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tableMemory[id].isClosed=true;
     ids.forEach(tid=>tableMemory[id].ignoreIds.add(String(tid)));
 
-    // nettoyage de l'état précédent au cas où
+    // plus besoin de prevStatus
     delete prevStatusBeforePay[id];
 
     delete payClose[id];
@@ -252,7 +306,8 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             const base=getApiBase();
             cancelAutoBuffer(id);
-            // mémoriser statut précédent (label + copie profonde de l'état local)
+
+            // mémoriser statut précédent
             prevStatusBeforePay[id] = {
               label: window.lastKnownStatus[id] || 'Commandée',
               local: localTableStatus[id] ? { ...localTableStatus[id] } : null
@@ -275,7 +330,6 @@ document.addEventListener('DOMContentLoaded', () => {
           btnCancel.addEventListener('click',(e)=>{
             e.stopPropagation();
             cancelPayClose(id);
-            // restaurer statut précédent si connu
             const prevState = prevStatusBeforePay[id];
             if (prevState) {
               window.lastKnownStatus[id] = prevState.label;
@@ -286,7 +340,6 @@ document.addEventListener('DOMContentLoaded', () => {
               }
               delete prevStatusBeforePay[id];
             } else {
-              // fallback
               window.lastKnownStatus[id]='Doit payé';
               localTableStatus[id]={phase:'PAY',until:null};
             }
@@ -332,6 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Refresh tables (+ chime)
   async function refreshTables(){
+    ensureBusinessDayFresh(); // vérifie si on a changé de journée
+
     const base=getApiBase();
     if(!base){ if(tablesContainer) tablesContainer.innerHTML=''; if(tablesEmpty) tablesEmpty.style.display='block'; return; }
     try{
@@ -416,6 +471,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if(saved&&apiInput) apiInput.value=saved;
 
   loadState();
+  ensureBusinessDayFresh();   // au démarrage : reset si on a changé de journée
   rearmTimersAfterLoad();
   chime.startAutoUnlock();
 

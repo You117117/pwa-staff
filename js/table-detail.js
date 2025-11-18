@@ -1,49 +1,39 @@
-// table-detail.js — annulation restaure le statut précédent (+ bouton orange)
+// table-detail.js — panneau détail simplifié : montre UNIQUEMENT le dernier ticket de la table
 
 (function () {
-  let panel = document.querySelector('#tableDetailPanel');
-  if (!panel) {
-    panel = document.createElement('div');
-    panel.id = 'tableDetailPanel';
-    panel.style.position = 'fixed';
-    panel.style.top = '0';
-    panel.style.right = '0';
-    panel.style.width = '360px';
-    panel.style.height = '100vh';
-    panel.style.background = '#0f172a';
-    panel.style.borderLeft = '1px solid rgba(255,255,255,0.03)';
-    panel.style.zIndex = '500';
-    panel.style.display = 'none';
-    panel.style.flexDirection = 'column';
-    panel.style.padding = '16px';
-    panel.style.overflowY = 'auto';
-    panel.style.gap = '12px';
-    document.body.appendChild(panel);
+  // Helpers
+  function normId(id) {
+    return (id || "").trim().toUpperCase();
   }
 
-  const normId = (id) => (id || '').trim().toUpperCase();
   function getApiBase() {
-    const input = document.querySelector('#apiUrl');
-    return input ? input.value.trim().replace(/\/+$/, '') : '';
-  }
-  function closePanel() {
-    panel.style.display = 'none';
-    panel.innerHTML = '';
-  }
-  function updateLeftTableStatus(tableId, newStatus) {
-    const id = normId(tableId);
-    const card = document.querySelector(`.table[data-table="${id}"]`);
-    if (card) {
-      const chips = card.querySelectorAll('.card-head .chip');
-      if (chips.length >= 2) chips[1].textContent = newStatus;
+    const inp = document.querySelector('#apiUrl');
+    const raw = (inp && inp.value) || '';
+    const url = raw.trim().replace(/\/+$/, '');
+    if (url) return url;
+
+    // fallback éventuel depuis localStorage (si tu stockes l'API)
+    try {
+      const saved = localStorage.getItem('staff-api') || localStorage.getItem('api_url') || '';
+      return (saved || '').trim().replace(/\/+$/, '');
+    } catch {
+      return '';
     }
-    if (window.lastKnownStatus) window.lastKnownStatus[id] = newStatus;
-    if (newStatus === 'Vide' && window.localTableStatus) delete window.localTableStatus[id];
+  }
+
+  async function fetchSummary(base) {
+    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    return res.json();
   }
 
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
-    const src = Array.isArray(ticket.items) ? ticket.items : Array.isArray(ticket.lines) ? ticket.lines : null;
+    const src = Array.isArray(ticket.items)
+      ? ticket.items
+      : Array.isArray(ticket.lines)
+      ? ticket.lines
+      : null;
+
     if (src) {
       return src
         .map((it) => {
@@ -55,6 +45,7 @@
     }
     return '';
   }
+
   function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.35)';
@@ -73,51 +64,92 @@
     head.style.alignItems = 'center';
 
     const chipId = document.createElement('span');
-    chipId.className = 'chip';
-    chipId.textContent = ticket.id ? `Ticket #${ticket.id}` : 'Ticket';
-    head.appendChild(chipId);
+    chipId.textContent = `#${ticket.id ?? '?'}`;
+    chipId.style.fontSize = '11px';
+    chipId.style.padding = '2px 6px';
+    chipId.style.borderRadius = '999px';
+    chipId.style.border = '1px solid rgba(148,163,184,0.7)';
+    chipId.style.color = '#e5e7eb';
 
-    if (ticket.time) {
-      const chipTime = document.createElement('span');
-      chipTime.className = 'chip';
-      chipTime.textContent = ticket.time;
-      head.appendChild(chipTime);
-    }
+    const chipTime = document.createElement('span');
+    chipTime.textContent = ticket.time || '--:--';
+    chipTime.style.fontSize = '11px';
+    chipTime.style.padding = '2px 6px';
+    chipTime.style.borderRadius = '999px';
+    chipTime.style.border = '1px solid rgba(148,163,184,0.7)';
+    chipTime.style.color = '#e5e7eb';
+
+    head.appendChild(chipId);
+    head.appendChild(chipTime);
+
+    const body = document.createElement('div');
+    body.style.fontSize = '13px';
+    body.style.opacity = '0.9';
+    body.textContent = buildBodyText(ticket);
+
+    const foot = document.createElement('div');
+    foot.style.display = 'flex';
+    foot.style.justifyContent = 'flex-end';
+    foot.style.fontWeight = '600';
+    foot.style.fontSize = '15px';
+    foot.textContent =
+      typeof ticket.total === 'number' ? `${ticket.total.toFixed(2)} €` : `${ticket.total || ''}`;
 
     card.appendChild(head);
-
-    const bodyText = buildBodyText(ticket);
-    if (bodyText) {
-      const body = document.createElement('div');
-      body.textContent = bodyText;
-      body.style.fontSize = '13px';
-      body.style.opacity = '0.95';
-      body.style.color = '#fff';
-      card.appendChild(body);
-    }
+    card.appendChild(body);
+    card.appendChild(foot);
 
     return card;
   }
 
-  async function fetchSummary(base) {
-    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
-    return await res.json();
+  // --- Création / récupération du panneau fixe à droite
+  let panel = document.querySelector('#tableDetailPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'tableDetailPanel';
+    panel.style.position = 'fixed';
+    panel.style.top = '0';
+    panel.style.right = '0';
+    panel.style.width = '360px';
+    panel.style.height = '100vh';
+    panel.style.background = '#0f172a';
+    panel.style.borderLeft = '1px solid rgba(255,255,255,0.03)';
+    panel.style.zIndex = '500';
+    panel.style.display = 'none';
+    panel.style.flexDirection = 'column';
+    panel.style.padding = '16px';
+    panel.style.boxSizing = 'border-box';
+    panel.style.overflow = 'auto';
+    document.body.appendChild(panel);
   }
 
-  const detailPayTimeouts = (window.detailPayTimeouts = window.detailPayTimeouts || {});
+  function closePanel() {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+  }
 
+  // --- Mise à jour du statut dans la liste de gauche (carte table)
+  function updateLeftTableStatus(id, status) {
+    const grid = document.querySelector('#tables');
+    if (!grid) return;
+    const card = grid.querySelector(`.table[data-table="${id}"]`);
+    if (!card) return;
+    const chips = card.querySelectorAll('.chip');
+    if (chips.length >= 2) {
+      chips[1].textContent = status;
+    }
+  }
+
+  // --- Fonction principale appelée depuis app.js : window.showTableDetail(...)
   async function showTableDetail(tableId) {
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
 
-    const tableMemory = (window.tableMemory = window.tableMemory || {});
-    const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {});
-    const mem = (tableMemory[id] = tableMemory[id] || { isClosed: false, ignoreIds: new Set() });
-
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
+    // Header
     const head = document.createElement('div');
     head.style.display = 'flex';
     head.style.justifyContent = 'space-between';
@@ -132,48 +164,81 @@
     const btnClose = document.createElement('button');
     btnClose.textContent = 'Fermer';
     btnClose.className = 'btn';
+    btnClose.style.background = '#1f2937';
+    btnClose.style.borderColor = '#374151';
     btnClose.addEventListener('click', closePanel);
 
     head.appendChild(title);
     head.appendChild(btnClose);
     panel.appendChild(head);
 
+    // Info + conteneur
     const info = document.createElement('div');
     info.style.marginBottom = '10px';
     info.style.color = '#fff';
+    info.style.fontSize = '13px';
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
+    // Charger les tickets depuis /summary
     let tickets = [];
     try {
       const data = await fetchSummary(base);
       tickets = (data.tickets || []).filter((t) => normId(t.table) === id);
-    } catch {
+    } catch (err) {
+      console.error('[table-detail] Erreur summary', err);
       info.textContent = 'Erreur de chargement';
-    }
-
-    const displayable = tickets.filter((t) => {
-      const tid = t.id !== undefined && t.id !== null ? String(t.id) : '';
-      return tid && !mem.ignoreIds.has(tid);
-    });
-
-    if (mem.isClosed || displayable.length === 0) {
-      info.textContent = 'Aucune commande pour cette table.';
-      const totalBox = document.createElement('div');
-      totalBox.style.marginTop = '8px';
-      totalBox.style.marginBottom = '16px';
-      totalBox.innerHTML = `
-        <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
-        <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
-      `;
-      panel.appendChild(totalBox);
       return;
     }
 
-    info.textContent = `${displayable.length} ticket(s) pour cette table`;
+    if (!tickets.length) {
+      info.textContent = 'Aucune commande pour cette table.';
+      const totalBoxEmpty = document.createElement('div');
+      totalBoxEmpty.style.marginTop = '8px';
+      totalBoxEmpty.style.marginBottom = '16px';
+      totalBoxEmpty.innerHTML = `
+        <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
+        <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
+      `;
+      panel.appendChild(totalBoxEmpty);
+      return;
+    }
+
+    // 🔥 NOUVEAU COMPORTEMENT ICI :
+    // On ne garde QUE le DERNIER ticket de la table (id max numérique)
+    let lastTicket = null;
+    tickets.forEach((t) => {
+      const idNum =
+        t.id !== undefined && t.id !== null && !isNaN(Number(t.id)) ? Number(t.id) : null;
+      if (idNum === null) return;
+      if (!lastTicket) {
+        lastTicket = t;
+      } else {
+        const lastNum =
+          lastTicket.id !== undefined &&
+          lastTicket.id !== null &&
+          !isNaN(Number(lastTicket.id))
+            ? Number(lastTicket.id)
+            : 0;
+        if (idNum > lastNum) lastTicket = t;
+      }
+    });
+
+    // Si impossible de déterminer par id, on prend par défaut le dernier dans la liste
+    if (!lastTicket) {
+      lastTicket = tickets[tickets.length - 1];
+    }
+
+    const displayable = [lastTicket];
+
+    info.textContent = `Dernier ticket pour cette table`;
     displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
 
-    const total = displayable.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
+    const total =
+      typeof lastTicket.total === 'number'
+        ? lastTicket.total
+        : Number(lastTicket.total || 0) || 0;
+
     const totalBox = document.createElement('div');
     totalBox.style.marginTop = '8px';
     totalBox.style.marginBottom = '16px';
@@ -183,6 +248,7 @@
     `;
     panel.appendChild(totalBox);
 
+    // --- Actions (Imprimer / Paiement confirmé)
     const actions = document.createElement('div');
     actions.style.display = 'flex';
     actions.style.flexDirection = 'column';
@@ -190,32 +256,19 @@
 
     const btnPrint = document.createElement('button');
     btnPrint.textContent = 'Imprimer maintenant';
-    btnPrint.className = 'btn btn-primary';
+    btnPrint.className = 'btn';
     btnPrint.style.width = '100%';
 
     const btnPay = document.createElement('button');
     btnPay.textContent = 'Paiement confirmé';
-    btnPay.className = 'btn btn-primary';
+    btnPay.className = 'btn';
     btnPay.style.width = '100%';
-
-    const btnCancelPay = document.createElement('button');
-    btnCancelPay.textContent = 'Annuler le paiement';
-    btnCancelPay.className = 'btn btn-warning';
-    btnCancelPay.style.width = '100%';
-    btnCancelPay.style.background = '#f59e0b';
-    btnCancelPay.style.borderColor = '#f59e0b';
 
     actions.appendChild(btnPrint);
     actions.appendChild(btnPay);
-    actions.appendChild(btnCancelPay);
     panel.appendChild(actions);
 
-    const paymentPendingLeft = !!(window.payClose && window.payClose[id]);
-    const paymentPendingHere = !!detailPayTimeouts[id];
-    const showCancel = paymentPendingLeft || paymentPendingHere;
-
-    btnPay.style.display = showCancel ? 'none' : 'block';
-    btnCancelPay.style.display = showCancel ? 'block' : 'none';
+    // --- Logique boutons
 
     btnPrint.addEventListener('click', async () => {
       try {
@@ -224,9 +277,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch {}
-      mem.isClosed = false;
-      updateLeftTableStatus(id, 'En préparation');
+      } catch (err) {
+        console.error('[table-detail] Erreur /print', err);
+      }
     });
 
     btnPay.addEventListener('click', async () => {
@@ -236,83 +289,20 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch {}
-
-      // mémoriser l'état précédent côté droit également
-      const prevLabel = (window.lastKnownStatus && window.lastKnownStatus[id]) || 'Commandée';
-      const prevLocal = window.localTableStatus && window.localTableStatus[id] ? { ...window.localTableStatus[id] } : null;
-      prevStatusBeforePay[id] = { label: prevLabel, local: prevLocal };
-
-      // figer en Payée
-      if (window.autoBuffer && window.autoBuffer[id]) {
-        const b = window.autoBuffer[id];
-        if (b.timeoutId) clearTimeout(b.timeoutId);
-        delete window.autoBuffer[id];
+      } catch (err) {
+        console.error('[table-detail] Erreur /confirm', err);
       }
-      if (window.localTableStatus && window.localTableStatus[id]) {
-        delete window.localTableStatus[id];
-      }
-      if (window.lastKnownStatus) window.lastKnownStatus[id] = 'Payée';
 
+      // Mise à jour locale simple (le polling de app.js finira d’aligner)
+      if (!window.lastKnownStatus) window.lastKnownStatus = {};
+      window.lastKnownStatus[id] = 'Payée';
       updateLeftTableStatus(id, 'Payée');
 
-      if (detailPayTimeouts[id]) clearTimeout(detailPayTimeouts[id]);
-      detailPayTimeouts[id] = setTimeout(async () => {
-        updateLeftTableStatus(id, 'Vide');
-        try {
-          const data = await fetchSummary(base);
-          (data.tickets || [])
-            .filter((t) => normId(t.table) === id)
-            .forEach((t) => {
-              if (t.id !== undefined && t.id !== null) mem.ignoreIds.add(String(t.id));
-            });
-        } catch {}
-        mem.isClosed = true;
-        // purge état précédent puisque la table est clôturée
-        if (window.prevStatusBeforePay) delete window.prevStatusBeforePay[id];
-        detailPayTimeouts[id] = null;
-      }, 30 * 1000);
-
-      btnPay.style.display = 'none';
-      btnCancelPay.style.display = 'block';
-    });
-
-    btnCancelPay.addEventListener('click', () => {
-      if (detailPayTimeouts[id]) {
-        clearTimeout(detailPayTimeouts[id]);
-        detailPayTimeouts[id] = null;
-      }
-      if (window.payClose && window.payClose[id]) {
-        const pc = window.payClose[id];
-        if (pc.timeoutId) clearTimeout(pc.timeoutId);
-        delete window.payClose[id];
-      }
-
-      const prevState = prevStatusBeforePay[id];
-      if (prevState) {
-        if (!window.localTableStatus) window.localTableStatus = {};
-        window.lastKnownStatus[id] = prevState.label;
-        if (prevState.local) {
-          window.localTableStatus[id] = { ...prevState.local };
-        } else {
-          delete window.localTableStatus[id];
-        }
-        delete prevStatusBeforePay[id];
-        mem.isClosed = false;
-        updateLeftTableStatus(id, prevState.label);
-      } else {
-        // fallback si pas trouvé
-        if (!window.localTableStatus) window.localTableStatus = {};
-        window.lastKnownStatus[id] = 'Doit payé';
-        window.localTableStatus[id] = { phase: 'PAY', until: null };
-        mem.isClosed = false;
-        updateLeftTableStatus(id, 'Doit payé');
-      }
-
-      btnCancelPay.style.display = 'none';
-      btnPay.style.display = 'block';
+      // On peut fermer le panneau après confirmation
+      setTimeout(closePanel, 300);
     });
   }
 
+  // Expose la fonction au reste de l’appli
   window.showTableDetail = showTableDetail;
 })();

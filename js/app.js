@@ -1,4 +1,4 @@
-// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par dernière commande)
+// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par activité locale)
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -42,11 +42,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Stores & persistance
   const localTableStatus = (window.localTableStatus = window.localTableStatus || {}); // { phase, until }
-  const tableMemory     = (window.tableMemory     = window.tableMemory     || {}); // { isClosed, ignoreIds:Set }
-  const autoBuffer      = (window.autoBuffer      = window.autoBuffer      || {}); // { until, timeoutId }
-  const payClose        = (window.payClose        = window.payClose        || {}); // { closeAt, timeoutId }
-  const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {}); // { tid -> Set(ids) }
+  const tableMemory     = (window.tableMemory     = window.tableMemory     || {});   // { isClosed, ignoreIds:Set }
+  const autoBuffer      = (window.autoBuffer      = window.autoBuffer      || {});   // { until, timeoutId }
+  const payClose        = (window.payClose        = window.payClose        || {});   // { closeAt, timeoutId }
+  const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {});   // { tid -> Set(ids) }
   const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {}); // { tableId: {label, local} }
+  const localLastActivity   = (window.localLastActivity   = window.localLastActivity   || {}); // { tableId: timestamp }
+
   if (!window.lastKnownStatus) window.lastKnownStatus = {};
   if (!window.businessDayKey) window.businessDayKey = null;
 
@@ -73,13 +75,19 @@ document.addEventListener('DOMContentLoaded', () => {
   const STORAGE_KEY='staff-state-v1';
   function saveState(){
     const json={
-      tableMemory: Object.fromEntries(Object.entries(tableMemory).map(([tid,v])=>[tid,{isClosed:!!v.isClosed,ignoreIds:Array.from(v.ignoreIds||[])}])),
+      tableMemory: Object.fromEntries(
+        Object.entries(tableMemory).map(([tid,v])=>[
+          tid,
+          {isClosed:!!v.isClosed,ignoreIds:Array.from(v.ignoreIds||[])}
+        ])
+      ),
       localTableStatus,
       autoBuffer: Object.fromEntries(Object.entries(autoBuffer).map(([tid,v])=>[tid,{until:v.until}])),
       payClose: Object.fromEntries(Object.entries(payClose).map(([tid,v])=>[tid,{closeAt:v.closeAt}])),
       alertedTickets: Object.fromEntries(Object.entries(alertedTickets).map(([tid,set])=>[tid,Array.from(set||[])])),
       lastKnownStatus,
       prevStatusBeforePay,
+      localLastActivity,
       businessDay: window.businessDayKey || getBusinessDayKey()
     };
     try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(json)); }catch{}
@@ -88,13 +96,20 @@ document.addEventListener('DOMContentLoaded', () => {
     try{
       const txt=localStorage.getItem(STORAGE_KEY); if(!txt) return;
       const s=JSON.parse(txt);
-      if(s.tableMemory) Object.entries(s.tableMemory).forEach(([tid,v])=>tableMemory[tid]={isClosed:!!v.isClosed,ignoreIds:new Set(v.ignoreIds||[])});
+      if(s.tableMemory)
+        Object.entries(s.tableMemory).forEach(([tid,v])=>
+          tableMemory[tid]={isClosed:!!v.isClosed,ignoreIds:new Set(v.ignoreIds||[])}
+        );
       if(s.localTableStatus) Object.assign(localTableStatus,s.localTableStatus);
-      if(s.autoBuffer) Object.entries(s.autoBuffer).forEach(([tid,v])=>autoBuffer[tid]={until:v.until});
-      if(s.payClose ) Object.entries(s.payClose ).forEach(([tid,v])=>payClose[tid] ={closeAt:v.closeAt});
-      if(s.alertedTickets) Object.entries(s.alertedTickets).forEach(([tid,arr])=>alertedTickets[tid]=new Set(arr||[]));
+      if(s.autoBuffer)
+        Object.entries(s.autoBuffer).forEach(([tid,v])=>autoBuffer[tid]={until:v.until});
+      if(s.payClose)
+        Object.entries(s.payClose).forEach(([tid,v])=>payClose[tid]={closeAt:v.closeAt});
+      if(s.alertedTickets)
+        Object.entries(s.alertedTickets).forEach(([tid,arr])=>alertedTickets[tid]=new Set(arr||[]));
       if(s.lastKnownStatus) Object.assign(window.lastKnownStatus,s.lastKnownStatus);
       if(s.prevStatusBeforePay) Object.assign(prevStatusBeforePay,s.prevStatusBeforePay);
+      if(s.localLastActivity) Object.assign(localLastActivity,s.localLastActivity);
       if(s.businessDay) window.businessDayKey = s.businessDay;
     }catch{}
   }
@@ -118,6 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.keys(prevStatusBeforePay).forEach(k => delete prevStatusBeforePay[k]);
     Object.keys(alertedTickets).forEach(k => delete alertedTickets[k]);
     Object.keys(window.lastKnownStatus || {}).forEach(k => delete window.lastKnownStatus[k]);
+    Object.keys(localLastActivity).forEach(k => delete localLastActivity[k]);
 
     // remettre tables "ouvertes" et vider les ignoreIds
     Object.values(tableMemory).forEach(mem => {
@@ -156,7 +172,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Buffer 120s
   async function autoPrintAndPrep(id){
     const base=getApiBase();
-    if(base){ try{ await fetch(`${base}/print`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:id})}); }catch{} }
+    if(base){
+      try{
+        await fetch(`${base}/print`,{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({table:id})
+        });
+      }catch{}
+    }
     setPreparationFor20min(id);
     window.lastKnownStatus[id]='En préparation';
     delete autoBuffer[id];
@@ -185,7 +209,11 @@ document.addEventListener('DOMContentLoaded', () => {
     try{
       const res=await fetch(`${base}/summary`,{cache:'no-store'});
       const data=await res.json();
-      return (data.tickets||[]).filter(t=>normId(t.table)===tableIdNorm).map(t=>t.id).filter(id=>id!==undefined&&id!==null).map(String);
+      return (data.tickets||[])
+        .filter(t=>normId(t.table)===tableIdNorm)
+        .map(t=>t.id)
+        .filter(id=>id!==undefined&&id!==null)
+        .map(String);
     }catch{ return []; }
   }
 
@@ -202,7 +230,6 @@ document.addEventListener('DOMContentLoaded', () => {
     ids.forEach(tid=>tableMemory[id].ignoreIds.add(String(tid)));
 
     delete prevStatusBeforePay[id];
-
     delete payClose[id];
     saveState();
   }
@@ -222,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.cancelPayClose = cancelPayClose;
 
-  // --- Rendu LISTE TABLES (TRI PAR lastTicketAt)
+  // --- Rendu LISTE TABLES (TRI PAR localLastActivity)
   function renderTables(tables){
     if(!tablesContainer) return;
     tablesContainer.innerHTML='';
@@ -236,11 +263,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const filter=filterSelect?normId(filterSelect.value):'TOUTES';
     const PRIORITY=['Vide','Commandée','En préparation','Doit payé','Payée'];
 
-    // 👉 Tri simple : table avec lastTicketAt la plus récente en haut
+    // Tri : table avec dernière activité locale la plus récente en haut
     const sorted = [...tables].sort((a, b) => {
-      const ta = a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0;
-      const tb = b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0;
-      return tb - ta; // plus récent d'abord
+      const ida = normId(a.id);
+      const idb = normId(b.id);
+      const ta = (typeof localLastActivity[ida] === 'number')
+        ? localLastActivity[ida]
+        : (a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0);
+      const tb = (typeof localLastActivity[idb] === 'number')
+        ? localLastActivity[idb]
+        : (b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0);
+      return tb - ta;
     });
 
     sorted.forEach((table)=>{
@@ -297,7 +330,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const base=getApiBase();
             cancelAutoBuffer(id);
             if(base){
-              try{ await fetch(`${base}/print`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:id})}); }catch{}
+              try{
+                await fetch(`${base}/print`,{
+                  method:'POST',
+                  headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({table:id})
+                });
+              }catch{}
             }
             setPreparationFor20min(id);
             window.lastKnownStatus[id]='En préparation';
@@ -322,7 +361,13 @@ document.addEventListener('DOMContentLoaded', () => {
             saveState();
 
             if(base){
-              try{ await fetch(`${base}/confirm`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({table:id})}); }catch{}
+              try{
+                await fetch(`${base}/confirm`,{
+                  method:'POST',
+                  headers:{'Content-Type':'application/json'},
+                  body:JSON.stringify({table:id})
+                });
+              }catch{}
             }
             window.lastKnownStatus[id]='Payée';
             delete localTableStatus[id];
@@ -390,12 +435,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Refresh tables (+ chime)
+  // --- Refresh tables (+ chime + MAJ activité locale)
   async function refreshTables(){
     ensureBusinessDayFresh();
 
     const base=getApiBase();
-    if(!base){ if(tablesContainer) tablesContainer.innerHTML=''; if(tablesEmpty) tablesEmpty.style.display='block'; return; }
+    if(!base){
+      if(tablesContainer) tablesContainer.innerHTML='';
+      if(tablesEmpty) tablesEmpty.style.display='block';
+      return;
+    }
     try{
       const res=await fetch(`${base}/tables`);
       const data=await res.json();
@@ -425,7 +474,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const fresh=activeIds.filter(tk=>!seen.has(tk));
         hasNewById[tid]=activeIds.length>0;
 
-        if(fresh.length>0){ chime.playRobust(); fresh.forEach(tk=>seen.add(tk)); }
+        if(fresh.length>0){
+          // nouvelle commande détectée -> son + activité
+          chime.playRobust();
+          fresh.forEach(tk=>seen.add(tk));
+          localLastActivity[tid] = now();
+        }
+
         if(mem.isClosed && hasNewById[tid]) mem.isClosed=false;
       });
 
@@ -457,7 +512,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function refreshSummary(){
     const base=getApiBase();
-    if(!base){ if(summaryContainer) summaryContainer.innerHTML=''; if(summaryEmpty) summaryEmpty.style.display='block'; return; }
+    if(!base){
+      if(summaryContainer) summaryContainer.innerHTML='';
+      if(summaryEmpty) summaryEmpty.style.display='block';
+      return;
+    }
     try{
       const res=await fetch(`${base}/summary`);
       const data=await res.json();

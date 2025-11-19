@@ -1,5 +1,5 @@
 // app.js — Staff (synchronisé, sans mémoire locale de statuts)
-// Affiche les tables et tickets en se basant UNIQUEMENT sur /tables et /summary.
+// Affiche les tables en se basant UNIQUEMENT sur /tables.
 // PC et smartphone lisent exactement la même chose.
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryEmpty = document.querySelector('#summaryEmpty');
 
   const REFRESH_MS = 5000;
+  const LS_KEY_API = 'staff-api';
 
   // --- Utils
 
@@ -31,23 +32,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function formatTime(dateString) {
     if (!dateString) return '--:--';
     const d = new Date(dateString);
-    if (Number.isNaN(d.getTime())) return dateString; // au cas où le backend envoie déjà "12:34"
+    if (Number.isNaN(d.getTime())) return dateString;
     const h = d.getHours().toString().padStart(2, '0');
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
   }
 
-  // --- LocalStorage pour l'URL API uniquement (pas pour les statuts)
-
-  const LS_KEY_API = 'staff-api';
-
   function loadApiFromStorage() {
     try {
       const v = localStorage.getItem(LS_KEY_API);
       if (v && apiInput) apiInput.value = v;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   function saveApiToStorage() {
@@ -55,12 +50,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const v = apiInput.value.trim();
     try {
       if (v) localStorage.setItem(LS_KEY_API, v);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
-  // --- Rendu du résumé du jour
+  // --- Résumé du jour (inchangé)
 
   function renderSummary(tickets) {
     if (!summaryContainer) return;
@@ -130,9 +123,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Rendu des tables
+  // --- Rendu des tables (corrigé pour statuts + boutons)
 
-  function renderTables(tables, tickets) {
+  function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
 
@@ -142,68 +135,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (tablesEmpty) tablesEmpty.style.display = 'none';
 
-    // Regroupement des tickets par table pour la journée
-    const ticketsByTable = {};
-    (tickets || []).forEach((t) => {
-      const tid = normId(t.table);
-      if (!tid) return;
-      if (!ticketsByTable[tid]) ticketsByTable[tid] = [];
-      ticketsByTable[tid].push(t);
-    });
-
-    // Tri des tickets par ID ou par temps (du plus ancien au plus récent)
-    Object.values(ticketsByTable).forEach((list) => {
-      list.sort((a, b) => {
-        const aId = Number(a.id);
-        const bId = Number(b.id);
-        if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;
-        if (a.time && b.time) return a.time.localeCompare(b.time);
-        return 0;
-      });
-    });
-
     const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
 
-    // On trie les tables par dernière activité (d'après le dernier ticket connu)
-    const tablesWithActivity = tables.map((tb) => {
+    // On utilise l'ordre renvoyé par le backend (déjà trié par dernière activité),
+    // mais on peut quand même recalculer un timestamp si besoin.
+    tables.forEach((tb) => {
       const id = normId(tb.id);
-      const list = ticketsByTable[id] || [];
-      let lastTs = 0;
-      if (list.length > 0) {
-        const last = list[list.length - 1];
-        if (last.createdAt) {
-          const d = new Date(last.createdAt);
-          lastTs = d.getTime();
-        } else if (last.time) {
-          // si "time" est un string "HH:MM", on ne peut pas recomposer la date précisément -> on laisse 0
-        }
-      }
-      return { raw: tb, id, lastTs, tickets: list };
-    });
-
-    tablesWithActivity.sort((a, b) => b.lastTs - a.lastTs);
-
-    tablesWithActivity.forEach((entry) => {
-      const tb = entry.raw;
-      const id = entry.id;
       if (!id) return;
 
       if (filterValue !== 'TOUTES' && filterValue !== id) return;
 
-      const list = entry.tickets;
-      const hasTickets = list && list.length > 0;
+      const status = tb.status || 'Vide';
+      const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
 
-      let status = tb.status || 'Vide';
-      if ((!tb.status || tb.status === 'Vide') && hasTickets) {
-        status = 'Commandée';
-      }
-
-      const lastTicket = hasTickets ? list[list.length - 1] : null;
-      const lastTime =
-        (tb.lastTicketAt && formatTime(tb.lastTicketAt)) ||
-        (lastTicket && lastTicket.createdAt && formatTime(lastTicket.createdAt)) ||
-        (lastTicket && lastTicket.time) ||
-        '--:--';
+      const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
 
       const card = document.createElement('div');
       card.className = 'table';
@@ -224,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      chipTime.textContent = hasTickets ? `Dernier ticket : ${lastTime}` : '—';
+      chipTime.textContent = hasLastTicket ? `Dernier ticket : ${lastTime}` : '—';
       head.appendChild(chipTime);
 
       card.appendChild(head);
@@ -240,7 +185,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const btnPaid = document.createElement('button');
         btnPaid.className = 'btn btn-primary btn-paid';
-        btnPaid.textContent = 'Paiement confirmé';
+
+        const isPaid = status === 'Payée';
+        if (isPaid) {
+          btnPaid.textContent = 'Annuler paiement';
+          btnPaid.style.backgroundColor = '#f97316'; // orange
+        } else {
+          btnPaid.textContent = 'Paiement confirmé';
+          btnPaid.style.backgroundColor = ''; // reset
+        }
 
         actions.appendChild(btnPrint);
         actions.appendChild(btnPaid);
@@ -259,8 +212,10 @@ document.addEventListener('DOMContentLoaded', () => {
           } catch (err) {
             console.error('Erreur /print', err);
           } finally {
-            // On se contente de refléter le backend
             await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
           }
         });
 
@@ -268,16 +223,20 @@ document.addEventListener('DOMContentLoaded', () => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
+          const endpoint = isPaid ? '/cancel-confirm' : '/confirm';
           try {
-            await fetch(`${base}/confirm`, {
+            await fetch(`${base}${endpoint}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ table: id }),
             });
           } catch (err) {
-            console.error('Erreur /confirm', err);
+            console.error('Erreur', endpoint, err);
           } finally {
             await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
           }
         });
       }
@@ -286,7 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         if (window.showTableDetail) {
-          window.showTableDetail(id);
+          window.showTableDetail(id, status);
         }
       });
 
@@ -322,10 +281,9 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
-      const [tablesData, summaryData] = await Promise.all([fetchTables(), fetchSummary()]);
+      const tablesData = await fetchTables();
       const tables = tablesData.tables || [];
-      const tickets = summaryData.tickets || [];
-      renderTables(tables, tickets);
+      renderTables(tables);
     } catch (err) {
       console.error('Erreur refreshTables', err);
     }
@@ -349,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Rendre refreshTables accessible côté global (pour table-detail.js)
   window.refreshTables = refreshTables;
 
-  // --- Écouteurs UI
+  // --- Événements UI
 
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', () => {

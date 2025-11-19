@@ -31,6 +31,7 @@
   function closePanel() {
     panel.style.display = 'none';
     panel.innerHTML = '';
+    window.__currentDetailTableId = null;
   }
 
   function buildBodyText(ticket) {
@@ -101,10 +102,17 @@
     return await res.json();
   }
 
-  async function showTableDetail(tableId) {
+  async function fetchTables(base) {
+    const res = await fetch(`${base}/tables`, { cache: 'no-store' });
+    return await res.json();
+  }
+
+  async function showTableDetail(tableId, statusHint) {
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
+
+    window.__currentDetailTableId = id;
 
     panel.innerHTML = '';
     panel.style.display = 'flex';
@@ -135,17 +143,30 @@
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
-    let tickets = [];
+    let summaryData;
+    let tablesData;
+
     try {
-      const data = await fetchSummary(base);
-      tickets = (data.tickets || []).filter((t) => normId(t.table) === id);
+      [summaryData, tablesData] = await Promise.all([
+        fetchSummary(base),
+        fetchTables(base),
+      ]);
     } catch (err) {
-      console.error('Erreur fetch summary', err);
+      console.error('Erreur fetch detail', err);
       info.textContent = 'Erreur de chargement';
       return;
     }
 
-    if (!tickets.length) {
+    const allTickets = (summaryData.tickets || []).filter(
+      (t) => normId(t.table) === id
+    );
+    const tableMeta = (tablesData.tables || []).find(
+      (t) => normId(t.id) === id
+    );
+
+    let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
+
+    if (!allTickets.length) {
       info.textContent = 'Aucune commande pour cette table.';
       const totalBoxEmpty = document.createElement('div');
       totalBoxEmpty.style.marginTop = '8px';
@@ -155,36 +176,50 @@
         <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
       `;
       panel.appendChild(totalBoxEmpty);
-      return;
+
+      // même si aucun ticket, on laisse les boutons en bas pour cohérence
+    } else {
+      allTickets.sort((a, b) => {
+        const aId = Number(a.id);
+        const bId = Number(b.id);
+        if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;
+        if (a.time && b.time) return a.time.localeCompare(b.time);
+        return 0;
+      });
+
+      const lastTicket = allTickets[allTickets.length - 1];
+
+      info.textContent = lastTicket.id
+        ? `Dernière commande (#${lastTicket.id})`
+        : 'Dernière commande';
+      panel.appendChild(makeTicketCard(lastTicket));
+
+      const total =
+        typeof lastTicket.total === 'number'
+          ? lastTicket.total
+          : allTickets.reduce(
+              (acc, t) => (typeof t.total === 'number' ? acc + t.total : acc),
+              0
+            );
+
+      const totalBox = document.createElement('div');
+      totalBox.style.marginTop = '8px';
+      totalBox.style.marginBottom = '16px';
+      totalBox.innerHTML = `
+        <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total (dernière commande)</div>
+        <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(
+          2
+        )} €</div>
+      `;
+      panel.appendChild(totalBox);
     }
 
-    // On trie les tickets par id croissant ou temps croissant
-    tickets.sort((a, b) => {
-      const aId = Number(a.id);
-      const bId = Number(b.id);
-      if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;
-      if (a.time && b.time) return a.time.localeCompare(b.time);
-      return 0;
-    });
-
-    const lastTicket = tickets[tickets.length - 1];
-
-    info.textContent = lastTicket.id ? `Dernière commande (#${lastTicket.id})` : 'Dernière commande';
-    panel.appendChild(makeTicketCard(lastTicket));
-
-    const total =
-      typeof lastTicket.total === 'number'
-        ? lastTicket.total
-        : tickets.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
-
-    const totalBox = document.createElement('div');
-    totalBox.style.marginTop = '8px';
-    totalBox.style.marginBottom = '16px';
-    totalBox.innerHTML = `
-      <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total (dernière commande)</div>
-      <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(2)} €</div>
-    `;
-    panel.appendChild(totalBox);
+    // Affichage du statut actuel
+    const statusChip = document.createElement('div');
+    statusChip.className = 'chip';
+    statusChip.textContent = `Statut : ${currentStatus}`;
+    statusChip.style.marginBottom = '10px';
+    panel.appendChild(statusChip);
 
     const actions = document.createElement('div');
     actions.style.display = 'flex';
@@ -197,9 +232,20 @@
     btnPrint.style.width = '100%';
 
     const btnPay = document.createElement('button');
-    btnPay.textContent = 'Paiement confirmé';
     btnPay.className = 'btn btn-primary';
     btnPay.style.width = '100%';
+
+    function applyStatusToPayButton() {
+      if (currentStatus === 'Payée') {
+        btnPay.textContent = 'Annuler paiement';
+        btnPay.style.backgroundColor = '#f97316';
+      } else {
+        btnPay.textContent = 'Paiement confirmé';
+        btnPay.style.backgroundColor = '';
+      }
+    }
+
+    applyStatusToPayButton();
 
     actions.appendChild(btnPrint);
     actions.appendChild(btnPay);
@@ -214,24 +260,32 @@
         });
       } catch (err) {
         console.error('Erreur /print (détail)', err);
+      } finally {
+        if (window.refreshTables) {
+          window.refreshTables();
+        }
+        // on recharge le panneau pour refléter le nouveau statut si besoin
+        showTableDetail(id);
       }
     });
 
     btnPay.addEventListener('click', async () => {
+      const endpoint =
+        currentStatus === 'Payée' ? '/cancel-confirm' : '/confirm';
       try {
-        await fetch(`${base}/confirm`, {
+        await fetch(`${base}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
       } catch (err) {
-        console.error('Erreur /confirm (détail)', err);
+        console.error('Erreur paiement (détail)', err);
       } finally {
-        // on referme et on laisse la liste principale se resynchroniser avec /tables
-        closePanel();
         if (window.refreshTables) {
           window.refreshTables();
         }
+        // on recharge le panneau avec l'état à jour
+        showTableDetail(id);
       }
     });
   }

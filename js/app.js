@@ -1,8 +1,7 @@
-// app.js — VERSION RESET STABLE
-// - Statuts = backend uniquement
+// app.js — VERSION RESET STABLE v2
+// - Statuts calculés à partir du summary : Vide / Doit payer
 // - Tri = heure du dernier ticket (summary)
-// - Plus de mémoires locales tordues
-// - Détail table géré par table-detail.js (dernier ticket)
+// - Pas de mémoires locales
 
 document.addEventListener('DOMContentLoaded', () => {
   const apiInput = document.querySelector('#apiUrl');
@@ -20,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const formatTime = (dateString) => {
     if (!dateString) return "--:--";
     const d = new Date(dateString);
+    if (isNaN(d.getTime())) return "--:--";
     const h = d.getHours().toString().padStart(2, "0");
     const m = d.getMinutes().toString().padStart(2, "0");
     return `${h}:${m}`;
@@ -125,7 +125,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const lastInfo = lastTicketPerTable[id] || null;
       const displayTime = lastInfo ? formatTime(lastInfo.isoTime) : "--:--";
 
-      const status = table.status || "Vide";
+      // 🔥 Statut simple et déterministe :
+      // - aucun ticket => Vide
+      // - au moins un ticket aujourd'hui => Doit payer
+      let status = "Vide";
+      if (lastInfo) {
+        status = "Doit payer";
+      }
 
       const card = document.createElement("div");
       card.className = "table";
@@ -217,12 +223,35 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!id) return;
 
         let timeMs = 0;
+        let isoTime = null;
+
         if (t.created_at) {
-          timeMs = new Date(t.created_at).getTime();
+          const d = new Date(t.created_at);
+          timeMs = d.getTime();
+          isoTime = d.toISOString();
         } else if (t.time_iso) {
-          timeMs = new Date(t.time_iso).getTime();
-        } else if (t.time) {
-          timeMs = 0;
+          const d = new Date(t.time_iso);
+          timeMs = d.getTime();
+          isoTime = d.toISOString();
+        } else if (t.time && typeof t.time === "string") {
+          // t.time est du type "12:25" → on le transforme en Date aujourd'hui
+          const parts = t.time.split(":");
+          if (parts.length >= 2) {
+            const now = new Date();
+            const h = Number(parts[0]) || 0;
+            const m = Number(parts[1]) || 0;
+            const d = new Date(
+              now.getFullYear(),
+              now.getMonth(),
+              now.getDate(),
+              h,
+              m,
+              0,
+              0
+            );
+            timeMs = d.getTime();
+            isoTime = d.toISOString();
+          }
         }
 
         const current = lastTicketPerTable[id];
@@ -230,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
           lastTicketPerTable[id] = {
             ticket: t,
             timeMs,
-            isoTime: t.created_at || t.time_iso || null
+            isoTime
           };
         }
       });

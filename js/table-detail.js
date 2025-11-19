@@ -1,4 +1,4 @@
-// table-detail.js — base + synchro (plus de tickets masqués différemment par device)
+// table-detail.js — annulation restaure le statut précédent (+ bouton orange)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -152,10 +152,12 @@
       info.textContent = 'Erreur de chargement';
     }
 
-    // 🔥 SYNCHRO : on n’utilise PLUS mem.ignoreIds ni mem.isClosed pour filtrer
-    const displayable = tickets;
+    const displayable = tickets.filter((t) => {
+      const tid = t.id !== undefined && t.id !== null ? String(t.id) : '';
+      return tid && !mem.ignoreIds.has(tid);
+    });
 
-    if (!displayable.length) {
+    if (mem.isClosed || displayable.length === 0) {
       info.textContent = 'Aucune commande pour cette table.';
       const totalBox = document.createElement('div');
       totalBox.style.marginTop = '8px';
@@ -236,10 +238,12 @@
         });
       } catch {}
 
+      // mémoriser l'état précédent côté droit également
       const prevLabel = (window.lastKnownStatus && window.lastKnownStatus[id]) || 'Commandée';
       const prevLocal = window.localTableStatus && window.localTableStatus[id] ? { ...window.localTableStatus[id] } : null;
       prevStatusBeforePay[id] = { label: prevLabel, local: prevLocal };
 
+      // figer en Payée
       if (window.autoBuffer && window.autoBuffer[id]) {
         const b = window.autoBuffer[id];
         if (b.timeoutId) clearTimeout(b.timeoutId);
@@ -256,8 +260,15 @@
       detailPayTimeouts[id] = setTimeout(async () => {
         updateLeftTableStatus(id, 'Vide');
         try {
-          await fetchSummary(base); // on ne touche plus à mem.ignoreIds ici pour la synchro
+          const data = await fetchSummary(base);
+          (data.tickets || [])
+            .filter((t) => normId(t.table) === id)
+            .forEach((t) => {
+              if (t.id !== undefined && t.id !== null) mem.ignoreIds.add(String(t.id));
+            });
         } catch {}
+        mem.isClosed = true;
+        // purge état précédent puisque la table est clôturée
         if (window.prevStatusBeforePay) delete window.prevStatusBeforePay[id];
         detailPayTimeouts[id] = null;
       }, 30 * 1000);
@@ -290,6 +301,7 @@
         mem.isClosed = false;
         updateLeftTableStatus(id, prevState.label);
       } else {
+        // fallback si pas trouvé
         if (!window.localTableStatus) window.localTableStatus = {};
         window.lastKnownStatus[id] = 'Doit payé';
         window.localTableStatus[id] = { phase: 'PAY', until: null };

@@ -1,33 +1,51 @@
-// table-detail.js — VERSION RESET
-// - Affiche UNIQUEMENT le DERNIER ticket de la table
-// - Pas de mémoires locales (ignoreIds, tableMemory, etc.)
-// - Tout vient de /summary
+// table-detail.js — Version synchro simple
+// - Affiche les tickets d'une table à partir de /summary
+// - Même contenu sur PC et smartphone
+// - Pas de tableMemory / ignoreIds / prevStatus locales
+// - Boutons : Imprimer maintenant / Paiement confirmé
 
 (function () {
+  // Panneau sur la droite (on garde ton style général)
+  let panel = document.querySelector('#tableDetailPanel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'tableDetailPanel';
+    panel.style.position = 'fixed';
+    panel.style.top = '0';
+    panel.style.right = '0';
+    panel.style.width = '360px';
+    panel.style.height = '100vh';
+    panel.style.background = '#0f172a';
+    panel.style.borderLeft = '1px solid rgba(255,255,255,0.03)';
+    panel.style.zIndex = '500';
+    panel.style.display = 'none';
+    panel.style.flexDirection = 'column';
+    panel.style.padding = '16px';
+    panel.style.overflowY = 'auto';
+    panel.style.gap = '12px';
+    document.body.appendChild(panel);
+  }
+
   const normId = (id) => (id || '').trim().toUpperCase();
 
   function getApiBase() {
     const input = document.querySelector('#apiUrl');
-    const raw = (input && input.value) || '';
-    return raw.trim().replace(/\/+$/, '');
+    return input ? input.value.trim().replace(/\/+$/, '') : '';
   }
 
-  async function fetchSummary(base) {
-    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
-    return await res.json();
+  function closePanel() {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
   }
 
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
-
     const src = Array.isArray(ticket.items)
       ? ticket.items
       : Array.isArray(ticket.lines)
       ? ticket.lines
       : null;
-
     if (!src) return '';
-
     return src
       .map((it) => {
         const qty = it.qty || it.quantity || 1;
@@ -81,41 +99,9 @@
     return card;
   }
 
-  // Panneau de détail (créé une fois)
-  let panel = document.querySelector('#tableDetailPanel');
-  if (!panel) {
-    panel = document.createElement('div');
-    panel.id = 'tableDetailPanel';
-    panel.style.position = 'fixed';
-    panel.style.top = '0';
-    panel.style.right = '0';
-    panel.style.width = '360px';
-    panel.style.height = '100vh';
-    panel.style.background = '#0f172a';
-    panel.style.borderLeft = '1px solid rgba(255,255,255,0.03)';
-    panel.style.zIndex = '500';
-    panel.style.display = 'none';
-    panel.style.flexDirection = 'column';
-    panel.style.padding = '16px';
-    panel.style.overflowY = 'auto';
-    panel.style.gap = '12px';
-    document.body.appendChild(panel);
-  }
-
-  function closePanel() {
-    panel.style.display = 'none';
-    panel.innerHTML = '';
-  }
-
-  function updateLeftTableStatus(tableId, newStatus) {
-    const id = normId(tableId);
-    const card = document.querySelector(`.table[data-table="${id}"]`);
-    if (!card) return;
-
-    const chips = card.querySelectorAll('.card-head .chip');
-    if (chips.length >= 2) {
-      chips[1].textContent = newStatus;
-    }
+  async function fetchSummary(base) {
+    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    return await res.json();
   }
 
   async function showTableDetail(tableId) {
@@ -126,7 +112,7 @@
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
-    // Header
+    // En-tête
     const head = document.createElement('div');
     head.style.display = 'flex';
     head.style.justifyContent = 'space-between';
@@ -153,73 +139,58 @@
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
-    // Récupérer tous les tickets de la journée pour cette table
     let tickets = [];
     try {
       const data = await fetchSummary(base);
-      tickets = (data.tickets || []).filter((t) => normId(t.table) === id);
-    } catch (err) {
-      console.error('[table-detail] erreur summary', err);
+      tickets = (data.tickets || []).filter(
+        (t) => normId(t.table) === id
+      );
+    } catch (e) {
+      console.error('[STAFF] erreur summary détail', e);
       info.textContent = 'Erreur de chargement';
       return;
     }
 
     if (!tickets.length) {
       info.textContent = 'Aucune commande pour cette table.';
-      const totalBoxEmpty = document.createElement('div');
-      totalBoxEmpty.style.marginTop = '8px';
-      totalBoxEmpty.style.marginBottom = '16px';
-      totalBoxEmpty.innerHTML = `
+      const totalBox = document.createElement('div');
+      totalBox.style.marginTop = '8px';
+      totalBox.style.marginBottom = '16px';
+      totalBox.innerHTML = `
         <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
         <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
       `;
-      panel.appendChild(totalBoxEmpty);
+      panel.appendChild(totalBox);
       return;
     }
 
-    // 🔥 On garde UNIQUEMENT le DERNIER ticket (par id numérique si possible)
-    let lastTicket = null;
-    tickets.forEach((t) => {
-      const idNum =
-        t.id !== undefined && t.id !== null && !isNaN(Number(t.id)) ? Number(t.id) : null;
-      if (idNum === null) return;
-
-      if (!lastTicket) {
-        lastTicket = t;
-      } else {
-        const lastNum =
-          lastTicket.id !== undefined &&
-          lastTicket.id !== null &&
-          !isNaN(Number(lastTicket.id))
-            ? Number(lastTicket.id)
-            : 0;
-        if (idNum > lastNum) lastTicket = t;
-      }
+    // Tri des tickets par date (du plus ancien au plus récent)
+    tickets.sort((a, b) => {
+      const ta = new Date(a.created_at || a.time_iso || 0).getTime();
+      const tb = new Date(b.created_at || b.time_iso || 0).getTime();
+      return ta - tb;
     });
 
-    if (!lastTicket) {
-      // fallback : dernier de la liste
-      lastTicket = tickets[tickets.length - 1];
-    }
+    info.textContent = `${tickets.length} ticket(s) pour cette table`;
 
-    info.textContent = 'Dernier ticket pour cette table';
-    panel.appendChild(makeTicketCard(lastTicket));
+    tickets.forEach((t) => panel.appendChild(makeTicketCard(t)));
 
-    const total =
-      typeof lastTicket.total === 'number'
-        ? lastTicket.total
-        : Number(lastTicket.total || 0) || 0;
-
+    const total = tickets.reduce(
+      (acc, t) => (typeof t.total === 'number' ? acc + t.total : acc),
+      0
+    );
     const totalBox = document.createElement('div');
     totalBox.style.marginTop = '8px';
     totalBox.style.marginBottom = '16px';
     totalBox.innerHTML = `
       <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
-      <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(2)} €</div>
+      <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(
+        2
+      )} €</div>
     `;
     panel.appendChild(totalBox);
 
-    // Actions
+    // Boutons actions
     const actions = document.createElement('div');
     actions.style.display = 'flex';
     actions.style.flexDirection = 'column';
@@ -246,8 +217,8 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch (err) {
-        console.error('[table-detail] erreur /print', err);
+      } catch (e) {
+        console.error('[STAFF] erreur /print détail', e);
       }
     });
 
@@ -258,15 +229,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch (err) {
-        console.error('[table-detail] erreur /confirm', err);
+      } catch (e) {
+        console.error('[STAFF] erreur /confirm détail', e);
       }
-
-      // feedback visuel immédiat à gauche
-      updateLeftTableStatus(id, 'Payée');
-
-      // le polling de app.js mettra à jour la suite
-      setTimeout(closePanel, 300);
     });
   }
 

@@ -1,11 +1,13 @@
-// app.js — VERSION RESET STABLE v4
-// - Tri = heure du dernier ticket (summary)
-// - Statut = priorité au backend (table.status), sinon:
-//     - s'il y a un ticket aujourd'hui -> "Commandée"
-//     - sinon -> "Vide"
-// - Pas de mémoires locales tordues
+// app.js — Staff "Base + Synchro"
+// - Synchro PC / smartphone : tout vient de /tables + /summary
+// - Tri des tables par heure du DERNIER ticket (summary)
+// - Statut : si backend envoie table.status => on l'affiche
+//            sinon "Commandée" s'il y a un ticket, sinon "Vide"
+// - Boutons : Imprimer maintenant / Paiement confirmé
+// - Plus de mémoires locales qui divergent (ignoreIds, localTableStatus, etc.)
 
 document.addEventListener('DOMContentLoaded', () => {
+  // --- Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
   const tablesContainer = document.querySelector('#tables');
   const tablesEmpty = document.querySelector('#tablesEmpty');
@@ -15,65 +17,78 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
 
-  const normId = (id) => (id || "").trim().toUpperCase();
-  const getApiBase = () => (apiInput ? apiInput.value.trim().replace(/\/+$/, "") : "");
+  // --- Utils
+  const normId = (id) => (id || '').trim().toUpperCase();
+  const getApiBase = () =>
+    apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '';
 
   const formatTime = (dateString) => {
-    if (!dateString) return "--:--";
+    if (!dateString) return '--:--';
     const d = new Date(dateString);
-    if (isNaN(d.getTime())) return "--:--";
-    const h = d.getHours().toString().padStart(2, "0");
-    const m = d.getMinutes().toString().padStart(2, "0");
+    if (isNaN(d.getTime())) return '--:--';
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
   };
 
-  // --- Sauvegarde / chargement API
+  // --- Sauvegarde de l'URL API
   try {
-    const saved = localStorage.getItem("staff-api");
+    const saved = localStorage.getItem('staff-api');
     if (saved && apiInput) apiInput.value = saved;
   } catch {}
 
   if (apiInput) {
-    apiInput.addEventListener("change", () => {
+    apiInput.addEventListener('change', () => {
       try {
-        localStorage.setItem("staff-api", apiInput.value.trim());
+        localStorage.setItem('staff-api', apiInput.value.trim());
       } catch {}
     });
   }
 
-  // --- Résumé du jour
+  // --- Résumé du jour (colonne de droite)
   function renderSummary(tickets) {
     if (!summaryContainer) return;
-    summaryContainer.innerHTML = "";
+    summaryContainer.innerHTML = '';
 
     if (!tickets || !tickets.length) {
-      if (summaryEmpty) summaryEmpty.style.display = "block";
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
       return;
     }
-    if (summaryEmpty) summaryEmpty.style.display = "none";
+    if (summaryEmpty) summaryEmpty.style.display = 'none';
 
     tickets.forEach((t) => {
-      let bodyText = "";
-      if (t.label) bodyText = t.label;
-      else if (Array.isArray(t.items)) {
+      let bodyText = '';
+      if (t.label) {
+        bodyText = t.label;
+      } else if (Array.isArray(t.items)) {
         bodyText = t.items
-          .map((it) => `${it.qty || it.quantity || 1}× ${it.label || it.name || it.title || "article"}`)
-          .join(", ");
+          .map(
+            (it) =>
+              `${it.qty || it.quantity || 1}× ${
+                it.label || it.name || it.title || 'article'
+              }`
+          )
+          .join(', ');
       } else if (Array.isArray(t.lines)) {
         bodyText = t.lines
-          .map((it) => `${it.qty || it.quantity || 1}× ${it.label || it.name || it.title || "article"}`)
-          .join(", ");
+          .map(
+            (it) =>
+              `${it.qty || it.quantity || 1}× ${
+                it.label || it.name || it.title || 'article'
+              }`
+          )
+          .join(', ');
       }
 
-      const item = document.createElement("div");
-      item.className = "summaryItem";
+      const item = document.createElement('div');
+      item.className = 'summaryItem';
       item.innerHTML = `
         <div class="head">
           <span class="chip">${t.table}</span>
           <span class="chip"><i class="icon-clock"></i> ${t.time}</span>
           <span class="chip">Total : ${t.total} €</span>
         </div>
-        <div class="body">${bodyText || ""}</div>
+        <div class="body">${bodyText || ''}</div>
       `;
       summaryContainer.appendChild(item);
     });
@@ -82,33 +97,37 @@ document.addEventListener('DOMContentLoaded', () => {
   async function refreshSummary() {
     const base = getApiBase();
     if (!base) {
-      if (summaryContainer) summaryContainer.innerHTML = "";
-      if (summaryEmpty) summaryEmpty.style.display = "block";
+      if (summaryContainer) summaryContainer.innerHTML = '';
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
       return;
     }
 
     try {
-      const res = await fetch(`${base}/summary`, { cache: "no-store" });
+      const res = await fetch(`${base}/summary`, { cache: 'no-store' });
       const data = await res.json();
       renderSummary(data.tickets || []);
     } catch (err) {
-      console.error("[STAFF] erreur summary", err);
+      console.error('[STAFF] erreur summary', err);
     }
   }
 
-  // --- Tables (liste de gauche)
+  // --- Détail table (ouverture du panneau droit)
+  function openTableDetail(tableId) {
+    if (window.showTableDetail) window.showTableDetail(tableId);
+  }
 
+  // --- Rendu LISTE des tables (colonne de gauche)
   function renderTables(tables, lastTicketPerTable) {
     if (!tablesContainer) return;
-    tablesContainer.innerHTML = "";
+    tablesContainer.innerHTML = '';
 
     if (!tables || !tables.length) {
-      if (tablesEmpty) tablesEmpty.style.display = "block";
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
-    if (tablesEmpty) tablesEmpty.style.display = "none";
+    if (tablesEmpty) tablesEmpty.style.display = 'none';
 
-    const filter = filterSelect ? normId(filterSelect.value) : "TOUTES";
+    const filter = filterSelect ? normId(filterSelect.value) : 'TOUTES';
 
     // Tri : table avec dernier ticket le plus récent en haut
     const sorted = [...tables].sort((a, b) => {
@@ -122,30 +141,36 @@ document.addEventListener('DOMContentLoaded', () => {
     sorted.forEach((table) => {
       const id = normId(table.id);
       if (!id) return;
-      if (filter !== "TOUTES" && filter !== id) return;
+      if (filter !== 'TOUTES' && filter !== id) return;
 
       const lastInfo = lastTicketPerTable[id] || null;
-      const displayTime = lastInfo ? formatTime(lastInfo.isoTime) : "--:--";
+      const displayTime = lastInfo ? formatTime(lastInfo.isoTime) : '--:--';
 
-      // 🔥 Statut :
-      //  1) si backend en envoie un (table.status), on l'affiche tel quel
-      //  2) sinon, fallback : "Commandée" s'il y a un ticket, sinon "Vide"
-      let status = "Vide";
-      if (typeof table.status === "string" && table.status.trim() !== "") {
+      // Statut : priorité au backend, sinon fallback simple
+      let status = 'Vide';
+      if (
+        typeof table.status === 'string' &&
+        table.status.trim() !== ''
+      ) {
         status = table.status;
       } else if (lastInfo) {
-        status = "Commandée";
+        status = 'Commandée';
       }
 
-      const card = document.createElement("div");
-      card.className = "table";
-      card.setAttribute("data-table", id);
+      const card = document.createElement('div');
+      card.className = 'table';
+      card.setAttribute('data-table', id);
+
       card.innerHTML = `
         <div class="card-head">
           <span class="chip">${id}</span>
           <span class="chip">${status}</span>
           <span class="chip">
-            ${ lastInfo ? `Commandé à : ${displayTime}` : "—" }
+            ${
+              lastInfo
+                ? `Commandé à : ${displayTime}`
+                : '—'
+            }
           </span>
         </div>
         <div class="card-actions">
@@ -154,46 +179,46 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       `;
 
-      // Clic sur la carte → détail de table
-      card.addEventListener("click", (e) => {
-        if (e.target.closest("button")) return;
-        if (window.showTableDetail) window.showTableDetail(id);
+      // Clic sur la carte => ouvre le détail
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        openTableDetail(id);
       });
 
-      // Bouton Imprimer
-      const btnPrint = card.querySelector(".btn-print");
+      // Bouton "Imprimer maintenant"
+      const btnPrint = card.querySelector('.btn-print');
       if (btnPrint) {
-        btnPrint.addEventListener("click", async (e) => {
+        btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
           try {
             await fetch(`${base}/print`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ table: id })
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
             });
           } catch (err) {
-            console.error("[STAFF] erreur /print", err);
+            console.error('[STAFF] erreur /print', err);
           }
         });
       }
 
-      // Bouton Paiement confirmé
-      const btnPaid = card.querySelector(".btn-paid");
+      // Bouton "Paiement confirmé"
+      const btnPaid = card.querySelector('.btn-paid');
       if (btnPaid) {
-        btnPaid.addEventListener("click", async (e) => {
+        btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
           try {
             await fetch(`${base}/confirm`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ table: id })
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
             });
           } catch (err) {
-            console.error("[STAFF] erreur /confirm", err);
+            console.error('[STAFF] erreur /confirm', err);
           }
         });
       }
@@ -202,26 +227,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Récupération des tables + summary pour le tri
   async function refreshTables() {
     const base = getApiBase();
     if (!base) {
-      if (tablesContainer) tablesContainer.innerHTML = "";
-      if (tablesEmpty) tablesEmpty.style.display = "block";
+      if (tablesContainer) tablesContainer.innerHTML = '';
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
 
     try {
-      // 1) Récupérer les tables
-      const resTables = await fetch(`${base}/tables`, { cache: "no-store" });
+      // 1) /tables
+      const resTables = await fetch(`${base}/tables`, { cache: 'no-store' });
       const dataTables = await resTables.json();
       const tables = dataTables.tables || [];
 
-      // 2) Récupérer le summary pour savoir quel est le dernier ticket par table
-      const resSummary = await fetch(`${base}/summary`, { cache: "no-store" });
+      // 2) /summary (pour savoir le dernier ticket par table)
+      const resSummary = await fetch(`${base}/summary`, { cache: 'no-store' });
       const dataSummary = await resSummary.json();
       const tickets = dataSummary.tickets || [];
 
       const lastTicketPerTable = {};
+
       tickets.forEach((t) => {
         const id = normId(t.table);
         if (!id) return;
@@ -237,9 +264,9 @@ document.addEventListener('DOMContentLoaded', () => {
           const d = new Date(t.time_iso);
           timeMs = d.getTime();
           isoTime = d.toISOString();
-        } else if (t.time && typeof t.time === "string") {
-          // t.time est du type "HH:MM" → on le transforme en Date aujourd'hui
-          const parts = t.time.split(":");
+        } else if (t.time && typeof t.time === 'string') {
+          // cas "HH:MM"
+          const parts = t.time.split(':');
           if (parts.length >= 2) {
             const now = new Date();
             const h = Number(parts[0]) || 0;
@@ -263,14 +290,14 @@ document.addEventListener('DOMContentLoaded', () => {
           lastTicketPerTable[id] = {
             ticket: t,
             timeMs,
-            isoTime
+            isoTime,
           };
         }
       });
 
       renderTables(tables, lastTicketPerTable);
     } catch (err) {
-      console.error("[STAFF] erreur tables/summary", err);
+      console.error('[STAFF] erreur tables/summary', err);
     }
   }
 

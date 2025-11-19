@@ -1,4 +1,4 @@
-// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par activité locale)
+// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri synchro)
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -249,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   window.cancelPayClose = cancelPayClose;
 
-  // --- Rendu LISTE TABLES (TRI PAR localLastActivity)
+  // --- Rendu LISTE TABLES (TRI SYNCHRO par lastTicketAt backend)
   function renderTables(tables){
     if(!tablesContainer) return;
     tablesContainer.innerHTML='';
@@ -261,18 +261,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if(tablesEmpty) tablesEmpty.style.display='none';
 
     const filter=filterSelect?normId(filterSelect.value):'TOUTES';
-    const PRIORITY=['Vide','Commandée','En préparation','Doit payé','Payée'];
 
-    // Tri : table avec dernière activité locale la plus récente en haut
+    // Tri : table avec lastTicketAt le plus récent en haut (backend = même pour PC & smartphone)
     const sorted = [...tables].sort((a, b) => {
-      const ida = normId(a.id);
-      const idb = normId(b.id);
-      const ta = (typeof localLastActivity[ida] === 'number')
-        ? localLastActivity[ida]
-        : (a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0);
-      const tb = (typeof localLastActivity[idb] === 'number')
-        ? localLastActivity[idb]
-        : (b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0);
+      const ta = a.lastTicketAt ? new Date(a.lastTicketAt).getTime() : 0;
+      const tb = b.lastTicketAt ? new Date(b.lastTicketAt).getTime() : 0;
       return tb - ta;
     });
 
@@ -280,22 +273,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const id=normId(table.id);
       if(filter!=='TOUTES'&&filter!==id) return;
 
-      const last=table.lastTicketAt?formatTime(table.lastTicketAt):'--:--';
-      let backendStatus=table.status||'Vide';
-      const prev=window.lastKnownStatus[id]||null;
-      const forced=getLocalStatus(id);
+      const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
 
-      let finalStatus;
-      if(forced){ finalStatus=forced; }
-      else if(prev&&prev!=='Vide'){
-        const prevIdx=PRIORITY.indexOf(prev);
-        const backIdx=PRIORITY.indexOf(backendStatus);
-        finalStatus=prevIdx>backIdx?prev:backendStatus;
-      }
-      else { finalStatus=backendStatus; }
-
-      window.lastKnownStatus[id]=finalStatus;
-      if(finalStatus!=='Commandée') cancelAutoBuffer(id);
+      // 🔥 Statut maintenant 100% basé sur le backend pour la synchro
+      const finalStatus = table.status || 'Vide';
 
       const showActions = finalStatus!=='Vide';
       const isPaymentPending = !!payClose[id];
@@ -308,11 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <span class="chip">${id}</span>
     <span class="chip">${finalStatus}</span>
     <span class="chip">
-      ${
-        localLastActivity[id] 
-        ? `Commandé à : ${formatTime(new Date(localLastActivity[id]).toISOString())}`
-        : '—'
-      }
+      ${ last !== '--:--' ? `Commandé à : ${last}` : '—' }
     </span>
   </div>
 
@@ -331,7 +308,6 @@ document.addEventListener('DOMContentLoaded', () => {
       : ``
   }
 `;
-
 
       card.addEventListener('click',(e)=>{ if(e.target.closest('button')) return; openTableDetail(id); });
 
@@ -352,7 +328,6 @@ document.addEventListener('DOMContentLoaded', () => {
               }catch{}
             }
             setPreparationFor20min(id);
-            window.lastKnownStatus[id]='En préparation';
             if(!tableMemory[id]) tableMemory[id]={isClosed:false,ignoreIds:new Set()};
             tableMemory[id].isClosed=false;
             saveState();
@@ -368,7 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelAutoBuffer(id);
 
             prevStatusBeforePay[id] = {
-              label: window.lastKnownStatus[id] || 'Commandée',
+              label: finalStatus || 'Commandée',
               local: localTableStatus[id] ? { ...localTableStatus[id] } : null
             };
             saveState();
@@ -382,7 +357,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
               }catch{}
             }
-            window.lastKnownStatus[id]='Payée';
             delete localTableStatus[id];
             scheduleCloseIn30s(id);
             saveState();
@@ -397,7 +371,6 @@ document.addEventListener('DOMContentLoaded', () => {
             cancelPayClose(id);
             const prevState = prevStatusBeforePay[id];
             if (prevState) {
-              window.lastKnownStatus[id] = prevState.label;
               if (prevState.local) {
                 localTableStatus[id] = { ...prevState.local };
               } else {
@@ -405,7 +378,6 @@ document.addEventListener('DOMContentLoaded', () => {
               }
               delete prevStatusBeforePay[id];
             } else {
-              window.lastKnownStatus[id]='Doit payé';
               localTableStatus[id]={phase:'PAY',until:null};
             }
             saveState();
@@ -448,7 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Refresh tables (+ chime + MAJ activité locale)
+  // --- Refresh tables (+ chime)
   async function refreshTables(){
     ensureBusinessDayFresh();
 
@@ -483,35 +455,28 @@ document.addEventListener('DOMContentLoaded', () => {
         const list=summaryByTable[tid]||[];
 
         const seen=(alertedTickets[tid]=alertedTickets[tid]||new Set());
-        const activeIds=list.filter(tk=>!mem.ignoreIds.has(tk));
+        const activeIds=list; // on ne filtre plus par ignoreIds pour la synchro
         const fresh=activeIds.filter(tk=>!seen.has(tk));
         hasNewById[tid]=activeIds.length>0;
 
         if(fresh.length>0){
-          // nouvelle commande détectée -> son + activité
+          // nouvelle commande détectée -> son
           chime.playRobust();
           fresh.forEach(tk=>seen.add(tk));
+          // on peut garder localLastActivity si tu veux pour autre chose, mais ce n'est plus utilisé pour le tri
           localLastActivity[tid] = now();
         }
 
         if(mem.isClosed && hasNewById[tid]) mem.isClosed=false;
       });
 
-      const enriched=tables.map(tb=>{
-        const idNorm=normId(tb.id);
-        if(!idNorm) return tb;
-        const mem=(tableMemory[idNorm]=tableMemory[idNorm]||{isClosed:false,ignoreIds:new Set()});
+      // 🔥 Tables enrichies : on ne touche plus au status, seulement à l'id → synchro backend
+      const enriched=tables.map(tb=>({
+        ...tb,
+        id: normId(tb.id),
+      }));
 
-        let status = tb.status;
-        if(mem.isClosed){
-          status='Vide';
-        } else if((!status||status==='Vide')&&hasNewById[idNorm]){
-          status='Commandée';
-        }
-
-        return {...tb,id:idNorm,status};
-      });
-
+      // Buffer auto : déclenché si le backend envoie status="Commandée"
       enriched.forEach(t=>{
         const id=normId(t.id);
         if(t.status==='Commandée'){ if(!autoBuffer[id]) startAutoBuffer(id); }

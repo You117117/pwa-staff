@@ -1,0 +1,43 @@
+:root{--bg:#0b1220;--fg:#e8f0ff;--muted:#8a97ad;--card:#121a2b;--accent:#2cc295;--accent-2:#2c7bc2;--chip:#1b2336}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,Segoe UI,Arial}
+h1,h2{margin:0}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #1b2336}
+.topbar .api-tools{display:flex;gap:10px;align-items:center}
+input[type=text]{background:var(--chip);color:var(--fg);border:1px solid #22304a;border-radius:8px;padding:8px 10px;min-width:360px}
+button{background:var(--accent);border:0;color:#06101b;border-radius:8px;padding:8px 12px;font-weight:600;cursor:pointer}
+button.secondary{background:var(--chip);color:var(--fg)}
+.badge{margin-left:6px;font-size:12px;padding:4px 8px;border-radius:999px;background:#25314a}
+.badge.ok{background:#123d2c;color:#7bf6c4}
+.badge.err{background:#3d121c;color:#f6a7b7}
+.grid{display:grid;grid-template-columns:2fr 1fr;gap:18px;padding:18px}
+.card{background:var(--card);border:1px solid #1b2336;border-radius:14px;overflow:hidden}
+.card-head{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid #1b2336}
+.card .tables,.card .summary{padding:12px 14px}
+.table {background:var(--chip);border:1px solid #22304a;border-radius:12px;padding:12px;margin-bottom:12px}
+.table h3{margin:0 0 8px 0;font-size:16px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.chip{display:inline-block;background:#22304a;color:var(--fg);padding:4px 8px;border-radius:8px;font-size:12px}
+.actions-row{display:flex;gap:8px;margin-top:8px}
+.muted{color:var(--muted)}
+.small{font-size:12px;padding:14px}
+
+.chip-status {
+  background: rgba(15, 118, 255, 0.12);
+  color: #dbeafe;
+}
+
+.chip-status.is-warning {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fef9c3;
+}
+
+.chip-status.is-danger {
+  background: rgba(248, 113, 113, 0.15);
+  color: #fee2e2;
+}
+
+.chip-status.is-success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #d1fae5;
+}
+

@@ -1,7 +1,9 @@
-// app.js — VERSION RESET STABLE v2
-// - Statuts calculés à partir du summary : Vide / Doit payer
+// app.js — VERSION RESET STABLE v4
 // - Tri = heure du dernier ticket (summary)
-// - Pas de mémoires locales
+// - Statut = priorité au backend (table.status), sinon:
+//     - s'il y a un ticket aujourd'hui -> "Commandée"
+//     - sinon -> "Vide"
+// - Pas de mémoires locales tordues
 
 document.addEventListener('DOMContentLoaded', () => {
   const apiInput = document.querySelector('#apiUrl');
@@ -125,12 +127,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const lastInfo = lastTicketPerTable[id] || null;
       const displayTime = lastInfo ? formatTime(lastInfo.isoTime) : "--:--";
 
-      // 🔥 Statut simple et déterministe :
-      // - aucun ticket => Vide
-      // - au moins un ticket aujourd'hui => Doit payer
+      // 🔥 Statut :
+      //  1) si backend en envoie un (table.status), on l'affiche tel quel
+      //  2) sinon, fallback : "Commandée" s'il y a un ticket, sinon "Vide"
       let status = "Vide";
-      if (lastInfo) {
-        status = "Doit payer";
+      if (typeof table.status === "string" && table.status.trim() !== "") {
+        status = table.status;
+      } else if (lastInfo) {
+        status = "Commandée";
       }
 
       const card = document.createElement("div");
@@ -234,7 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
           timeMs = d.getTime();
           isoTime = d.toISOString();
         } else if (t.time && typeof t.time === "string") {
-          // t.time est du type "12:25" → on le transforme en Date aujourd'hui
+          // t.time est du type "HH:MM" → on le transforme en Date aujourd'hui
           const parts = t.time.split(":");
           if (parts.length >= 2) {
             const now = new Date();

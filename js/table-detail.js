@@ -1,11 +1,6 @@
-// table-detail.js — Version synchro simple
-// - Affiche les tickets d'une table à partir de /summary
-// - Même contenu sur PC et smartphone
-// - Pas de tableMemory / ignoreIds / prevStatus locales
-// - Boutons : Imprimer maintenant / Paiement confirmé
+// table-detail.js — annulation restaure le statut précédent (+ bouton orange)
 
 (function () {
-  // Panneau sur la droite (on garde ton style général)
   let panel = document.querySelector('#tableDetailPanel');
   if (!panel) {
     panel = document.createElement('div');
@@ -27,34 +22,39 @@
   }
 
   const normId = (id) => (id || '').trim().toUpperCase();
-
   function getApiBase() {
     const input = document.querySelector('#apiUrl');
     return input ? input.value.trim().replace(/\/+$/, '') : '';
   }
-
   function closePanel() {
     panel.style.display = 'none';
     panel.innerHTML = '';
   }
+  function updateLeftTableStatus(tableId, newStatus) {
+    const id = normId(tableId);
+    const card = document.querySelector(`.table[data-table="${id}"]`);
+    if (card) {
+      const chips = card.querySelectorAll('.card-head .chip');
+      if (chips.length >= 2) chips[1].textContent = newStatus;
+    }
+    if (window.lastKnownStatus) window.lastKnownStatus[id] = newStatus;
+    if (newStatus === 'Vide' && window.localTableStatus) delete window.localTableStatus[id];
+  }
 
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
-    const src = Array.isArray(ticket.items)
-      ? ticket.items
-      : Array.isArray(ticket.lines)
-      ? ticket.lines
-      : null;
-    if (!src) return '';
-    return src
-      .map((it) => {
-        const qty = it.qty || it.quantity || 1;
-        const name = it.label || it.name || it.title || 'article';
-        return `${qty}× ${name}`;
-      })
-      .join(', ');
+    const src = Array.isArray(ticket.items) ? ticket.items : Array.isArray(ticket.lines) ? ticket.lines : null;
+    if (src) {
+      return src
+        .map((it) => {
+          const qty = it.qty || it.quantity || 1;
+          const name = it.label || it.name || it.title || 'article';
+          return `${qty}× ${name}`;
+        })
+        .join(', ');
+    }
+    return '';
   }
-
   function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.35)';
@@ -104,15 +104,20 @@
     return await res.json();
   }
 
+  const detailPayTimeouts = (window.detailPayTimeouts = window.detailPayTimeouts || {});
+
   async function showTableDetail(tableId) {
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
 
+    const tableMemory = (window.tableMemory = window.tableMemory || {});
+    const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {});
+    const mem = (tableMemory[id] = tableMemory[id] || { isClosed: false, ignoreIds: new Set() });
+
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
-    // En-tête
     const head = document.createElement('div');
     head.style.display = 'flex';
     head.style.justifyContent = 'space-between';
@@ -142,16 +147,17 @@
     let tickets = [];
     try {
       const data = await fetchSummary(base);
-      tickets = (data.tickets || []).filter(
-        (t) => normId(t.table) === id
-      );
-    } catch (e) {
-      console.error('[STAFF] erreur summary détail', e);
+      tickets = (data.tickets || []).filter((t) => normId(t.table) === id);
+    } catch {
       info.textContent = 'Erreur de chargement';
-      return;
     }
 
-    if (!tickets.length) {
+    const displayable = tickets.filter((t) => {
+      const tid = t.id !== undefined && t.id !== null ? String(t.id) : '';
+      return tid && !mem.ignoreIds.has(tid);
+    });
+
+    if (mem.isClosed || displayable.length === 0) {
       info.textContent = 'Aucune commande pour cette table.';
       const totalBox = document.createElement('div');
       totalBox.style.marginTop = '8px';
@@ -164,33 +170,19 @@
       return;
     }
 
-    // Tri des tickets par date (du plus ancien au plus récent)
-    tickets.sort((a, b) => {
-      const ta = new Date(a.created_at || a.time_iso || 0).getTime();
-      const tb = new Date(b.created_at || b.time_iso || 0).getTime();
-      return ta - tb;
-    });
+    info.textContent = `${displayable.length} ticket(s) pour cette table`;
+    displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
 
-    info.textContent = `${tickets.length} ticket(s) pour cette table`;
-
-    tickets.forEach((t) => panel.appendChild(makeTicketCard(t)));
-
-    const total = tickets.reduce(
-      (acc, t) => (typeof t.total === 'number' ? acc + t.total : acc),
-      0
-    );
+    const total = displayable.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
     const totalBox = document.createElement('div');
     totalBox.style.marginTop = '8px';
     totalBox.style.marginBottom = '16px';
     totalBox.innerHTML = `
       <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
-      <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(
-        2
-      )} €</div>
+      <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(2)} €</div>
     `;
     panel.appendChild(totalBox);
 
-    // Boutons actions
     const actions = document.createElement('div');
     actions.style.display = 'flex';
     actions.style.flexDirection = 'column';
@@ -206,9 +198,24 @@
     btnPay.className = 'btn btn-primary';
     btnPay.style.width = '100%';
 
+    const btnCancelPay = document.createElement('button');
+    btnCancelPay.textContent = 'Annuler le paiement';
+    btnCancelPay.className = 'btn btn-warning';
+    btnCancelPay.style.width = '100%';
+    btnCancelPay.style.background = '#f59e0b';
+    btnCancelPay.style.borderColor = '#f59e0b';
+
     actions.appendChild(btnPrint);
     actions.appendChild(btnPay);
+    actions.appendChild(btnCancelPay);
     panel.appendChild(actions);
+
+    const paymentPendingLeft = !!(window.payClose && window.payClose[id]);
+    const paymentPendingHere = !!detailPayTimeouts[id];
+    const showCancel = paymentPendingLeft || paymentPendingHere;
+
+    btnPay.style.display = showCancel ? 'none' : 'block';
+    btnCancelPay.style.display = showCancel ? 'block' : 'none';
 
     btnPrint.addEventListener('click', async () => {
       try {
@@ -217,9 +224,9 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch (e) {
-        console.error('[STAFF] erreur /print détail', e);
-      }
+      } catch {}
+      mem.isClosed = false;
+      updateLeftTableStatus(id, 'En préparation');
     });
 
     btnPay.addEventListener('click', async () => {
@@ -229,9 +236,81 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch (e) {
-        console.error('[STAFF] erreur /confirm détail', e);
+      } catch {}
+
+      // mémoriser l'état précédent côté droit également
+      const prevLabel = (window.lastKnownStatus && window.lastKnownStatus[id]) || 'Commandée';
+      const prevLocal = window.localTableStatus && window.localTableStatus[id] ? { ...window.localTableStatus[id] } : null;
+      prevStatusBeforePay[id] = { label: prevLabel, local: prevLocal };
+
+      // figer en Payée
+      if (window.autoBuffer && window.autoBuffer[id]) {
+        const b = window.autoBuffer[id];
+        if (b.timeoutId) clearTimeout(b.timeoutId);
+        delete window.autoBuffer[id];
       }
+      if (window.localTableStatus && window.localTableStatus[id]) {
+        delete window.localTableStatus[id];
+      }
+      if (window.lastKnownStatus) window.lastKnownStatus[id] = 'Payée';
+
+      updateLeftTableStatus(id, 'Payée');
+
+      if (detailPayTimeouts[id]) clearTimeout(detailPayTimeouts[id]);
+      detailPayTimeouts[id] = setTimeout(async () => {
+        updateLeftTableStatus(id, 'Vide');
+        try {
+          const data = await fetchSummary(base);
+          (data.tickets || [])
+            .filter((t) => normId(t.table) === id)
+            .forEach((t) => {
+              if (t.id !== undefined && t.id !== null) mem.ignoreIds.add(String(t.id));
+            });
+        } catch {}
+        mem.isClosed = true;
+        // purge état précédent puisque la table est clôturée
+        if (window.prevStatusBeforePay) delete window.prevStatusBeforePay[id];
+        detailPayTimeouts[id] = null;
+      }, 30 * 1000);
+
+      btnPay.style.display = 'none';
+      btnCancelPay.style.display = 'block';
+    });
+
+    btnCancelPay.addEventListener('click', () => {
+      if (detailPayTimeouts[id]) {
+        clearTimeout(detailPayTimeouts[id]);
+        detailPayTimeouts[id] = null;
+      }
+      if (window.payClose && window.payClose[id]) {
+        const pc = window.payClose[id];
+        if (pc.timeoutId) clearTimeout(pc.timeoutId);
+        delete window.payClose[id];
+      }
+
+      const prevState = prevStatusBeforePay[id];
+      if (prevState) {
+        if (!window.localTableStatus) window.localTableStatus = {};
+        window.lastKnownStatus[id] = prevState.label;
+        if (prevState.local) {
+          window.localTableStatus[id] = { ...prevState.local };
+        } else {
+          delete window.localTableStatus[id];
+        }
+        delete prevStatusBeforePay[id];
+        mem.isClosed = false;
+        updateLeftTableStatus(id, prevState.label);
+      } else {
+        // fallback si pas trouvé
+        if (!window.localTableStatus) window.localTableStatus = {};
+        window.lastKnownStatus[id] = 'Doit payé';
+        window.localTableStatus[id] = { phase: 'PAY', until: null };
+        mem.isClosed = false;
+        updateLeftTableStatus(id, 'Doit payé');
+      }
+
+      btnCancelPay.style.display = 'none';
+      btnPay.style.display = 'block';
     });
   }
 

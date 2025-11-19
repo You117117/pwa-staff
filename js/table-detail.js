@@ -78,7 +78,7 @@
     if (ticket.time) {
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      // 🔴 Même wording que le tableau de gauche
+      // Même wording que la liste de gauche
       chipTime.textContent = `Commandé à : ${ticket.time}`;
       head.appendChild(chipTime);
     }
@@ -167,6 +167,9 @@
 
     let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
 
+    // Si la table est Vide ET que le backend a lastTicketAt = null,
+    // on considère que la session est clôturée et on ne montre plus
+    // les anciennes commandes dans le détail.
     const isCleared =
       tableMeta &&
       tableMeta.status === 'Vide' &&
@@ -183,6 +186,8 @@
       `;
       panel.appendChild(totalBoxEmpty);
     } else {
+      // 🔴 Ici on affiche TOUTES les commandes de la session (tous les tickets de la journée pour cette table)
+      // tant que la table n'est pas "cleared". Ça permet d'avoir plusieurs commandes qui s'additionnent.
       allTickets.sort((a, b) => {
         const aId = Number(a.id);
         const bId = Number(b.id);
@@ -193,24 +198,25 @@
 
       const lastTicket = allTickets[allTickets.length - 1];
 
-      info.textContent = lastTicket.id
-        ? `Dernière commande (#${lastTicket.id})`
-        : 'Dernière commande';
-      panel.appendChild(makeTicketCard(lastTicket));
+      info.textContent = `Commandes en cours (${allTickets.length})`;
 
-      const total =
-        typeof lastTicket.total === 'number'
-          ? lastTicket.total
-          : allTickets.reduce(
-              (acc, t) => (typeof t.total === 'number' ? acc + t.total : acc),
-              0
-            );
+      // Une carte par commande
+      allTickets.forEach((t) => {
+        panel.appendChild(makeTicketCard(t));
+      });
+
+      // Total = somme de toutes les commandes de la session
+      const total = allTickets.reduce(
+        (acc, t) =>
+          acc + (typeof t.total === 'number' ? t.total : 0),
+        0
+      );
 
       const totalBox = document.createElement('div');
       totalBox.style.marginTop = '8px';
       totalBox.style.marginBottom = '16px';
       totalBox.innerHTML = `
-        <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total (dernière commande)</div>
+        <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total (session)</div>
         <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(
           2
         )} €</div>
@@ -218,6 +224,7 @@
       panel.appendChild(totalBox);
     }
 
+    // Affichage du statut actuel
     const statusChip = document.createElement('div');
     statusChip.className = 'chip';
     statusChip.textContent = `Statut : ${currentStatus}`;

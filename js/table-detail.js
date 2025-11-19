@@ -78,7 +78,8 @@
     if (ticket.time) {
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      chipTime.textContent = ticket.time;
+      // 🔴 Même wording que le tableau de gauche
+      chipTime.textContent = `Commandé à : ${ticket.time}`;
       head.appendChild(chipTime);
     }
 
@@ -166,9 +167,6 @@
 
     let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
 
-    // 🔴 IMPORTANT : si la table est "Vide" ET que le backend a lastTicketAt = null,
-    // ça veut dire qu'on a "effacé" la session après paiement -> on ne doit plus
-    // afficher l'ancienne commande dans le détail.
     const isCleared =
       tableMeta &&
       tableMeta.status === 'Vide' &&
@@ -185,7 +183,6 @@
       `;
       panel.appendChild(totalBoxEmpty);
     } else {
-      // Il y a des tickets ET la table n'est pas "cleared" -> on montre la dernière commande
       allTickets.sort((a, b) => {
         const aId = Number(a.id);
         const bId = Number(b.id);
@@ -221,7 +218,6 @@
       panel.appendChild(totalBox);
     }
 
-    // Affichage du statut actuel
     const statusChip = document.createElement('div');
     statusChip.className = 'chip';
     statusChip.textContent = `Statut : ${currentStatus}`;

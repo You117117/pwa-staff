@@ -1,6 +1,4 @@
-// app.js — Staff (synchronisé, sans mémoire locale de statuts)
-// Affiche les tables en se basant UNIQUEMENT sur /tables.
-// PC et smartphone lisent exactement la même chose.
+// app.js — Staff (synchronisé, logique statuts côté backend uniquement)
 
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
@@ -53,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch {}
   }
 
-  // --- Résumé du jour (inchangé)
+  // --- Résumé du jour
 
   function renderSummary(tickets) {
     if (!summaryContainer) return;
@@ -123,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- Rendu des tables (corrigé pour statuts + boutons)
+  // --- Rendu des tables
 
   function renderTables(tables) {
     if (!tablesContainer) return;
@@ -137,8 +135,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
 
-    // On utilise l'ordre renvoyé par le backend (déjà trié par dernière activité),
-    // mais on peut quand même recalculer un timestamp si besoin.
     tables.forEach((tb) => {
       const id = normId(tb.id);
       if (!id) return;
@@ -169,12 +165,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      chipTime.textContent = hasLastTicket ? `Dernier ticket : ${lastTime}` : '—';
+      // 🔴 Texte demandé : "Commandé à : (heure)"
+      chipTime.textContent = hasLastTicket ? `Commandé à : ${lastTime}` : '—';
       head.appendChild(chipTime);
 
       card.appendChild(head);
 
-      // Actions uniquement si la table n'est pas "Vide"
       if (status !== 'Vide') {
         const actions = document.createElement('div');
         actions.className = 'card-actions';
@@ -189,10 +185,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const isPaid = status === 'Payée';
         if (isPaid) {
           btnPaid.textContent = 'Annuler paiement';
-          btnPaid.style.backgroundColor = '#f97316'; // orange
+          btnPaid.style.backgroundColor = '#f97316';
         } else {
           btnPaid.textContent = 'Paiement confirmé';
-          btnPaid.style.backgroundColor = ''; // reset
+          btnPaid.style.backgroundColor = '';
         }
 
         actions.appendChild(btnPrint);
@@ -241,7 +237,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
 
-      // Clique sur la carte → détail
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
         if (window.showTableDetail) {
@@ -270,8 +265,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const data = await res.json();
     return data || { tables: [] };
   }
-
-  // --- Refresh globaux
 
   async function refreshTables() {
     const base = getApiBase();
@@ -304,10 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Rendre refreshTables accessible côté global (pour table-detail.js)
   window.refreshTables = refreshTables;
-
-  // --- Événements UI
 
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', () => {
@@ -334,8 +324,6 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshTables();
     });
   }
-
-  // --- Init
 
   loadApiFromStorage();
   refreshTables();

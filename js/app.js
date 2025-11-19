@@ -1,4 +1,4 @@
-// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par activité locale)
+// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par activité locale, synchro multi-device)
 
 document.addEventListener('DOMContentLoaded', () => {
   // --- Sélecteurs
@@ -40,9 +40,9 @@ document.addEventListener('DOMContentLoaded', () => {
     return iso.slice(0, 10); // "YYYY-MM-DD"
   }
 
-  // --- Stores & persistance
+  // --- Stores & persistance (partagés dans l'onglet, mais on évite les overrides destructeurs)
   const localTableStatus = (window.localTableStatus = window.localTableStatus || {}); // { phase, until }
-  const tableMemory     = (window.tableMemory     = window.tableMemory     || {});   // { isClosed, ignoreIds:Set }
+  const tableMemory     = (window.tableMemory     = window.tableMemory     || {});   // laissé pour compat, mais sans isClosed/ignoreIds critiques
   const autoBuffer      = (window.autoBuffer      = window.autoBuffer      || {});   // { until, timeoutId }
   const payClose        = (window.payClose        = window.payClose        || {});   // { closeAt, timeoutId }
   const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {});   // { tid -> Set(ids) }
@@ -71,14 +71,19 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   function generateChimeWavUrl(){ const sr=44100,dur=1.4,len=Math.floor(sr*dur),data=new Float32Array(len); const seq=[{t:0.00,f:880},{t:0.16,f:1046.5},{t:0.32,f:1318.5}]; const A=0.02,D=0.20,S=0.2,R=0.35; for(let i=0;i<len;i++){ const t=i/sr; let f=seq[seq.length-1].f; for(let j=0;j<seq.length;j++){ if(t>=seq[j].t) f=seq[j].f; } let v=Math.sin(2*Math.PI*f*t); let env=0; if(t<A) env=t/A; else if(t<A+D){ const dd=(t-A)/D; env=1-dd*(1-S); } else if(t<dur-R) env=S; else { const rr=(t-(dur-R))/R; env=S*(1-rr); } const prev=i>0?data[i-1]:0; v=(v*0.7+prev*0.3)*env*0.9; data[i]=v; } const bytesPerSample=2,channels=1,blockAlign=channels*bytesPerSample,byteRate=sr*blockAlign,dataSize=len*blockAlign; const buffer=new ArrayBuffer(44+dataSize); const view=new DataView(buffer); const wStr=(o,s)=>{for(let i=0;i<s.length;i++) view.setUint8(o+i,s.charCodeAt(i));}; const w16=(o,v)=>view.setUint16(o,v,true); const w32=(o,v)=>view.setUint32(o,v,true); wStr(0,'RIFF'); w32(4,36+dataSize); wStr(8,'WAVE'); wStr(12,'fmt '); w32(16,16); w16(20,1); w16(22,channels); w32(24,sr); w32(28,byteRate); w16(32,blockAlign); w16(34,16); wStr(36,'data'); w32(40,dataSize); let off=44; for(let i=0;i<len;i++){ let s=Math.max(-1,Math.min(1,data[i])); view.setInt16(off,s*0x7fff,true); off+=2; } const blob=new Blob([view],{type:'audio/wav'}); return {url:URL.createObjectURL(blob)}; }
 
-  // --- Persistance
+  // --- Persistance (sans états destructeurs type isClosed/ignoreIds qui cassent la synchro)
   const STORAGE_KEY='staff-state-v1';
   function saveState(){
     const json={
       tableMemory: Object.fromEntries(
         Object.entries(tableMemory).map(([tid,v])=>[
           tid,
-          {isClosed:!!v.isClosed,ignoreIds:Array.from(v.ignoreIds||[])}
+          {
+            // on ne persiste plus isClosed/ignoreIds pour piloter l'affichage,
+            // on garde seulement la structure pour compat éventuelle
+            isClosed: !!v.isClosed,
+            ignoreIds: Array.from(v.ignoreIds || [])
+          }
         ])
       ),
       localTableStatus,
@@ -135,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.keys(window.lastKnownStatus || {}).forEach(k => delete window.lastKnownStatus[k]);
     Object.keys(localLastActivity).forEach(k => delete localLastActivity[k]);
 
-    // remettre tables "ouvertes" et vider les ignoreIds
+    // on ne "force" plus de fermeture locale : on laisse le backend décider
     Object.values(tableMemory).forEach(mem => {
       mem.isClosed = false;
       if (mem.ignoreIds && mem.ignoreIds.clear) mem.ignoreIds.clear();
@@ -217,30 +222,41 @@ document.addEventListener('DOMContentLoaded', () => {
     }catch{ return []; }
   }
 
-  // --- Clôture
+  // --- Clôture locale (version synchronisée : ne force plus "Vide" côté front)
   async function closeTableAndIgnoreCurrentTickets(tableId){
-    const base=getApiBase(); const id=normId(tableId);
-    window.lastKnownStatus[id]='Vide';
+    const id = normId(tableId);
+    // Avant : on mettait lastKnownStatus[id] = 'Vide', isClosed=true, ignoreIds=Set(...)
+    // => chaque appareil avait sa propre réalité.
+    // Maintenant : on se contente de nettoyer les timers locaux.
     delete localTableStatus[id];
     cancelAutoBuffer(id);
-
-    const ids=base?await fetchTicketIdsForTable(base,id):[];
-    if(!tableMemory[id]) tableMemory[id]={isClosed:true,ignoreIds:new Set()};
-    tableMemory[id].isClosed=true;
-    ids.forEach(tid=>tableMemory[id].ignoreIds.add(String(tid)));
-
     delete prevStatusBeforePay[id];
     delete payClose[id];
     saveState();
   }
+
   function scheduleCloseIn30s(id){
     id=normId(id);
     const closeAt=now()+30_000;
     if(payClose[id]&&payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
-    const timeoutId=setTimeout(()=>closeTableAndIgnoreCurrentTickets(id),30_000);
+
+    // Après 30s, on arrête juste l'état "paiement en attente" LOCAL,
+    // on ne force PAS de statut "Vide" ni d'ignoreIds,
+    // c'est le backend qui reste source de vérité.
+    const timeoutId=setTimeout(()=>{
+      if(payClose[id] && payClose[id].timeoutId){
+        clearTimeout(payClose[id].timeoutId);
+      }
+      delete payClose[id];
+      delete prevStatusBeforePay[id];
+      saveState();
+      refreshTables();
+    },30_000);
+
     payClose[id]={closeAt,timeoutId};
     saveState();
   }
+
   function cancelPayClose(id){
     id=normId(id);
     if(payClose[id]&&payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
@@ -286,13 +302,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const forced=getLocalStatus(id);
 
       let finalStatus;
-      if(forced){ finalStatus=forced; }
+      if(forced){ 
+        // Timer local (20 min / doit payer) → override OK
+        finalStatus=forced; 
+      }
       else if(prev&&prev!=='Vide'){
+        // On laisse éventuellement un override local "plus fort"
         const prevIdx=PRIORITY.indexOf(prev);
         const backIdx=PRIORITY.indexOf(backendStatus);
         finalStatus=prevIdx>backIdx?prev:backendStatus;
       }
-      else { finalStatus=backendStatus; }
+      else { 
+        finalStatus=backendStatus; 
+      }
 
       window.lastKnownStatus[id]=finalStatus;
       if(finalStatus!=='Commandée') cancelAutoBuffer(id);
@@ -310,8 +332,8 @@ document.addEventListener('DOMContentLoaded', () => {
     <span class="chip">
       ${
         localLastActivity[id] 
-        ? `Commandé à : ${formatTime(new Date(localLastActivity[id]).toISOString())}`
-        : '—'
+        ? \`Commandé à : ${formatTime(new Date(localLastActivity[id]).toISOString())}\`
+        : (last !== '--:--' ? \`Dernier ticket : ${last}\` : '—')
       }
     </span>
   </div>
@@ -384,7 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             window.lastKnownStatus[id]='Payée';
             delete localTableStatus[id];
-            scheduleCloseIn30s(id);
+            scheduleCloseIn30s(id); // ↩ ne force plus "Vide", juste l'état "paiement en attente"
             saveState();
             refreshTables();
           });
@@ -463,6 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const data=await res.json();
       const tables=data.tables||[];
 
+      // --- lecture summary pour détecter des nouvelles commandes, SANS ignoreIds/isClosed device-local
       let summaryByTable={};
       try{
         const resSum=await fetch(`${base}/summary`,{cache:'no-store'});
@@ -479,33 +502,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const hasNewById={};
       Object.keys(summaryByTable).forEach(tid=>{
-        const mem=(tableMemory[tid]=tableMemory[tid]||{isClosed:false,ignoreIds:new Set()});
         const list=summaryByTable[tid]||[];
-
         const seen=(alertedTickets[tid]=alertedTickets[tid]||new Set());
-        const activeIds=list.filter(tk=>!mem.ignoreIds.has(tk));
-        const fresh=activeIds.filter(tk=>!seen.has(tk));
-        hasNewById[tid]=activeIds.length>0;
+
+        // IDs de tickets que cet appareil n'a pas encore vu → son + update activité
+        const fresh=list.filter(tk=>!seen.has(tk));
+        hasNewById[tid]=list.length>0;
 
         if(fresh.length>0){
-          // nouvelle commande détectée -> son + activité
           chime.playRobust();
           fresh.forEach(tk=>seen.add(tk));
           localLastActivity[tid] = now();
         }
-
-        if(mem.isClosed && hasNewById[tid]) mem.isClosed=false;
       });
 
+      // tables enrichies : statut backend + "Commandée" si au moins un ticket aujourd'hui
       const enriched=tables.map(tb=>{
         const idNorm=normId(tb.id);
         if(!idNorm) return tb;
-        const mem=(tableMemory[idNorm]=tableMemory[idNorm]||{isClosed:false,ignoreIds:new Set()});
 
         let status = tb.status;
-        if(mem.isClosed){
-          status='Vide';
-        } else if((!status||status==='Vide')&&hasNewById[idNorm]){
+        if((!status||status==='Vide')&&hasNewById[idNorm]){
           status='Commandée';
         }
 

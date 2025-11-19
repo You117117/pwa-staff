@@ -1,4 +1,4 @@
-// table-detail.js — annulation restaure le statut précédent (+ bouton orange)
+// table-detail.js — détail table + paiement, synchro multi-device (pas de fermeture locale divergente)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -38,6 +38,7 @@
       if (chips.length >= 2) chips[1].textContent = newStatus;
     }
     if (window.lastKnownStatus) window.lastKnownStatus[id] = newStatus;
+    // si Vide → on ne modifie que le localTableStatus, le backend reste source de vérité
     if (newStatus === 'Vide' && window.localTableStatus) delete window.localTableStatus[id];
   }
 
@@ -55,6 +56,7 @@
     }
     return '';
   }
+
   function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.35)';
@@ -105,15 +107,12 @@
   }
 
   const detailPayTimeouts = (window.detailPayTimeouts = window.detailPayTimeouts || {});
+  const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {});
 
   async function showTableDetail(tableId) {
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
-
-    const tableMemory = (window.tableMemory = window.tableMemory || {});
-    const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {});
-    const mem = (tableMemory[id] = tableMemory[id] || { isClosed: false, ignoreIds: new Set() });
 
     panel.innerHTML = '';
     panel.style.display = 'flex';
@@ -152,33 +151,46 @@
       info.textContent = 'Erreur de chargement';
     }
 
-    const displayable = tickets.filter((t) => {
-      const tid = t.id !== undefined && t.id !== null ? String(t.id) : '';
-      return tid && !mem.ignoreIds.has(tid);
-    });
+    // --- IMPORTANT : on ne filtre plus avec des ignoreIds / isClosed locaux
+    // Pour la cohérence PC / téléphone, on lit les mêmes tickets pour tout le monde.
 
-    if (mem.isClosed || displayable.length === 0) {
+    const displayable = tickets
+      .filter((t) => t.id !== undefined && t.id !== null)
+      .sort((a, b) => {
+        const aId = Number(a.id);
+        const bId = Number(b.id);
+        if (isNaN(aId) || isNaN(bId)) return 0;
+        return aId - bId;
+      });
+
+    if (!displayable.length) {
       info.textContent = 'Aucune commande pour cette table.';
-      const totalBox = document.createElement('div');
-      totalBox.style.marginTop = '8px';
-      totalBox.style.marginBottom = '16px';
-      totalBox.innerHTML = `
+      const totalBoxEmpty = document.createElement('div');
+      totalBoxEmpty.style.marginTop = '8px';
+      totalBoxEmpty.style.marginBottom = '16px';
+      totalBoxEmpty.innerHTML = `
         <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
         <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
       `;
-      panel.appendChild(totalBox);
+      panel.appendChild(totalBoxEmpty);
       return;
     }
 
-    info.textContent = `${displayable.length} ticket(s) pour cette table`;
-    displayable.forEach((t) => panel.appendChild(makeTicketCard(t)));
+    // --- On prend UNIQUEMENT le DERNIER ticket (dernier consolidé) pour le total
+    const lastTicket = displayable[displayable.length - 1];
 
-    const total = displayable.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
+    info.textContent = `Dernière commande (#${lastTicket.id})`;
+    panel.appendChild(makeTicketCard(lastTicket));
+
+    const total = typeof lastTicket.total === 'number'
+      ? lastTicket.total
+      : displayable.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
+
     const totalBox = document.createElement('div');
     totalBox.style.marginTop = '8px';
     totalBox.style.marginBottom = '16px';
     totalBox.innerHTML = `
-      <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total</div>
+      <div style="font-size:12px;opacity:.7;margin-bottom:4px;color:#fff;">Montant total (dernière commande)</div>
       <div style="font-size:28px;font-weight:600;color:#fff;">${total.toFixed(2)} €</div>
     `;
     panel.appendChild(totalBox);
@@ -217,6 +229,7 @@
     btnPay.style.display = showCancel ? 'none' : 'block';
     btnCancelPay.style.display = showCancel ? 'block' : 'none';
 
+    // --- Bouton "Imprimer maintenant"
     btnPrint.addEventListener('click', async () => {
       try {
         await fetch(`${base}/print`, {
@@ -225,10 +238,15 @@
           body: JSON.stringify({ table: id }),
         });
       } catch {}
-      mem.isClosed = false;
+      if (window.autoBuffer && window.autoBuffer[id]) {
+        const b = window.autoBuffer[id];
+        if (b.timeoutId) clearTimeout(b.timeoutId);
+        delete window.autoBuffer[id];
+      }
       updateLeftTableStatus(id, 'En préparation');
     });
 
+    // --- Bouton "Paiement confirmé"
     btnPay.addEventListener('click', async () => {
       try {
         await fetch(`${base}/confirm`, {
@@ -238,12 +256,12 @@
         });
       } catch {}
 
-      // mémoriser l'état précédent côté droit également
+      // mémoriser l'état précédent pour annulation éventuelle
       const prevLabel = (window.lastKnownStatus && window.lastKnownStatus[id]) || 'Commandée';
       const prevLocal = window.localTableStatus && window.localTableStatus[id] ? { ...window.localTableStatus[id] } : null;
       prevStatusBeforePay[id] = { label: prevLabel, local: prevLocal };
 
-      // figer en Payée
+      // on fixe en Payée côté gauche (backend mettra aussi à jour /tables)
       if (window.autoBuffer && window.autoBuffer[id]) {
         const b = window.autoBuffer[id];
         if (b.timeoutId) clearTimeout(b.timeoutId);
@@ -257,26 +275,17 @@
       updateLeftTableStatus(id, 'Payée');
 
       if (detailPayTimeouts[id]) clearTimeout(detailPayTimeouts[id]);
-      detailPayTimeouts[id] = setTimeout(async () => {
-        updateLeftTableStatus(id, 'Vide');
-        try {
-          const data = await fetchSummary(base);
-          (data.tickets || [])
-            .filter((t) => normId(t.table) === id)
-            .forEach((t) => {
-              if (t.id !== undefined && t.id !== null) mem.ignoreIds.add(String(t.id));
-            });
-        } catch {}
-        mem.isClosed = true;
-        // purge état précédent puisque la table est clôturée
-        if (window.prevStatusBeforePay) delete window.prevStatusBeforePay[id];
+      detailPayTimeouts[id] = setTimeout(() => {
+        // Après 30s, on arrête juste le "pending" local.
         detailPayTimeouts[id] = null;
+        // On NE force PAS "Vide" ici → c'est le backend qui décide.
       }, 30 * 1000);
 
       btnPay.style.display = 'none';
       btnCancelPay.style.display = 'block';
     });
 
+    // --- Bouton "Annuler le paiement"
     btnCancelPay.addEventListener('click', () => {
       if (detailPayTimeouts[id]) {
         clearTimeout(detailPayTimeouts[id]);
@@ -298,14 +307,12 @@
           delete window.localTableStatus[id];
         }
         delete prevStatusBeforePay[id];
-        mem.isClosed = false;
         updateLeftTableStatus(id, prevState.label);
       } else {
         // fallback si pas trouvé
         if (!window.localTableStatus) window.localTableStatus = {};
         window.lastKnownStatus[id] = 'Doit payé';
         window.localTableStatus[id] = { phase: 'PAY', until: null };
-        mem.isClosed = false;
         updateLeftTableStatus(id, 'Doit payé');
       }
 

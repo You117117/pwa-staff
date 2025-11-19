@@ -166,7 +166,15 @@
 
     let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
 
-    if (!allTickets.length) {
+    // 🔴 IMPORTANT : si la table est "Vide" ET que le backend a lastTicketAt = null,
+    // ça veut dire qu'on a "effacé" la session après paiement -> on ne doit plus
+    // afficher l'ancienne commande dans le détail.
+    const isCleared =
+      tableMeta &&
+      tableMeta.status === 'Vide' &&
+      (tableMeta.lastTicketAt === null || tableMeta.lastTicketAt === undefined);
+
+    if (!allTickets.length || isCleared) {
       info.textContent = 'Aucune commande pour cette table.';
       const totalBoxEmpty = document.createElement('div');
       totalBoxEmpty.style.marginTop = '8px';
@@ -176,9 +184,8 @@
         <div style="font-size:28px;font-weight:600;color:#fff;">0.00 €</div>
       `;
       panel.appendChild(totalBoxEmpty);
-
-      // même si aucun ticket, on laisse les boutons en bas pour cohérence
     } else {
+      // Il y a des tickets ET la table n'est pas "cleared" -> on montre la dernière commande
       allTickets.sort((a, b) => {
         const aId = Number(a.id);
         const bId = Number(b.id);
@@ -264,7 +271,6 @@
         if (window.refreshTables) {
           window.refreshTables();
         }
-        // on recharge le panneau pour refléter le nouveau statut si besoin
         showTableDetail(id);
       }
     });
@@ -284,7 +290,6 @@
         if (window.refreshTables) {
           window.refreshTables();
         }
-        // on recharge le panneau avec l'état à jour
         showTableDetail(id);
       }
     });

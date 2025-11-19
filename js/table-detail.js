@@ -1,4 +1,4 @@
-// table-detail.js — détail table + paiement, synchro multi-device (pas de fermeture locale divergente)
+// table-detail.js — détail table synchronisé (aucune mémoire locale de statuts / tickets)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -21,30 +21,25 @@
     document.body.appendChild(panel);
   }
 
-  const normId = (id) => (id || '').trim().toUpperCase();
+  const normId = (id) => (id || '').toString().trim().toUpperCase();
+
   function getApiBase() {
     const input = document.querySelector('#apiUrl');
     return input ? input.value.trim().replace(/\/+$/, '') : '';
   }
+
   function closePanel() {
     panel.style.display = 'none';
     panel.innerHTML = '';
   }
-  function updateLeftTableStatus(tableId, newStatus) {
-    const id = normId(tableId);
-    const card = document.querySelector(`.table[data-table="${id}"]`);
-    if (card) {
-      const chips = card.querySelectorAll('.card-head .chip');
-      if (chips.length >= 2) chips[1].textContent = newStatus;
-    }
-    if (window.lastKnownStatus) window.lastKnownStatus[id] = newStatus;
-    // si Vide → on ne modifie que le localTableStatus, le backend reste source de vérité
-    if (newStatus === 'Vide' && window.localTableStatus) delete window.localTableStatus[id];
-  }
 
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
-    const src = Array.isArray(ticket.items) ? ticket.items : Array.isArray(ticket.lines) ? ticket.lines : null;
+    const src = Array.isArray(ticket.items)
+      ? ticket.items
+      : Array.isArray(ticket.lines)
+      ? ticket.lines
+      : null;
     if (src) {
       return src
         .map((it) => {
@@ -106,9 +101,6 @@
     return await res.json();
   }
 
-  const detailPayTimeouts = (window.detailPayTimeouts = window.detailPayTimeouts || {});
-  const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {});
-
   async function showTableDetail(tableId) {
     const base = getApiBase();
     if (!base) return;
@@ -147,23 +139,13 @@
     try {
       const data = await fetchSummary(base);
       tickets = (data.tickets || []).filter((t) => normId(t.table) === id);
-    } catch {
+    } catch (err) {
+      console.error('Erreur fetch summary', err);
       info.textContent = 'Erreur de chargement';
+      return;
     }
 
-    // --- IMPORTANT : on ne filtre plus avec des ignoreIds / isClosed locaux
-    // Pour la cohérence PC / téléphone, on lit les mêmes tickets pour tout le monde.
-
-    const displayable = tickets
-      .filter((t) => t.id !== undefined && t.id !== null)
-      .sort((a, b) => {
-        const aId = Number(a.id);
-        const bId = Number(b.id);
-        if (isNaN(aId) || isNaN(bId)) return 0;
-        return aId - bId;
-      });
-
-    if (!displayable.length) {
+    if (!tickets.length) {
       info.textContent = 'Aucune commande pour cette table.';
       const totalBoxEmpty = document.createElement('div');
       totalBoxEmpty.style.marginTop = '8px';
@@ -176,15 +158,24 @@
       return;
     }
 
-    // --- On prend UNIQUEMENT le DERNIER ticket (dernier consolidé) pour le total
-    const lastTicket = displayable[displayable.length - 1];
+    // On trie les tickets par id croissant ou temps croissant
+    tickets.sort((a, b) => {
+      const aId = Number(a.id);
+      const bId = Number(b.id);
+      if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;
+      if (a.time && b.time) return a.time.localeCompare(b.time);
+      return 0;
+    });
 
-    info.textContent = `Dernière commande (#${lastTicket.id})`;
+    const lastTicket = tickets[tickets.length - 1];
+
+    info.textContent = lastTicket.id ? `Dernière commande (#${lastTicket.id})` : 'Dernière commande';
     panel.appendChild(makeTicketCard(lastTicket));
 
-    const total = typeof lastTicket.total === 'number'
-      ? lastTicket.total
-      : displayable.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
+    const total =
+      typeof lastTicket.total === 'number'
+        ? lastTicket.total
+        : tickets.reduce((acc, t) => (typeof t.total === 'number' ? acc + t.total : acc), 0);
 
     const totalBox = document.createElement('div');
     totalBox.style.marginTop = '8px';
@@ -210,26 +201,10 @@
     btnPay.className = 'btn btn-primary';
     btnPay.style.width = '100%';
 
-    const btnCancelPay = document.createElement('button');
-    btnCancelPay.textContent = 'Annuler le paiement';
-    btnCancelPay.className = 'btn btn-warning';
-    btnCancelPay.style.width = '100%';
-    btnCancelPay.style.background = '#f59e0b';
-    btnCancelPay.style.borderColor = '#f59e0b';
-
     actions.appendChild(btnPrint);
     actions.appendChild(btnPay);
-    actions.appendChild(btnCancelPay);
     panel.appendChild(actions);
 
-    const paymentPendingLeft = !!(window.payClose && window.payClose[id]);
-    const paymentPendingHere = !!detailPayTimeouts[id];
-    const showCancel = paymentPendingLeft || paymentPendingHere;
-
-    btnPay.style.display = showCancel ? 'none' : 'block';
-    btnCancelPay.style.display = showCancel ? 'block' : 'none';
-
-    // --- Bouton "Imprimer maintenant"
     btnPrint.addEventListener('click', async () => {
       try {
         await fetch(`${base}/print`, {
@@ -237,16 +212,11 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch {}
-      if (window.autoBuffer && window.autoBuffer[id]) {
-        const b = window.autoBuffer[id];
-        if (b.timeoutId) clearTimeout(b.timeoutId);
-        delete window.autoBuffer[id];
+      } catch (err) {
+        console.error('Erreur /print (détail)', err);
       }
-      updateLeftTableStatus(id, 'En préparation');
     });
 
-    // --- Bouton "Paiement confirmé"
     btnPay.addEventListener('click', async () => {
       try {
         await fetch(`${base}/confirm`, {
@@ -254,70 +224,15 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
         });
-      } catch {}
-
-      // mémoriser l'état précédent pour annulation éventuelle
-      const prevLabel = (window.lastKnownStatus && window.lastKnownStatus[id]) || 'Commandée';
-      const prevLocal = window.localTableStatus && window.localTableStatus[id] ? { ...window.localTableStatus[id] } : null;
-      prevStatusBeforePay[id] = { label: prevLabel, local: prevLocal };
-
-      // on fixe en Payée côté gauche (backend mettra aussi à jour /tables)
-      if (window.autoBuffer && window.autoBuffer[id]) {
-        const b = window.autoBuffer[id];
-        if (b.timeoutId) clearTimeout(b.timeoutId);
-        delete window.autoBuffer[id];
-      }
-      if (window.localTableStatus && window.localTableStatus[id]) {
-        delete window.localTableStatus[id];
-      }
-      if (window.lastKnownStatus) window.lastKnownStatus[id] = 'Payée';
-
-      updateLeftTableStatus(id, 'Payée');
-
-      if (detailPayTimeouts[id]) clearTimeout(detailPayTimeouts[id]);
-      detailPayTimeouts[id] = setTimeout(() => {
-        // Après 30s, on arrête juste le "pending" local.
-        detailPayTimeouts[id] = null;
-        // On NE force PAS "Vide" ici → c'est le backend qui décide.
-      }, 30 * 1000);
-
-      btnPay.style.display = 'none';
-      btnCancelPay.style.display = 'block';
-    });
-
-    // --- Bouton "Annuler le paiement"
-    btnCancelPay.addEventListener('click', () => {
-      if (detailPayTimeouts[id]) {
-        clearTimeout(detailPayTimeouts[id]);
-        detailPayTimeouts[id] = null;
-      }
-      if (window.payClose && window.payClose[id]) {
-        const pc = window.payClose[id];
-        if (pc.timeoutId) clearTimeout(pc.timeoutId);
-        delete window.payClose[id];
-      }
-
-      const prevState = prevStatusBeforePay[id];
-      if (prevState) {
-        if (!window.localTableStatus) window.localTableStatus = {};
-        window.lastKnownStatus[id] = prevState.label;
-        if (prevState.local) {
-          window.localTableStatus[id] = { ...prevState.local };
-        } else {
-          delete window.localTableStatus[id];
+      } catch (err) {
+        console.error('Erreur /confirm (détail)', err);
+      } finally {
+        // on referme et on laisse la liste principale se resynchroniser avec /tables
+        closePanel();
+        if (window.refreshTables) {
+          window.refreshTables();
         }
-        delete prevStatusBeforePay[id];
-        updateLeftTableStatus(id, prevState.label);
-      } else {
-        // fallback si pas trouvé
-        if (!window.localTableStatus) window.localTableStatus = {};
-        window.lastKnownStatus[id] = 'Doit payé';
-        window.localTableStatus[id] = { phase: 'PAY', until: null };
-        updateLeftTableStatus(id, 'Doit payé');
       }
-
-      btnCancelPay.style.display = 'none';
-      btnPay.style.display = 'block';
     });
   }
 

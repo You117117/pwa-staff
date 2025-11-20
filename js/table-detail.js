@@ -21,6 +21,17 @@
     document.body.appendChild(panel);
   }
 
+  // Flag pour éviter que le clic qui OUVRE le panel le ferme immédiatement
+  window.__suppressOutsideClose = false;
+
+  // Fermeture par clic en dehors du panneau
+  document.addEventListener('click', (e) => {
+    if (panel.style.display === 'none') return;
+    if (window.__suppressOutsideClose) return;
+    if (panel.contains(e.target)) return;
+    closePanel();
+  });
+
   const normId = (id) => (id || '').toString().trim().toUpperCase();
 
   function getApiBase() {
@@ -84,11 +95,14 @@
       head.appendChild(chipTime);
     }
 
-    // 🔹 Montant de CHAQUE ticket
+    // Montant de CHAQUE ticket — plus gros et gras
     if (typeof ticket.total === 'number') {
       const chipTotal = document.createElement('span');
       chipTotal.className = 'chip';
       chipTotal.textContent = `${ticket.total.toFixed(2)} €`;
+      chipTotal.style.fontSize = '15px';
+      chipTotal.style.fontWeight = '700';
+      chipTotal.style.letterSpacing = '0.02em';
       head.appendChild(chipTotal);
     }
 
@@ -98,11 +112,11 @@
     if (bodyText) {
       const body = document.createElement('div');
       body.textContent = bodyText;
-      body.style.fontSize = '14px';      // plus grand
-      body.style.lineHeight = '1.4';     // plus lisible
+      body.style.fontSize = '14px';
+      body.style.lineHeight = '1.4';
       body.style.opacity = '0.98';
       body.style.color = '#f9fafb';
-      body.style.fontWeight = '500';     // un peu plus gras
+      body.style.fontWeight = '500';
       card.appendChild(body);
     }
 
@@ -126,6 +140,12 @@
 
     window.__currentDetailTableId = id;
 
+    // Empêche le clic qui ouvre le panel de le fermer immédiatement
+    window.__suppressOutsideClose = true;
+    setTimeout(() => {
+      window.__suppressOutsideClose = false;
+    }, 0);
+
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
@@ -145,7 +165,10 @@
     btnClose.textContent = 'Fermer';
     btnClose.className = 'btn';
     btnClose.style.padding = '4px 10px';
-    btnClose.addEventListener('click', closePanel);
+    btnClose.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closePanel();
+    });
 
     head.appendChild(title);
     head.appendChild(btnClose);
@@ -181,12 +204,10 @@
 
     let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
 
-    const isCleared =
-      tableMeta &&
-      tableMeta.status === 'Vide' &&
-      (tableMeta.lastTicketAt === null || tableMeta.lastTicketAt === undefined);
+    const cleared = !!(tableMeta && tableMeta.cleared);
+    const closedManually = !!(tableMeta && tableMeta.closedManually);
 
-    if (!allTickets.length || isCleared) {
+    if (!allTickets.length || cleared) {
       info.textContent = 'Aucune commande pour cette table.';
       const totalBoxEmpty = document.createElement('div');
       totalBoxEmpty.style.marginTop = '10px';
@@ -261,19 +282,39 @@
         btnPay.style.backgroundColor = '';
       }
     }
-
     applyStatusToPayButton();
 
     actions.appendChild(btnPrint);
     actions.appendChild(btnPay);
+
+    // 🔹 Bouton Clôturer / Annuler clôture
+    const btnCloseTable = document.createElement('button');
+    btnCloseTable.style.width = '100%';
+    btnCloseTable.style.fontSize = '14px';
+    btnCloseTable.className = 'btn btn-primary';
+
+    function applyCloseButtonState() {
+      if (closedManually) {
+        btnCloseTable.textContent = 'Annuler clôture';
+        btnCloseTable.style.backgroundColor = '#f97316';
+      } else {
+        btnCloseTable.textContent = 'Clôturer la table';
+        btnCloseTable.style.backgroundColor = '#4b5563';
+      }
+    }
+    applyCloseButtonState();
+
+    actions.appendChild(btnCloseTable);
+
     panel.appendChild(actions);
 
-    btnPrint.addEventListener('click', async () => {
+    btnPrint.addEventListener('click', async (e) => {
+      e.stopPropagation();
       try {
         await fetch(`${base}/print`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ table: id }),
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: id }),
         });
       } catch (err) {
         console.error('Erreur /print (détail)', err);
@@ -285,7 +326,8 @@
       }
     });
 
-    btnPay.addEventListener('click', async () => {
+    btnPay.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const endpoint =
         currentStatus === 'Payée' ? '/cancel-confirm' : '/confirm';
       try {
@@ -296,6 +338,25 @@
         });
       } catch (err) {
         console.error('Erreur paiement (détail)', err);
+      } finally {
+        if (window.refreshTables) {
+          window.refreshTables();
+        }
+        showTableDetail(id);
+      }
+    });
+
+    btnCloseTable.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const endpoint = closedManually ? '/cancel-close' : '/close-table';
+      try {
+        await fetch(`${base}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: id }),
+        });
+      } catch (err) {
+        console.error('Erreur clôture (détail)', err);
       } finally {
         if (window.refreshTables) {
           window.refreshTables();

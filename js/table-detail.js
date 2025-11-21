@@ -195,16 +195,33 @@
       return;
     }
 
-    const allTickets = (summaryData.tickets || []).filter(
-      (t) => normId(t.table) === id
-    );
     const tableMeta = (tablesData.tables || []).find(
       (t) => normId(t.id) === id
     );
 
     let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
-
     const cleared = !!(tableMeta && tableMeta.cleared);
+    const sessionStartAt = tableMeta && tableMeta.sessionStartAt
+      ? tableMeta.sessionStartAt
+      : null;
+
+    // 🔴 On prend tous les tickets du résumé pour cette table...
+    let allTickets = (summaryData.tickets || []).filter(
+      (t) => normId(t.table) === id
+    );
+
+    // ... mais on ne garde que ceux de la SESSION en cours (>= sessionStartAt)
+    if (sessionStartAt) {
+      const threshold = new Date(sessionStartAt).getTime();
+      if (!Number.isNaN(threshold)) {
+        allTickets = allTickets.filter((t) => {
+          if (!t.createdAt) return true; // fallback (ne devrait pas arriver)
+          const ts = new Date(t.createdAt).getTime();
+          if (Number.isNaN(ts)) return true;
+          return ts >= threshold;
+        });
+      }
+    }
 
     if (!allTickets.length || cleared) {
       info.textContent = 'Aucune commande pour cette table.';
@@ -217,8 +234,12 @@
       `;
       panel.appendChild(totalBoxEmpty);
     } else {
-      // Session active : on montre toutes les commandes
+      // Session active : on montre toutes les commandes de la session
       allTickets.sort((a, b) => {
+        const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
+        const bTs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
+        if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return aTs - bTs;
+
         const aId = Number(a.id);
         const bId = Number(b.id);
         if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;

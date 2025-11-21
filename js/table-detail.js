@@ -1,606 +1,633 @@
-// table-detail.js — détail table synchronisé (sessions, paiement 5s, clôture, synchro avec liste de gauche)
+// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par activité locale)
 
-(function () {
-  let panel = document.querySelector('#tableDetailPanel');
-  if (!panel) {
-    panel = document.createElement('div');
-    panel.id = 'tableDetailPanel';
-    panel.style.position = 'fixed';
-    panel.style.top = '0';
-    panel.style.right = '0';
-    panel.style.width = '380px';
-    panel.style.height = '100vh';
-    panel.style.background = '#0f172a';
-    panel.style.borderLeft = '1px solid rgba(255,255,255,0.06)';
-    panel.style.zIndex = '500';
-    panel.style.display = 'none';
-    panel.style.flexDirection = 'column';
-    panel.style.padding = '18px';
-    panel.style.overflowY = 'auto';
-    panel.style.gap = '14px';
-    document.body.appendChild(panel);
-  }
+document.addEventListener('DOMContentLoaded', () => {
+  // --- Sélecteurs
+  const apiInput = document.querySelector('#apiUrl');
+  const tablesContainer = document.querySelector('#tables');
+  const tablesEmpty = document.querySelector('#tablesEmpty');
+  const filterSelect = document.querySelector('#filterTables');
+  const summaryContainer = document.querySelector('#summary');
+  const summaryEmpty = document.querySelector('#summaryEmpty');
 
-  // Flag pour éviter que le clic qui OUVRE le panel le ferme immédiatement
-  window.__suppressOutsideClose = false;
+  // --- Constantes
+  const REFRESH_MS = 5000;
+  const PREP_MS = 20 * 60 * 1000;
+  const BUFFER_MS = 120 * 1000;
+  const RESET_HOUR = 3; // heure de "fin de journée" (03:00)
 
-  // Map globale pour contrôler le détail depuis l'extérieur (clic bouton gauche)
-  window.__detailControllers = window.__detailControllers || {};
+  // --- Utils
+  const normId = (id) => (id || '').trim().toUpperCase();
+  const now = () => Date.now();
+  const getApiBase = () => (apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '');
+  const formatTime = (dateString) => {
+    if (!dateString) return '--:--';
+    const d = new Date(dateString);
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
 
-  // Fermeture par clic en dehors du panneau
-  document.addEventListener('click', (e) => {
-    if (panel.style.display === 'none') return;
-    if (window.__suppressOutsideClose) return;
-    if (panel.contains(e.target)) return;
-    closePanel();
-  });
-
-  const normId = (id) => (id || '').toString().trim().toUpperCase();
-
-  function getApiBase() {
-    const input = document.querySelector('#apiUrl');
-    return input ? input.value.trim().replace(/\/+$/, '') : '';
-  }
-
-  function closePanel() {
-    panel.style.display = 'none';
-    panel.innerHTML = '';
-    window.__currentDetailTableId = null;
-  }
-
-  function buildBodyText(ticket) {
-    if (ticket.label) return ticket.label;
-    const src = Array.isArray(ticket.items)
-      ? ticket.items
-      : Array.isArray(ticket.lines)
-      ? ticket.lines
-      : null;
-    if (src) {
-      return src
-        .map((it) => {
-          const qty = it.qty || it.quantity || 1;
-          const name = it.label || it.name || it.title || 'article';
-          return qty + '× ' + name;
-        })
-        .join(', ');
+  // --- "Business day" (gestion de la journée de service)
+  function getBusinessDayKey() {
+    // Clé de type "YYYY-MM-DD" mais avec coupure à RESET_HOUR
+    const d = new Date();
+    const h = d.getHours();
+    if (h < RESET_HOUR) {
+      // Avant RESET_HOUR, on considère qu'on est encore sur la journée d'hier
+      d.setDate(d.getDate() - 1);
     }
-    return '';
+    const iso = d.toISOString(); // ex: 2025-11-13T...
+    return iso.slice(0, 10); // "YYYY-MM-DD"
   }
 
-  function makeTicketCard(ticket) {
-    const card = document.createElement('div');
-    card.style.background = 'rgba(15,23,42,0.6)';
-    card.style.border = '1px solid rgba(148,163,184,0.3)';
-    card.style.borderRadius = '12px';
-    card.style.padding = '12px 14px';
-    card.style.marginBottom = '10px';
-    card.style.display = 'flex';
-    card.style.flexDirection = 'column';
-    card.style.gap = '8px';
-    card.style.color = '#e5e7eb';
-    card.style.boxShadow = '0 8px 20px rgba(15,23,42,0.45)';
+  // --- Stores & persistance
+  const localTableStatus = (window.localTableStatus = window.localTableStatus || {}); // { phase, until }
+  const tableMemory     = (window.tableMemory     = window.tableMemory     || {});   // { isClosed, ignoreIds:Set }
+  const autoBuffer      = (window.autoBuffer      = window.autoBuffer      || {});   // { until, timeoutId }
+  const payClose        = (window.payClose        = window.payClose        || {});   // { closeAt, displayUntil, timeoutId }
+  const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {});   // { tid -> Set(ids) }
+  const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {}); // { tableId: {label, local} }
+  const localLastActivity   = (window.localLastActivity   = window.localLastActivity   || {}); // { tableId: timestamp }
 
-    const head = document.createElement('div');
-    head.style.display = 'flex';
-    head.style.gap = '8px';
-    head.style.alignItems = 'center';
-    head.style.flexWrap = 'wrap';
+  if (!window.lastKnownStatus) window.lastKnownStatus = {};
+  if (!window.businessDayKey) window.businessDayKey = null;
 
-    const chipId = document.createElement('span');
-    chipId.className = 'chip';
-    chipId.textContent = ticket.id ? 'Ticket #' + ticket.id : 'Ticket';
-    head.appendChild(chipId);
+  // --- Chime robuste
+  const chime = {
+    ctx: null,
+    lastPlayAt: 0,
+    unlockTimer: null,
+    el: null,
+    wavUrl: null,
+    retryTimer: null,
+    retryUntil: 0,
+    ensureCtx() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!this.ctx && AC) this.ctx = new AC();
+    },
+    startAutoUnlock() {
+      this.ensureCtx();
+      if (!this.ctx) return;
+      const tryResume = () => {
+        if (!this.ctx) return;
+        if (this.ctx.state === 'running') return;
+        this.ctx.resume().catch(() => {});
+      };
+      if (this.unlockTimer) clearInterval(this.unlockTimer);
+      this.unlockTimer = setInterval(tryResume, 1500);
+      document.addEventListener('click', tryResume, { once: true });
+      document.addEventListener('touchstart', tryResume, { once: true });
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') tryResume();
+      });
+      tryResume();
+    },
+    webAudioOk() {
+      return !!(this.ctx && this.ctx.state === 'running');
+    },
+    playWebAudio() {
+      const tnow = now();
+      if (tnow - this.lastPlayAt < 500) return false;
+      this.ensureCtx();
+      const ctx = this.ctx;
+      if (!ctx) return false;
+      if (ctx.state !== 'running') {
+        ctx.resume().catch(() => {});
+        if (ctx.state !== 'running') return false;
+      }
+      const t0 = ctx.currentTime;
+      const g = ctx.createGain();
+      g.gain.value = 0.0001;
+      const notes = [
+        { t: 0.0, f: 880 },
+        { t: 0.18, f: 1108 },
+        { t: 0.36, f: 1319 },
+      ];
+      const oscs = notes.map((n) => {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(n.f, t0 + n.t);
+        o.connect(g);
+        return o;
+      });
+      g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.6, t0 + 0.05);
+      g.gain.exponentialRampToValueAtTime(0.05, t0 + 0.4);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.2);
+      oscs.forEach((o, i) => {
+        o.start(t0 + notes[i].t);
+        o.stop(t0 + 1.25);
+      });
+      this.lastPlayAt = tnow;
+      return true;
+    },
+    ensureAudioElement() {
+      if (this.el) return;
+      const audio = document.createElement('audio');
+      audio.style.display = 'none';
+      document.body.appendChild(audio);
+      this.el = audio;
+      const wavData =
+        'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+      this.wavUrl = wavData;
+      audio.src = wavData;
+    },
+    async playHtmlAudio() {
+      const tnow = now();
+      if (tnow - this.lastPlayAt < 500) return false;
+      this.ensureAudioElement();
+      if (!this.el) return false;
+      try {
+        this.el.currentTime = 0;
+        await this.el.play();
+        this.lastPlayAt = tnow;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async play() {
+      if (this.webAudioOk()) {
+        const ok = this.playWebAudio();
+        if (ok) return;
+      }
+      await this.playHtmlAudio();
+    },
+  };
 
-    if (ticket.time) {
-      const chipTime = document.createElement('span');
-      chipTime.className = 'chip';
-      chipTime.textContent = 'Commandé à : ' + ticket.time;
-      head.appendChild(chipTime);
+  // --- Persistance localStorage
+  const STORAGE_KEY = 'staff_state_v3';
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed.lastKnownStatus) {
+        Object.assign(window.lastKnownStatus, parsed.lastKnownStatus);
+      }
+      if (parsed.tableMemory) {
+        Object.assign(tableMemory, parsed.tableMemory);
+        Object.keys(tableMemory).forEach((k) => {
+          if (tableMemory[k].ignoreIds && !(tableMemory[k].ignoreIds instanceof Set)) {
+            tableMemory[k].ignoreIds = new Set(tableMemory[k].ignoreIds);
+          }
+        });
+      }
+      if (parsed.autoBuffer) Object.assign(autoBuffer, parsed.autoBuffer);
+      if (parsed.localTableStatus) Object.assign(localTableStatus, parsed.localTableStatus);
+      if (parsed.localLastActivity) Object.assign(localLastActivity, parsed.localLastActivity);
+      if (parsed.payClose) Object.assign(payClose, parsed.payClose);
+      if (parsed.prevStatusBeforePay) Object.assign(prevStatusBeforePay, parsed.prevStatusBeforePay);
+      if (parsed.businessDayKey) window.businessDayKey = parsed.businessDayKey;
+    } catch {}
+  }
+  function saveState() {
+    try {
+      const ser = {
+        lastKnownStatus: window.lastKnownStatus,
+        tableMemory: Object.fromEntries(
+          Object.entries(tableMemory).map(([k, v]) => [
+            k,
+            {
+              ...v,
+              ignoreIds: v.ignoreIds ? Array.from(v.ignoreIds) : [],
+            },
+          ])
+        ),
+        autoBuffer,
+        localTableStatus,
+        localLastActivity,
+        payClose,
+        prevStatusBeforePay,
+        businessDayKey: window.businessDayKey,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(ser));
+    } catch {}
+  }
+
+  loadState();
+
+  // --- Auto reset business day si on a changé de date
+  function ensureBusinessDay() {
+    const currentKey = getBusinessDayKey();
+    if (window.businessDayKey && window.businessDayKey !== currentKey) {
+      Object.keys(tableMemory).forEach((k) => {
+        tableMemory[k].isClosed = false;
+        if (tableMemory[k].ignoreIds) tableMemory[k].ignoreIds.clear();
+      });
+      Object.keys(autoBuffer).forEach((k) => {
+        if (autoBuffer[k].timeoutId) clearTimeout(autoBuffer[k].timeoutId);
+      });
+      Object.keys(payClose).forEach((k) => {
+        if (payClose[k].timeoutId) clearTimeout(payClose[k].timeoutId);
+      });
+      Object.keys(localTableStatus).forEach((k) => delete localTableStatus[k]);
+      Object.keys(prevStatusBeforePay).forEach((k) => delete prevStatusBeforePay[k]);
+      Object.keys(localLastActivity).forEach((k) => delete localLastActivity[k]);
+      Object.keys(window.lastKnownStatus).forEach((k) => delete window.lastKnownStatus[k]);
+      saveState();
+    }
+    window.businessDayKey = currentKey;
+  }
+
+  // --- Gestion buffer auto (120s) avant "En préparation"
+  function ensureAutoBuffer(id, createdAt) {
+    id = normId(id);
+    const tCreated = new Date(createdAt).getTime();
+    const target = tCreated + BUFFER_MS;
+    const nowTs = now();
+
+    if (nowTs >= target) {
+      setPreparationFor20min(id);
+      return;
     }
 
-    if (typeof ticket.total === 'number') {
-      const chipTotal = document.createElement('span');
-      chipTotal.className = 'chip';
-      chipTotal.textContent = ticket.total.toFixed(2) + ' €';
-      chipTotal.style.fontSize = '15px';
-      chipTotal.style.fontWeight = '700';
-      chipTotal.style.letterSpacing = '0.02em';
-      head.appendChild(chipTotal);
+    if (autoBuffer[id] && autoBuffer[id].timeoutId) clearTimeout(autoBuffer[id].timeoutId);
+    const delay = target - nowTs;
+    const timeoutId = setTimeout(() => setPreparationFor20min(id), delay);
+    autoBuffer[id] = { until: target, timeoutId };
+    saveState();
+  }
+
+  function cancelAutoBuffer(id) {
+    id = normId(id);
+    if (autoBuffer[id] && autoBuffer[id].timeoutId) clearTimeout(autoBuffer[id].timeoutId);
+    delete autoBuffer[id];
+    saveState();
+  }
+
+  function setPreparationFor20min(id) {
+    id = normId(id);
+    const until = now() + PREP_MS;
+    localTableStatus[id] = { phase: 'PREP', until };
+    saveState();
+  }
+
+  function getLocalStatus(id) {
+    id = normId(id);
+    const st = localTableStatus[id];
+    if (!st) return null;
+    const tnow = now();
+    if (st.phase === 'PREP') {
+      if (tnow >= st.until) {
+        localTableStatus[id] = { phase: 'PAY', until: null };
+        saveState();
+        return { phase: 'PAY', until: null };
+      }
+      return st;
     }
-
-    card.appendChild(head);
-
-    const bodyText = buildBodyText(ticket);
-    if (bodyText) {
-      const body = document.createElement('div');
-      body.textContent = bodyText;
-      body.style.fontSize = '14px';
-      body.style.lineHeight = '1.4';
-      body.style.opacity = '0.98';
-      body.style.color = '#f9fafb';
-      body.style.fontWeight = '500';
-      card.appendChild(body);
+    if (st.phase === 'PAY') {
+      return st;
     }
-
-    return card;
+    return null;
   }
 
-  async function fetchSummary(base) {
-    const res = await fetch(base + '/summary', { cache: 'no-store' });
-    return await res.json();
+  // --- Fermeture table + ignore des tickets courants (ancienne logique locale)
+  async function fetchTicketIdsForTable(base, tableId) {
+    try {
+      const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      if (!data || !Array.isArray(data.tickets)) return [];
+      const idNorm = normId(tableId);
+      return data.tickets.filter((t) => normId(t.table) === idNorm).map((t) => t.id);
+    } catch {
+      return [];
+    }
   }
 
-  async function fetchTables(base) {
-    const res = await fetch(base + '/tables', { cache: 'no-store' });
-    return await res.json();
+  async function closeTableAndIgnoreCurrentTickets(id) {
+    id = normId(id);
+    const base = getApiBase();
+    const ids = base ? await fetchTicketIdsForTable(base, id) : [];
+    if (!tableMemory[id]) tableMemory[id] = { isClosed: true, ignoreIds: new Set() };
+    tableMemory[id].isClosed = true;
+    ids.forEach((tid) => tableMemory[id].ignoreIds.add(String(tid)));
+
+    delete prevStatusBeforePay[id];
+    delete payClose[id];
+    saveState();
   }
 
-  async function showTableDetail(tableId, statusHint) {
+  function scheduleCloseIn30s(id) {
+    id = normId(id);
+    const closeAt = now() + 30_000; // fermeture logique locale (inchangée)
+    const displayUntil = now() + 5_000; // compte à rebours visuel 5s pour le bouton de gauche
+    if (payClose[id] && payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
+    const timeoutId = setTimeout(() => closeTableAndIgnoreCurrentTickets(id), 30_000);
+    payClose[id] = { closeAt, displayUntil, timeoutId };
+    saveState();
+  }
+
+  function cancelPayClose(id) {
+    id = normId(id);
+    if (payClose[id] && payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
+    delete payClose[id];
+    saveState();
+  }
+  window.cancelPayClose = cancelPayClose;
+
+  // --- Rendu LISTE TABLES (TRI PAR localLastActivity)
+  function renderTables(tables) {
+    if (!tablesContainer) return;
+    tablesContainer.innerHTML = '';
+
+    if (!tables || !tables.length) {
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
+      return;
+    }
+    if (tablesEmpty) tablesEmpty.style.display = 'none';
+
+    const filter = filterSelect ? normId(filterSelect.value) : 'TOUTES';
+    const PRIORITY = ['Vide', 'Commandée', 'En préparation', 'Doit payé', 'Payée'];
+
+    // Tri : table avec dernière activité locale la plus récente en haut
+    const sorted = [...tables].sort((a, b) => {
+      const ida = normId(a.id);
+      const idb = normId(b.id);
+      const ta =
+        typeof localLastActivity[ida] === 'number'
+          ? localLastActivity[ida]
+          : a.lastTicketAt
+          ? new Date(a.lastTicketAt).getTime()
+          : 0;
+      const tb =
+        typeof localLastActivity[idb] === 'number'
+          ? localLastActivity[idb]
+          : b.lastTicketAt
+          ? new Date(b.lastTicketAt).getTime()
+          : 0;
+      return tb - ta;
+    });
+
+    sorted.forEach((table) => {
+      const id = normId(table.id);
+      if (filter !== 'TOUTES' && filter !== id) return;
+
+      const last = table.lastTicketAt ? formatTime(table.lastTicketAt) : '--:--';
+      let backendStatus = table.status || 'Vide';
+      const prev = window.lastKnownStatus[id] || null;
+      const forced = getLocalStatus(id);
+
+      let finalStatus;
+      if (forced && forced.phase === 'PREP') {
+        finalStatus = 'En préparation';
+      } else if (forced && forced.phase === 'PAY') {
+        finalStatus = 'Doit payé';
+      } else if (prev) {
+        const prevIdx = PRIORITY.indexOf(prev);
+        const backIdx = PRIORITY.indexOf(backendStatus);
+        finalStatus = prevIdx > backIdx ? prev : backendStatus;
+      } else {
+        finalStatus = backendStatus;
+      }
+
+      window.lastKnownStatus[id] = finalStatus;
+      if (finalStatus !== 'Commandée') cancelAutoBuffer(id);
+
+      const showActions = finalStatus !== 'Vide';
+      const isPaymentPending = !!payClose[id];
+
+      const card = document.createElement('div');
+      card.className = 'table';
+      card.setAttribute('data-table', id);
+      card.innerHTML = `
+  <div class="card-head">
+    <span class="chip">${id}</span>
+    <span class="chip">${finalStatus}</span>
+    <span class="chip">
+      ${
+        localLastActivity[id]
+          ? `Commandé à : ${formatTime(new Date(localLastActivity[id]).toISOString())}`
+          : '—'
+      }
+    </span>
+  </div>
+
+  ${
+    showActions
+      ? `
+        <div class="card-actions">
+          <button class="btn btn-primary btn-print">Imprimer maintenant</button>
+          ${
+            isPaymentPending
+              ? `<button class="btn btn-warning btn-cancel-pay">Annuler le paiement</button>`
+              : `<button class="btn btn-primary btn-paid">Paiement confirmé</button>`
+          }
+        </div>
+      `
+      : ``
+  }
+`;
+
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        openTableDetail(id);
+      });
+
+      if (showActions) {
+        const btnPrint = card.querySelector('.btn-print');
+        if (btnPrint) {
+          btnPrint.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const base = getApiBase();
+            cancelAutoBuffer(id);
+            if (base) {
+              try {
+                await fetch(`${base}/print`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ table: id }),
+                });
+              } catch {}
+            }
+            setPreparationFor20min(id);
+            window.lastKnownStatus[id] = 'En préparation';
+            if (!tableMemory[id]) tableMemory[id] = { isClosed: false, ignoreIds: new Set() };
+            tableMemory[id].isClosed = false;
+            saveState();
+            refreshTables();
+          });
+        }
+
+        const btnPaid = card.querySelector('.btn-paid');
+        if (btnPaid) {
+          btnPaid.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const base = getApiBase();
+            cancelAutoBuffer(id);
+
+            prevStatusBeforePay[id] = {
+              label: window.lastKnownStatus[id] || 'Commandée',
+              local: localTableStatus[id] ? { ...localTableStatus[id] } : null,
+            };
+            saveState();
+
+            if (base) {
+              try {
+                await fetch(`${base}/confirm`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ table: id }),
+                });
+              } catch {}
+            }
+            window.lastKnownStatus[id] = 'Payée';
+            delete localTableStatus[id];
+            scheduleCloseIn30s(id);
+            saveState();
+            refreshTables();
+          });
+        }
+
+        const btnCancel = card.querySelector('.btn-cancel-pay');
+        // Compte à rebours visuel 5s sur le bouton "Annuler le paiement" (tableau de gauche)
+        if (btnCancel && payClose[id] && payClose[id].displayUntil) {
+          const updateCountdown = () => {
+            const pc = payClose[id];
+            if (!pc) {
+              btnCancel.textContent = 'Annuler le paiement';
+              return;
+            }
+            const remainingMs = pc.displayUntil - now();
+            if (remainingMs > 0) {
+              const sec = Math.ceil(remainingMs / 1000);
+              btnCancel.textContent = `Annuler le paiement (${sec}s)`;
+            } else {
+              btnCancel.textContent = 'Annuler le paiement';
+            }
+          };
+          updateCountdown();
+          const countdownIntervalId = setInterval(() => {
+            if (!document.body.contains(btnCancel) || !payClose[id]) {
+              clearInterval(countdownIntervalId);
+              return;
+            }
+            updateCountdown();
+          }, 250);
+        }
+
+        if (btnCancel) {
+          btnCancel.addEventListener('click', (e) => {
+            e.stopPropagation();
+            cancelPayClose(id);
+            const prevState = prevStatusBeforePay[id];
+            if (prevState) {
+              window.lastKnownStatus[id] = prevState.label;
+              if (prevState.local) {
+                localTableStatus[id] = { ...prevState.local };
+              } else {
+                delete localTableStatus[id];
+              }
+              delete prevStatusBeforePay[id];
+            } else {
+              window.lastKnownStatus[id] = 'Doit payé';
+              localTableStatus[id] = { phase: 'PAY', until: null };
+            }
+            saveState();
+            refreshTables();
+          });
+        }
+      }
+
+      tablesContainer.appendChild(card);
+    });
+  }
+
+  // --- Rendu RÉSUMÉ
+  function renderSummary(tickets) {
+    if (!summaryContainer) return;
+    summaryContainer.innerHTML = '';
+
+    if (!tickets || !tickets.length) {
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
+      return;
+    }
+    if (summaryEmpty) summaryEmpty.style.display = 'none';
+
+    tickets.forEach((t) => {
+      let bodyText = '';
+      if (t.label) bodyText = t.label;
+      else if (Array.isArray(t.items)) {
+        bodyText = t.items
+          .map(
+            (it) =>
+              `${it.qty || it.quantity || 1}× ${
+                it.label || it.name || it.title || 'article'
+              }`
+          )
+          .join(', ');
+      } else if (Array.isArray(t.lines)) {
+        bodyText = t.lines
+          .map(
+            (it) =>
+              `${it.qty || it.quantity || 1}× ${
+                it.label || it.name || it.title || 'article'
+              }`
+          )
+          .join(', ');
+      }
+
+      const item = document.createElement('div');
+      item.className = 'summaryItem';
+      item.innerHTML = `
+        <div class="head">
+          <span class="chip">${t.table}</span>
+          <span class="chip">${t.time || ''}</span>
+          <span class="chip">${typeof t.total === 'number' ? t.total.toFixed(2) + ' €' : ''}</span>
+        </div>
+        <div class="body">${bodyText}</div>
+      `;
+      summaryContainer.appendChild(item);
+    });
+  }
+
+  // --- Fetch & refresh
+  async function fetchTablesAndSummary() {
+    ensureBusinessDay();
     const base = getApiBase();
     if (!base) return;
-    const id = normId(tableId);
-
-    window.__currentDetailTableId = id;
-
-    // Empêche le clic qui ouvre le panel de le fermer immédiatement
-    window.__suppressOutsideClose = true;
-    setTimeout(function () {
-      window.__suppressOutsideClose = false;
-    }, 0);
-
-    panel.innerHTML = '';
-    panel.style.display = 'flex';
-
-    const head = document.createElement('div');
-    head.style.display = 'flex';
-    head.style.justifyContent = 'space-between';
-    head.style.alignItems = 'center';
-    head.style.marginBottom = '14px';
-
-    const title = document.createElement('h2');
-    title.textContent = 'Table ' + id;
-    title.style.fontSize = '18px';
-    title.style.fontWeight = '600';
-    title.style.color = '#f9fafb';
-
-    const btnClose = document.createElement('button');
-    btnClose.textContent = 'Fermer';
-    btnClose.className = 'btn';
-    btnClose.style.padding = '4px 10px';
-    btnClose.addEventListener('click', function (e) {
-      e.stopPropagation();
-      closePanel();
-    });
-
-    head.appendChild(title);
-    head.appendChild(btnClose);
-    panel.appendChild(head);
-
-    const info = document.createElement('div');
-    info.style.marginBottom = '10px';
-    info.style.color = '#e5e7eb';
-    info.style.fontSize = '14px';
-    info.textContent = 'Chargement...';
-    panel.appendChild(info);
-
-    var summaryData;
-    var tablesData;
-
     try {
-      var results = await Promise.all([fetchSummary(base), fetchTables(base)]);
-      summaryData = results[0];
-      tablesData = results[1];
+      const [tablesRes, summaryRes] = await Promise.all([
+        fetch(`${base}/tables`, { cache: 'no-store' }),
+        fetch(`${base}/summary`, { cache: 'no-store' }),
+      ]);
+      const tablesData = await tablesRes.json();
+      const summaryData = await summaryRes.json();
+
+      const tables = tablesData.tables || [];
+      const tickets = summaryData.tickets || [];
+
+      tickets.forEach((t) => {
+        const id = normId(t.table);
+        const createdTs = t.createdAt ? new Date(t.createdAt).getTime() : null;
+        if (createdTs && (!localLastActivity[id] || createdTs > localLastActivity[id])) {
+          localLastActivity[id] = createdTs;
+        }
+      });
+
+      saveState();
+      renderTables(tables);
+      renderSummary(tickets);
     } catch (err) {
-      console.error('Erreur fetch detail', err);
-      info.textContent = 'Erreur de chargement';
-      return;
+      console.error('Erreur fetchTablesAndSummary', err);
     }
-
-    const tableMeta = (tablesData.tables || []).find(function (t) {
-      return normId(t.id) === id;
-    });
-
-    let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
-    const cleared = !!(tableMeta && tableMeta.cleared);
-    const sessionStartAt =
-      tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
-
-    // Tickets de la journée pour cette table
-    let allTickets = (summaryData.tickets || []).filter(function (t) {
-      return normId(t.table) === id;
-    });
-
-    // On ne garde que ceux de la SESSION en cours (>= sessionStartAt)
-    if (sessionStartAt) {
-      const threshold = new Date(sessionStartAt).getTime();
-      if (!Number.isNaN(threshold)) {
-        allTickets = allTickets.filter(function (t) {
-          if (!t.createdAt) return true;
-          const ts = new Date(t.createdAt).getTime();
-          if (Number.isNaN(ts)) return true;
-          return ts >= threshold;
-        });
-      }
-    }
-
-    if (!allTickets.length || cleared) {
-      info.textContent = 'Aucune commande pour cette table.';
-      const totalBoxEmpty = document.createElement('div');
-      totalBoxEmpty.style.marginTop = '10px';
-      totalBoxEmpty.style.marginBottom = '16px';
-      totalBoxEmpty.innerHTML =
-        '<div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total</div>' +
-        '<div style="font-size:28px;font-weight:600;color:#f9fafb;">0.00 €</div>';
-      panel.appendChild(totalBoxEmpty);
-    } else {
-      // Session active : on montre toutes les commandes de la session
-      allTickets.sort(function (a, b) {
-        const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
-        const bTs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
-        if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return aTs - bTs;
-
-        const aId = Number(a.id);
-        const bId = Number(b.id);
-        if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;
-        if (a.time && b.time) return a.time.localeCompare(b.time);
-        return 0;
-      });
-
-      info.textContent = 'Commandes en cours (' + allTickets.length + ')';
-
-      allTickets.forEach(function (t) {
-        panel.appendChild(makeTicketCard(t));
-      });
-
-      const total = allTickets.reduce(function (acc, t) {
-        return acc + (typeof t.total === 'number' ? t.total : 0);
-      }, 0);
-
-      const totalBox = document.createElement('div');
-      totalBox.style.marginTop = '10px';
-      totalBox.style.marginBottom = '18px';
-      totalBox.innerHTML =
-        '<div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total (session)</div>' +
-        '<div style="font-size:30px;font-weight:650;color:#f9fafb;">' +
-        total.toFixed(2) +
-        ' €</div>';
-      panel.appendChild(totalBox);
-    }
-
-    const statusChip = document.createElement('div');
-    statusChip.className = 'chip';
-    statusChip.textContent = 'Statut : ' + currentStatus;
-    statusChip.style.marginBottom = '12px';
-    panel.appendChild(statusChip);
-
-    const actions = document.createElement('div');
-    actions.style.display = 'flex';
-    actions.style.flexDirection = 'column';
-    actions.style.gap = '8px';
-
-    const isActive = currentStatus !== 'Vide' && !cleared;
-
-    // Références boutons pour pouvoir les manipuler ensemble
-    let btnPrint = null;
-    let btnPay = null;
-    let btnCloseTable = null;
-
-    // helper synchro bouton de la LISTE DE GAUCHE
-    function syncLeftPayButton(label, bgColor) {
-      const cardLeft = document.querySelector('.table[data-table="' + id + '"]');
-      if (!cardLeft) return;
-      const leftBtn =
-        cardLeft.querySelector('.btn-paid') ||
-        cardLeft.querySelector('.btn-cancel-pay');
-      if (!leftBtn) return;
-      if (typeof label === 'string') leftBtn.textContent = label;
-      if (bgColor !== undefined) leftBtn.style.backgroundColor = bgColor || '';
-    }
-
-    // Gestion du compte à rebours paiement
-    let pendingPayClose = false;
-    let paySeconds = 5;
-    let payTimeoutId = null;
-    let payIntervalId = null;
-
-    function updatePayButtonLabel() {
-      if (!btnPay) return;
-
-      if (pendingPayClose) {
-        const label = 'Annuler paiement (' + paySeconds + 's)';
-        btnPay.textContent = label;
-        btnPay.style.backgroundColor = '#f97316';
-        syncLeftPayButton(label, '#f97316');
-        return;
-      }
-
-      if (currentStatus === 'Payée') {
-        btnPay.textContent = 'Annuler paiement';
-        btnPay.style.backgroundColor = '#f97316';
-        syncLeftPayButton('Annuler paiement', '#f97316');
-      } else {
-        btnPay.textContent = 'Paiement confirmé';
-        btnPay.style.backgroundColor = '';
-        syncLeftPayButton('Paiement confirmé', '');
-      }
-    }
-
-    // Boutons Imprimer / Paiement si table ACTIVE
-    if (isActive) {
-      btnPrint = document.createElement('button');
-      btnPrint.textContent = 'Imprimer maintenant';
-      btnPrint.className = 'btn btn-primary';
-      btnPrint.style.width = '100%';
-      btnPrint.style.fontSize = '14px';
-
-      btnPay = document.createElement('button');
-      btnPay.className = 'btn btn-primary';
-      btnPay.style.width = '100%';
-      btnPay.style.fontSize = '14px';
-
-      updatePayButtonLabel();
-
-      actions.appendChild(btnPrint);
-      actions.appendChild(btnPay);
-    }
-
-    // Bouton Clôturer la table si ACTIVE
-    if (isActive) {
-      btnCloseTable = document.createElement('button');
-      btnCloseTable.style.width = '100%';
-      btnCloseTable.style.fontSize = '14px';
-      btnCloseTable.className = 'btn btn-primary';
-
-      let pendingClose = false;
-      let pendingSeconds = 5;
-      let timeoutId = null;
-      let countdownIntervalId = null;
-
-      function updateCloseButtonLabel() {
-        if (!btnCloseTable) return;
-        if (pendingClose) {
-          btnCloseTable.textContent =
-            'Annuler clôture (' + pendingSeconds + 's)';
-        } else {
-          btnCloseTable.textContent = 'Clôturer la table';
-        }
-        btnCloseTable.style.backgroundColor = '#ef4444';
-      }
-      updateCloseButtonLabel();
-
-      btnCloseTable.addEventListener('click', async function (e) {
-        e.stopPropagation();
-        const apiBase = getApiBase();
-        if (!apiBase) return;
-
-        // Si une clôture est en cours -> annuler
-        if (pendingClose) {
-          pendingClose = false;
-          pendingSeconds = 5;
-          if (timeoutId) clearTimeout(timeoutId);
-          if (countdownIntervalId) clearInterval(countdownIntervalId);
-          updateCloseButtonLabel();
-          return;
-        }
-
-        // Démarre un compte à rebours de 5s avant la vraie clôture
-        pendingClose = true;
-        pendingSeconds = 5;
-        updateCloseButtonLabel();
-
-        countdownIntervalId = setInterval(function () {
-          if (!pendingClose) {
-            clearInterval(countdownIntervalId);
-            return;
-          }
-          pendingSeconds -= 1;
-          if (pendingSeconds <= 0) {
-            pendingSeconds = 0;
-            clearInterval(countdownIntervalId);
-          }
-          updateCloseButtonLabel();
-        }, 1000);
-
-        timeoutId = setTimeout(async function () {
-          if (!pendingClose) return; // annulé entre-temps
-          pendingClose = false;
-          pendingSeconds = 5;
-
-          try {
-            await fetch(apiBase + '/close-table', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ table: id }),
-            });
-          } catch (err) {
-            console.error('Erreur clôture (close-table)', err);
-          } finally {
-            if (window.refreshTables) {
-              window.refreshTables();
-            }
-            showTableDetail(id);
-          }
-        }, 5000);
-      });
-
-      actions.appendChild(btnCloseTable);
-    }
-
-    if (actions.children.length > 0) {
-      panel.appendChild(actions);
-    }
-
-    // Listeners Imprimer
-    if (isActive && btnPrint) {
-      btnPrint.addEventListener('click', async function (e) {
-        e.stopPropagation();
-        try {
-          await fetch(base + '/print', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id }),
-          });
-        } catch (err) {
-          console.error('Erreur /print (détail)', err);
-        } finally {
-          if (window.refreshTables) {
-            window.refreshTables();
-          }
-          showTableDetail(id);
-        }
-      });
-    }
-
-    // Gestion Paiement confirmé / Annuler paiement (droite)
-    async function handlePayClick() {
-      const apiBase = getApiBase();
-      if (!apiBase) return;
-
-      // Si un compte à rebours paiement est en cours -> annuler
-      if (pendingPayClose) {
-        pendingPayClose = false;
-        paySeconds = 5;
-        if (payTimeoutId) clearTimeout(payTimeoutId);
-        if (payIntervalId) clearInterval(payIntervalId);
-
-        try {
-          await fetch(apiBase + '/cancel-confirm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id }),
-          });
-        } catch (err) {
-          console.error('Erreur /cancel-confirm (détail)', err);
-        } finally {
-          if (btnCloseTable) {
-            btnCloseTable.style.display = 'block';
-          }
-          if (window.refreshTables) {
-            window.refreshTables();
-          }
-          showTableDetail(id);
-        }
-
-        return;
-      }
-
-      // Si déjà Payée (sans compte à rebours en cours) -> Annuler paiement
-      if (currentStatus === 'Payée') {
-        try {
-          await fetch(apiBase + '/cancel-confirm', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id }),
-          });
-        } catch (err) {
-          console.error('Erreur /cancel-confirm (détail)', err);
-        } finally {
-          if (btnCloseTable) {
-            btnCloseTable.style.display = 'block';
-          }
-          if (window.refreshTables) {
-            window.refreshTables();
-          }
-          showTableDetail(id);
-        }
-        return;
-      }
-
-      // Cas normal : Paiement confirmé
-      try {
-        await fetch(apiBase + '/confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ table: id }),
-        });
-      } catch (err) {
-        console.error('Erreur /confirm (détail)', err);
-      }
-
-      // On passe tout de suite le statut en "Payée" côté UI (instantané)
-      currentStatus = 'Payée';
-      statusChip.textContent = 'Statut : ' + currentStatus;
-
-      // On démarre un compte à rebours local de 5s
-      pendingPayClose = true;
-      paySeconds = 5;
-
-      // Pendant le compte à rebours, on cache le bouton "Clôturer la table"
-      if (btnCloseTable) {
-        btnCloseTable.style.display = 'none';
-      }
-
-      updatePayButtonLabel(); // met orange + (5s) sur droite & gauche
-
-      payIntervalId = setInterval(function () {
-        if (!pendingPayClose) {
-          clearInterval(payIntervalId);
-          return;
-        }
-        paySeconds -= 1;
-        if (paySeconds <= 0) {
-          paySeconds = 0;
-          clearInterval(payIntervalId);
-        }
-        updatePayButtonLabel();
-      }, 1000);
-
-      // Au bout de 5s, le backend passe en Vide (PAY_CLEAR_MS=5s), on rafraîchit
-      payTimeoutId = setTimeout(function () {
-        if (!pendingPayClose) return; // annulé
-        pendingPayClose = false;
-        paySeconds = 5;
-
-        if (window.refreshTables) {
-          window.refreshTables();
-        }
-        showTableDetail(id);
-      }, 5000);
-    }
-
-    if (isActive && btnPay) {
-      btnPay.addEventListener('click', function (e) {
-        e.stopPropagation();
-        handlePayClick();
-      });
-    }
-
-    // Expose un contrôleur pour cette table afin que le bouton de gauche
-    // puisse déclencher la même logique (compte à rebours, couleurs, etc.)
-    window.__detailControllers[id] = {
-      handleLeftPayClick: function () {
-        if (!btnPay) return;
-        handlePayClick();
-      },
-    };
   }
 
-  // Clic sur le bouton "Paiement confirmé / Annuler paiement" dans la liste de GAUCHE
-  // pour synchroniser avec le panneau de droite si ouvert sur la même table.
-  document.addEventListener('click', function (e) {
-    const btn =
-      e.target.closest &&
-      (e.target.closest('.btn-paid') || e.target.closest('.btn-cancel-pay'));
-    if (!btn) return;
+  window.refreshTables = fetchTablesAndSummary;
 
-    const card = btn.closest && btn.closest('.table');
-    if (!card) return;
-    const tableId = card.getAttribute('data-table');
-    if (!tableId) return;
-    const id = normId(tableId);
-
-    if (window.__currentDetailTableId !== id) {
-      // panneau non ouvert sur cette table -> on ne force rien ici
-      return;
+  // --- Ouverture du détail de table
+  function openTableDetail(id) {
+    if (window.showTableDetail) {
+      window.showTableDetail(id);
     }
+  }
+  window.openTableDetail = openTableDetail;
 
-    const controllers = window.__detailControllers || {};
-    const ctrl = controllers[id];
-    if (!ctrl || !ctrl.handleLeftPayClick) return;
+  // --- Init
+  fetchTablesAndSummary();
+  setInterval(fetchTablesAndSummary, REFRESH_MS);
 
-    // On déclenche la même logique que sur le bouton du panneau de droite
-    ctrl.handleLeftPayClick();
-  });
-
-  window.showTableDetail = showTableDetail;
-})();
+  chime.startAutoUnlock();
+});

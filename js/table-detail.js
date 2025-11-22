@@ -1,4 +1,4 @@
-// table-detail.js — détail table synchronisé (aucune mémoire locale de statuts / tickets)
+// table-detail.js — détail table synchronisé (sessions, paiement 5s, clôture, synchro avec liste de gauche)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -289,6 +289,18 @@
     let btnPay = null;
     let btnCloseTable = null;
 
+    // 🔹 helper pour synchroniser le bouton de la LISTE DE GAUCHE
+    function syncLeftPayButton(label, bgColor) {
+      const cardLeft = document.querySelector(`.table[data-table="${id}"]`);
+      if (!cardLeft) return;
+      const leftBtn =
+        cardLeft.querySelector('.btn-paid') ||
+        cardLeft.querySelector('.btn-cancel-pay');
+      if (!leftBtn) return;
+      if (typeof label === 'string') leftBtn.textContent = label;
+      if (bgColor !== undefined) leftBtn.style.backgroundColor = bgColor || '';
+    }
+
     // 🔹 Gestion du compte à rebours paiement
     let pendingPayClose = false;
     let paySeconds = 5;
@@ -297,17 +309,24 @@
 
     function updatePayButtonLabel() {
       if (!btnPay) return;
+
       if (pendingPayClose) {
-        btnPay.textContent = `Annuler paiement (${paySeconds}s)`;
+        const label = `Annuler paiement (${paySeconds}s)`;
+        btnPay.textContent = label;
         btnPay.style.backgroundColor = '#f97316';
+        // synchro bouton liste gauche
+        syncLeftPayButton(label, '#f97316');
         return;
       }
+
       if (currentStatus === 'Payée') {
         btnPay.textContent = 'Annuler paiement';
         btnPay.style.backgroundColor = '#f97316';
+        syncLeftPayButton('Annuler paiement', '#f97316');
       } else {
         btnPay.textContent = 'Paiement confirmé';
         btnPay.style.backgroundColor = '';
+        syncLeftPayButton('Paiement confirmé', '');
       }
     }
 
@@ -486,6 +505,9 @@
           } catch (err) {
             console.error('Erreur /cancel-confirm (détail)', err);
           } finally {
+            if (btnCloseTable) {
+              btnCloseTable.style.display = 'block';
+            }
             if (window.refreshTables) {
               window.refreshTables();
             }
@@ -515,7 +537,7 @@
           btnCloseTable.style.display = 'none';
         }
 
-        updatePayButtonLabel();
+        updatePayButtonLabel(); // met orange + "(5s)" sur droite ET gauche
 
         payIntervalId = setInterval(() => {
           if (!pendingPayClose) {
@@ -527,7 +549,7 @@
             paySeconds = 0;
             clearInterval(payIntervalId);
           }
-          updatePayButtonLabel();
+          updatePayButtonLabel(); // met à jour la valeur (4s, 3s, ...) des 2 côtés
         }, 1000);
 
         // 3) Au bout de 5s => le backend passe automatiquement la table en Vide (PAY_CLEAR_MS = 5s)

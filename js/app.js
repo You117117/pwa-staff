@@ -165,7 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      // 🔴 Texte demandé : "Commandé à : (heure)"
+      // Texte demandé : "Commandé à : (heure)"
       chipTime.textContent = hasLastTicket ? `Commandé à : ${lastTime}` : '—';
       head.appendChild(chipTime);
 
@@ -237,8 +237,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
 
+      // 🔁 MODIF ICI : toggle du panneau de droite en recliquant sur la même table
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
+
+        const currentId = window.__currentDetailTableId || null;
+        if (currentId && normId(currentId) === id) {
+          const panel = document.querySelector('#tableDetailPanel');
+          if (panel) {
+            panel.style.display = 'none';
+            panel.innerHTML = '';
+          }
+          window.__currentDetailTableId = null;
+          return;
+        }
+
         if (window.showTableDetail) {
           window.showTableDetail(id, status);
         }

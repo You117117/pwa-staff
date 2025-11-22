@@ -15,52 +15,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const BUFFER_MS = 120 * 1000;
   const RESET_HOUR = 3; // heure de "fin de journée" (03:00)
 
-  // --- Persistance de l'URL API (Render) ---
-  const API_URL_STORAGE_KEY = 'staff_api_url_v1';
-
-  function loadApiUrlFromStorage() {
-    if (!apiInput) return;
-    try {
-      const saved = localStorage.getItem(API_URL_STORAGE_KEY);
-      if (saved) {
-        apiInput.value = saved;
-      }
-    } catch (e) {
-      console.warn('Impossible de charger apiUrl depuis localStorage', e);
-    }
-  }
-
-  function saveApiUrlToStorage() {
-    if (!apiInput) return;
-    try {
-      const v = apiInput.value.trim();
-      if (v) {
-        localStorage.setItem(API_URL_STORAGE_KEY, v);
-      } else {
-        localStorage.removeItem(API_URL_STORAGE_KEY);
-      }
-    } catch (e) {
-      console.warn('Impossible de sauvegarder apiUrl dans localStorage', e);
-    }
-  }
-
-  // Charger l'URL API au démarrage
-  loadApiUrlFromStorage();
-
-  // Sauvegarder dès que l'utilisateur modifie le champ
-  if (apiInput) {
-    apiInput.addEventListener('change', () => {
-      saveApiUrlToStorage();
-      // On relance un refresh direct avec la nouvelle URL
-      if (window.refreshTables) {
-        window.refreshTables();
-      }
-    });
-    apiInput.addEventListener('blur', () => {
-      saveApiUrlToStorage();
-    });
-  }
-
   // --- Utils
   const normId = (id) => (id || '').trim().toUpperCase();
   const now = () => Date.now();
@@ -202,7 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
     },
   };
 
-  // --- Persistance localStorage (état staff)
+  // --- Persistance localStorage
   const STORAGE_KEY = 'staff_state_v3';
   function loadState() {
     try {
@@ -467,12 +421,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 `;
 
-      // Toggle panneau de droite quand on reclique sur la même table
+      // 🔁 ICI : toggle panneau de droite en recliquant sur la même table
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return; // clic sur un bouton = pas toggle
 
         const currentId = window.__currentDetailTableId || null;
         if (currentId && normId(currentId) === id) {
+          // Panneau déjà ouvert sur cette table → on le ferme
           const panelEl = document.querySelector('#tableDetailPanel');
           if (panelEl) {
             panelEl.style.display = 'none';
@@ -481,6 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        // Sinon on ouvre/charge le détail de cette table
         openTableDetail(id);
       });
 
@@ -684,9 +640,6 @@ document.addEventListener('DOMContentLoaded', () => {
   window.openTableDetail = openTableDetail;
 
   // --- Init
-
-  // Si on a rechargé la page et qu'un apiUrl était en localStorage,
-  // il est déjà rechargé dans le champ -> on peut req direct
   fetchTablesAndSummary();
   setInterval(fetchTablesAndSummary, REFRESH_MS);
 

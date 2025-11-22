@@ -1,4 +1,4 @@
-// table-detail.js — détail table (sessions, paiement 5s, clôture avec compte à rebours + produits en gras avec prix)
+// table-detail.js — détail table synchronisé (aucune mémoire locale de statuts / tickets)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -21,10 +21,10 @@
     document.body.appendChild(panel);
   }
 
-  // Évite que le clic d'ouverture ferme le panel immédiatement
+  // Flag pour éviter que le clic qui OUVRE le panel le ferme immédiatement
   window.__suppressOutsideClose = false;
 
-  // Fermeture par clic en dehors
+  // Fermeture par clic en dehors du panneau
   document.addEventListener('click', (e) => {
     if (panel.style.display === 'none') return;
     if (window.__suppressOutsideClose) return;
@@ -45,55 +45,23 @@
     window.__currentDetailTableId = null;
   }
 
-  // ---- Produits en gras + prix en gras à droite, un par ligne ----
-  function makeProductLines(ticket) {
+  function buildBodyText(ticket) {
+    if (ticket.label) return ticket.label;
     const src = Array.isArray(ticket.items)
       ? ticket.items
       : Array.isArray(ticket.lines)
       ? ticket.lines
       : null;
-
-    if (!src) {
-      const lines = [];
-      if (ticket.label) {
-        const div = document.createElement('div');
-        div.textContent = ticket.label;
-        div.style.fontSize = '14px';
-        div.style.color = '#f9fafb';
-        div.style.fontWeight = '500';
-        lines.push(div);
-      }
-      return lines;
+    if (src) {
+      return src
+        .map((it) => {
+          const qty = it.qty || it.quantity || 1;
+          const name = it.label || it.name || it.title || 'article';
+          return `${qty}× ${name}`;
+        })
+        .join(', ');
     }
-
-    return src.map((it) => {
-      const qty = it.qty || it.quantity || 1;
-      const name = it.label || it.name || it.title || 'article';
-      const price = it.price || it.unitPrice || it.amount || null;
-
-      const line = document.createElement('div');
-      line.style.display = 'flex';
-      line.style.justifyContent = 'space-between';
-      line.style.alignItems = 'center';
-      line.style.fontSize = '15px';
-      line.style.color = '#f9fafb';
-      line.style.fontWeight = '700';
-      line.style.marginBottom = '4px';
-
-      const left = document.createElement('span');
-      left.textContent = `${qty}× ${name}`;
-
-      const right = document.createElement('span');
-      if (typeof price === 'number') {
-        right.textContent = `${price.toFixed(2)} €`;
-      } else {
-        right.textContent = '';
-      }
-
-      line.appendChild(left);
-      line.appendChild(right);
-      return line;
-    });
+    return '';
   }
 
   function makeTicketCard(ticket) {
@@ -127,6 +95,7 @@
       head.appendChild(chipTime);
     }
 
+    // Montant de CHAQUE ticket — plus gros et gras
     if (typeof ticket.total === 'number') {
       const chipTotal = document.createElement('span');
       chipTotal.className = 'chip';
@@ -139,9 +108,17 @@
 
     card.appendChild(head);
 
-    // Produits en gras, un par ligne
-    const productLines = makeProductLines(ticket);
-    productLines.forEach((ln) => card.appendChild(ln));
+    const bodyText = buildBodyText(ticket);
+    if (bodyText) {
+      const body = document.createElement('div');
+      body.textContent = bodyText;
+      body.style.fontSize = '14px';
+      body.style.lineHeight = '1.4';
+      body.style.opacity = '0.98';
+      body.style.color = '#f9fafb';
+      body.style.fontWeight = '500';
+      card.appendChild(body);
+    }
 
     return card;
   }
@@ -163,7 +140,7 @@
 
     window.__currentDetailTableId = id;
 
-    // laisse le panel s'ouvrir sans être fermé par le même clic
+    // Empêche le clic qui ouvre le panel de le fermer immédiatement
     window.__suppressOutsideClose = true;
     setTimeout(() => {
       window.__suppressOutsideClose = false;
@@ -206,6 +183,7 @@
 
     let summaryData;
     let tablesData;
+
     try {
       [summaryData, tablesData] = await Promise.all([
         fetchSummary(base),
@@ -223,15 +201,16 @@
 
     let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
     const cleared = !!(tableMeta && tableMeta.cleared);
-    const sessionStartAt =
-      tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
+    const sessionStartAt = tableMeta && tableMeta.sessionStartAt
+      ? tableMeta.sessionStartAt
+      : null;
 
     // Tickets de la journée pour cette table
     let allTickets = (summaryData.tickets || []).filter(
       (t) => normId(t.table) === id
     );
 
-    // Session en cours uniquement (>= sessionStartAt)
+    // On ne garde que ceux de la SESSION en cours (>= sessionStartAt)
     if (sessionStartAt) {
       const threshold = new Date(sessionStartAt).getTime();
       if (!Number.isNaN(threshold)) {
@@ -246,7 +225,6 @@
 
     if (!allTickets.length || cleared) {
       info.textContent = 'Aucune commande pour cette table.';
-
       const totalBoxEmpty = document.createElement('div');
       totalBoxEmpty.style.marginTop = '10px';
       totalBoxEmpty.style.marginBottom = '16px';
@@ -256,7 +234,7 @@
       `;
       panel.appendChild(totalBoxEmpty);
     } else {
-      // Tri des tickets dans la session
+      // Session active : on montre toutes les commandes de la session
       allTickets.sort((a, b) => {
         const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
         const bTs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
@@ -276,7 +254,8 @@
       });
 
       const total = allTickets.reduce(
-        (acc, t) => acc + (typeof t.total === 'number' ? t.total : 0),
+        (acc, t) =>
+          acc + (typeof t.total === 'number' ? t.total : 0),
         0
       );
 
@@ -305,11 +284,12 @@
 
     const isActive = currentStatus !== 'Vide' && !cleared;
 
+    // Références boutons pour pouvoir les manipuler ensemble
     let btnPrint = null;
     let btnPay = null;
     let btnCloseTable = null;
 
-    // ----- Paiement : compte à rebours 5s -----
+    // 🔹 Gestion du compte à rebours paiement
     let pendingPayClose = false;
     let paySeconds = 5;
     let payTimeoutId = null;
@@ -331,7 +311,7 @@
       }
     }
 
-    // Boutons Imprimer & Paiement
+    // 🔹 Boutons Imprimer / Paiement seulement si table ACTIVE
     if (isActive) {
       btnPrint = document.createElement('button');
       btnPrint.textContent = 'Imprimer maintenant';
@@ -350,7 +330,7 @@
       actions.appendChild(btnPay);
     }
 
-    // ----- Clôturer la table : compte à rebours 5s + orange pendant annulation -----
+    // 🔹 Bouton Clôturer la table seulement si table ACTIVE
     if (isActive) {
       btnCloseTable = document.createElement('button');
       btnCloseTable.style.width = '100%';
@@ -359,18 +339,17 @@
 
       let pendingClose = false;
       let pendingSeconds = 5;
-      let closeTimeoutId = null;
+      let timeoutId = null;
       let countdownIntervalId = null;
 
       function updateCloseButtonLabel() {
         if (!btnCloseTable) return;
         if (pendingClose) {
           btnCloseTable.textContent = `Annuler clôture (${pendingSeconds}s)`;
-          btnCloseTable.style.backgroundColor = '#f97316'; // orange pendant le compte à rebours
         } else {
           btnCloseTable.textContent = 'Clôturer la table';
-          btnCloseTable.style.backgroundColor = '#ef4444'; // rouge par défaut
         }
+        btnCloseTable.style.backgroundColor = '#ef4444'; // rouge
       }
       updateCloseButtonLabel();
 
@@ -383,7 +362,7 @@
         if (pendingClose) {
           pendingClose = false;
           pendingSeconds = 5;
-          if (closeTimeoutId) clearTimeout(closeTimeoutId);
+          if (timeoutId) clearTimeout(timeoutId);
           if (countdownIntervalId) clearInterval(countdownIntervalId);
           updateCloseButtonLabel();
           return;
@@ -407,7 +386,7 @@
           updateCloseButtonLabel();
         }, 1000);
 
-        closeTimeoutId = setTimeout(async () => {
+        timeoutId = setTimeout(async () => {
           if (!pendingClose) return; // annulé entre-temps
           pendingClose = false;
           pendingSeconds = 5;
@@ -432,11 +411,12 @@
       actions.appendChild(btnCloseTable);
     }
 
+    // Ajoute le bloc actions seulement s'il y a au moins un bouton dedans
     if (actions.children.length > 0) {
       panel.appendChild(actions);
     }
 
-    // ----- Imprimer -----
+    // Listeners des boutons Imprimer / Payé / Clôturer (si actifs)
     if (isActive && btnPrint) {
       btnPrint.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -457,20 +437,20 @@
       });
     }
 
-    // ----- Paiement confirmé / Annuler paiement -----
     if (isActive && btnPay) {
       btnPay.addEventListener('click', async (e) => {
         e.stopPropagation();
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        // Si compte à rebours paiement déjà en cours → annuler paiement
+        // ➜ Si un compte à rebours paiement est en cours → annuler
         if (pendingPayClose) {
           pendingPayClose = false;
           paySeconds = 5;
           if (payTimeoutId) clearTimeout(payTimeoutId);
           if (payIntervalId) clearInterval(payIntervalId);
 
+          // On annule aussi côté backend
           try {
             await fetch(`${apiBase}/cancel-confirm`, {
               method: 'POST',
@@ -480,6 +460,7 @@
           } catch (err) {
             console.error('Erreur /cancel-confirm (détail)', err);
           } finally {
+            // On ré-affiche éventuellement le bouton "Clôturer" si présent
             if (btnCloseTable) {
               btnCloseTable.style.display = 'block';
             }
@@ -489,11 +470,13 @@
             }
             showTableDetail(id);
           }
+
           return;
         }
 
-        // Si déjà "Payée" (mais sans compte à rebours) → annuler paiement
+        // ➜ Si la table est déjà en statut Payée (sans compte à rebours en cours)
         if (currentStatus === 'Payée') {
+          // Comportement "Annuler paiement" classique
           try {
             await fetch(`${apiBase}/cancel-confirm`, {
               method: 'POST',
@@ -503,9 +486,6 @@
           } catch (err) {
             console.error('Erreur /cancel-confirm (détail)', err);
           } finally {
-            if (btnCloseTable) {
-              btnCloseTable.style.display = 'block';
-            }
             if (window.refreshTables) {
               window.refreshTables();
             }
@@ -514,7 +494,8 @@
           return;
         }
 
-        // Paiement confirmé (normal)
+        // ➜ Cas normal : on clique sur "Paiement confirmé"
+        // 1) On envoie /confirm immédiatement (table passe Payée côté backend)
         try {
           await fetch(`${apiBase}/confirm`, {
             method: 'POST',
@@ -525,14 +506,11 @@
           console.error('Erreur /confirm (détail)', err);
         }
 
-        // Mise à jour immédiate côté UI
-        currentStatus = 'Payée';
-        statusChip.textContent = `Statut : ${currentStatus}`;
-
-        // Démarre compte à rebours 5s avant vidage
+        // 2) On démarre un compte à rebours local de 5s
         pendingPayClose = true;
         paySeconds = 5;
 
+        // Le bouton "Clôturer la table" doit disparaître pendant ce process
         if (btnCloseTable) {
           btnCloseTable.style.display = 'none';
         }
@@ -552,10 +530,13 @@
           updatePayButtonLabel();
         }, 1000);
 
-        payTimeoutId = setTimeout(() => {
-          if (!pendingPayClose) return;
+        // 3) Au bout de 5s => le backend passe automatiquement la table en Vide (PAY_CLEAR_MS = 5s)
+        payTimeoutId = setTimeout(async () => {
+          if (!pendingPayClose) return; // annulé entre-temps
           pendingPayClose = false;
           paySeconds = 5;
+
+          // On rafraîchit les tables et le détail : la table doit être Vide + session reset
           if (window.refreshTables) {
             window.refreshTables();
           }

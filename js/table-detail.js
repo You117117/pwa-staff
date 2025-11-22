@@ -1,4 +1,4 @@
-// table-detail.js — détail table synchronisé (aucune mémoire locale de statuts / tickets)
+// table-detail.js — détail table (sessions, paiement 5s, clôture avec compte à rebours)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -45,6 +45,7 @@
     window.__currentDetailTableId = null;
   }
 
+  // 🔹 Texte des lignes d’un ticket (chaque article sur une ligne)
   function buildBodyText(ticket) {
     if (ticket.label) return ticket.label;
     const src = Array.isArray(ticket.items)
@@ -59,7 +60,7 @@
           const name = it.label || it.name || it.title || 'article';
           return `${qty}× ${name}`;
         })
-        .join(', ');
+        .join('\n'); // <= UNE LIGNE PAR ARTICLE
     }
     return '';
   }
@@ -95,7 +96,6 @@
       head.appendChild(chipTime);
     }
 
-    // Montant de CHAQUE ticket — plus gros et gras
     if (typeof ticket.total === 'number') {
       const chipTotal = document.createElement('span');
       chipTotal.className = 'chip';
@@ -117,6 +117,7 @@
       body.style.opacity = '0.98';
       body.style.color = '#f9fafb';
       body.style.fontWeight = '500';
+      body.style.whiteSpace = 'pre-line'; // <= pour afficher chaque article sur sa propre ligne
       card.appendChild(body);
     }
 
@@ -284,12 +285,11 @@
 
     const isActive = currentStatus !== 'Vide' && !cleared;
 
-    // Références boutons pour pouvoir les manipuler ensemble
     let btnPrint = null;
     let btnPay = null;
     let btnCloseTable = null;
 
-    // 🔹 Gestion du compte à rebours paiement
+    // Gestion du compte à rebours paiement (5s) — déjà en place
     let pendingPayClose = false;
     let paySeconds = 5;
     let payTimeoutId = null;
@@ -297,11 +297,14 @@
 
     function updatePayButtonLabel() {
       if (!btnPay) return;
+
       if (pendingPayClose) {
-        btnPay.textContent = `Annuler paiement (${paySeconds}s)`;
+        const label = `Annuler paiement (${paySeconds}s)`;
+        btnPay.textContent = label;
         btnPay.style.backgroundColor = '#f97316';
         return;
       }
+
       if (currentStatus === 'Payée') {
         btnPay.textContent = 'Annuler paiement';
         btnPay.style.backgroundColor = '#f97316';
@@ -311,7 +314,7 @@
       }
     }
 
-    // 🔹 Boutons Imprimer / Paiement seulement si table ACTIVE
+    // 🔹 Boutons Imprimer / Paiement
     if (isActive) {
       btnPrint = document.createElement('button');
       btnPrint.textContent = 'Imprimer maintenant';
@@ -330,7 +333,7 @@
       actions.appendChild(btnPay);
     }
 
-    // 🔹 Bouton Clôturer la table seulement si table ACTIVE
+    // 🔹 Bouton Clôturer la table (avec compte à rebours et orange pendant l’annulation)
     if (isActive) {
       btnCloseTable = document.createElement('button');
       btnCloseTable.style.width = '100%';
@@ -346,10 +349,11 @@
         if (!btnCloseTable) return;
         if (pendingClose) {
           btnCloseTable.textContent = `Annuler clôture (${pendingSeconds}s)`;
+          btnCloseTable.style.backgroundColor = '#f97316'; // ORANGE pendant le compte à rebours
         } else {
           btnCloseTable.textContent = 'Clôturer la table';
+          btnCloseTable.style.backgroundColor = '#ef4444'; // ROUGE par défaut
         }
-        btnCloseTable.style.backgroundColor = '#ef4444'; // rouge
       }
       updateCloseButtonLabel();
 
@@ -411,12 +415,12 @@
       actions.appendChild(btnCloseTable);
     }
 
-    // Ajoute le bloc actions seulement s'il y a au moins un bouton dedans
     if (actions.children.length > 0) {
       panel.appendChild(actions);
     }
 
-    // Listeners des boutons Imprimer / Payé / Clôturer (si actifs)
+    // 🔹 Listeners Imprimer / Paiement
+
     if (isActive && btnPrint) {
       btnPrint.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -443,14 +447,13 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        // ➜ Si un compte à rebours paiement est en cours → annuler
+        // Si un compte à rebours paiement est en cours → annuler
         if (pendingPayClose) {
           pendingPayClose = false;
           paySeconds = 5;
           if (payTimeoutId) clearTimeout(payTimeoutId);
           if (payIntervalId) clearInterval(payIntervalId);
 
-          // On annule aussi côté backend
           try {
             await fetch(`${apiBase}/cancel-confirm`, {
               method: 'POST',
@@ -460,7 +463,6 @@
           } catch (err) {
             console.error('Erreur /cancel-confirm (détail)', err);
           } finally {
-            // On ré-affiche éventuellement le bouton "Clôturer" si présent
             if (btnCloseTable) {
               btnCloseTable.style.display = 'block';
             }
@@ -474,9 +476,8 @@
           return;
         }
 
-        // ➜ Si la table est déjà en statut Payée (sans compte à rebours en cours)
+        // Si déjà Payée → comportement Annuler paiement
         if (currentStatus === 'Payée') {
-          // Comportement "Annuler paiement" classique
           try {
             await fetch(`${apiBase}/cancel-confirm`, {
               method: 'POST',
@@ -486,6 +487,9 @@
           } catch (err) {
             console.error('Erreur /cancel-confirm (détail)', err);
           } finally {
+            if (btnCloseTable) {
+              btnCloseTable.style.display = 'block';
+            }
             if (window.refreshTables) {
               window.refreshTables();
             }
@@ -494,8 +498,7 @@
           return;
         }
 
-        // ➜ Cas normal : on clique sur "Paiement confirmé"
-        // 1) On envoie /confirm immédiatement (table passe Payée côté backend)
+        // Paiement confirmé (normal)
         try {
           await fetch(`${apiBase}/confirm`, {
             method: 'POST',
@@ -506,11 +509,14 @@
           console.error('Erreur /confirm (détail)', err);
         }
 
-        // 2) On démarre un compte à rebours local de 5s
+        // Statut immédiat côté UI
+        currentStatus = 'Payée';
+        statusChip.textContent = `Statut : ${currentStatus}`;
+
+        // Démarrage du compte à rebours 5s
         pendingPayClose = true;
         paySeconds = 5;
 
-        // Le bouton "Clôturer la table" doit disparaître pendant ce process
         if (btnCloseTable) {
           btnCloseTable.style.display = 'none';
         }
@@ -530,13 +536,11 @@
           updatePayButtonLabel();
         }, 1000);
 
-        // 3) Au bout de 5s => le backend passe automatiquement la table en Vide (PAY_CLEAR_MS = 5s)
-        payTimeoutId = setTimeout(async () => {
-          if (!pendingPayClose) return; // annulé entre-temps
+        payTimeoutId = setTimeout(() => {
+          if (!pendingPayClose) return;
           pendingPayClose = false;
           paySeconds = 5;
 
-          // On rafraîchit les tables et le détail : la table doit être Vide + session reset
           if (window.refreshTables) {
             window.refreshTables();
           }

@@ -27,30 +27,56 @@ document.addEventListener('DOMContentLoaded', () => {
   let prevTablesSnapshot = window.__prevTablesSnapshot || {};
   window.__prevTablesSnapshot = prevTablesSnapshot;
 
-  function playStaffBeep() {
+  
+  let staffAudioCtx = null;
+
+  function ensureStaffAudioCtxUnlocked() {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
-      const ctx = new AudioContext();
+      if (!staffAudioCtx) {
+        staffAudioCtx = new AudioContext();
+      }
+      if (staffAudioCtx.state === 'suspended') {
+        staffAudioCtx.resume();
+      }
+    } catch (e) {
+      console.warn('[staff-beep] Impossible d\'initialiser l\'AudioContext', e);
+    }
+  }
+
+  document.addEventListener('click', ensureStaffAudioCtxUnlocked, { once: true });
+  document.addEventListener('touchstart', ensureStaffAudioCtxUnlocked, { once: true });
+
+  function playStaffBeep() {
+    try {
+      if (!staffAudioCtx) {
+        ensureStaffAudioCtxUnlocked();
+      }
+      if (!staffAudioCtx) return;
+
+      const ctx = staffAudioCtx;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
       osc.type = 'sine';
       osc.frequency.value = 880;
 
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
-
       osc.connect(gain);
       gain.connect(ctx.destination);
 
-      osc.start();
-      osc.stop(ctx.currentTime + 0.3);
+      const t0 = ctx.currentTime;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.3, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
+
+      osc.start(t0);
+      osc.stop(t0 + 0.3);
     } catch (e) {
-      console.warn('[staff-beep] AudioContext non disponible', e);
+      console.warn('[staff-beep] Erreur lors du beep', e);
     }
   }
+
 
   function detectTablesChangesAndBeep(tables) {
     if (!Array.isArray(tables)) return;

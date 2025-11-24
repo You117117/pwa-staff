@@ -24,6 +24,10 @@
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
 
+  // 🔁 Auto-refresh de la vue détail
+  const detailAutoRefresh = (window.detailAutoRefresh =
+    window.detailAutoRefresh || { timerId: null, tableId: null });
+
   // Fermeture par clic en dehors du panneau
   document.addEventListener('click', (e) => {
     if (panel.style.display === 'none') return;
@@ -42,6 +46,37 @@
     panel.style.display = 'none';
     panel.innerHTML = '';
     window.__currentDetailTableId = null;
+
+    // Stop auto-refresh
+    if (detailAutoRefresh.timerId) {
+      clearInterval(detailAutoRefresh.timerId);
+      detailAutoRefresh.timerId = null;
+      detailAutoRefresh.tableId = null;
+    }
+  }
+
+  function startDetailAutoRefresh(id) {
+    // Clear ancien timer éventuel
+    if (detailAutoRefresh.timerId) {
+      clearInterval(detailAutoRefresh.timerId);
+      detailAutoRefresh.timerId = null;
+      detailAutoRefresh.tableId = null;
+    }
+
+    detailAutoRefresh.tableId = id;
+    detailAutoRefresh.timerId = setInterval(() => {
+      const panelEl = document.querySelector('#tableDetailPanel');
+      // Si le panneau est fermé, on stoppe tout
+      if (!panelEl || panelEl.style.display === 'none') {
+        clearInterval(detailAutoRefresh.timerId);
+        detailAutoRefresh.timerId = null;
+        detailAutoRefresh.tableId = null;
+        return;
+      }
+
+      // Rafraîchit le détail sans relancer un nouveau timer
+      showTableDetail(id, null, { skipAutoRefresh: true });
+    }, 3000);
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -155,7 +190,9 @@
     return await res.json();
   }
 
-  async function showTableDetail(tableId, statusHint) {
+  async function showTableDetail(tableId, statusHint, opts) {
+    const options = opts || {};
+
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
@@ -562,6 +599,11 @@
           showTableDetail(id);
         }, 5000);
       });
+    }
+
+    // 🔁 Démarrer l’auto-refresh si ce n’est pas un refresh interne
+    if (!options.skipAutoRefresh) {
+      startDetailAutoRefresh(id);
     }
   }
 

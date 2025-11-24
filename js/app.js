@@ -56,6 +56,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // { [tableId]: { until, timeoutId, intervalId } }
   const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
 
+  // --- Compteurs d'impression côté tableau de gauche
+  // { [tableId]: { until, timeoutId, intervalId } }
+  const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
+
   // --- Résumé du jour
 
   function renderSummary(tickets) {
@@ -188,14 +192,56 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPaid.className = 'btn btn-primary btn-paid';
 
         const isPaid = status === 'Payée';
-        const timer = leftPayTimers[id];
+        const payTimer = leftPayTimers[id];
+        const printTimer = leftPrintTimers[id];
+
+        // --- Apparence du bouton IMPRESSION (avec éventuel compte à rebours) ---
+        if (printTimer) {
+          btnPrint.style.backgroundColor = '#f97316';
+          const updatePrintLabel = () => {
+            const remain = printTimer.until - now();
+            if (remain <= 0) {
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
+          };
+          updatePrintLabel();
+          const localPrintInterval = setInterval(() => {
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(localPrintInterval);
+              return;
+            }
+            const cur = leftPrintTimers[id];
+            if (!cur) {
+              clearInterval(localPrintInterval);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const remain = cur.until - now();
+            if (remain <= 0) {
+              clearInterval(localPrintInterval);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
+          }, 250);
+        } else {
+          btnPrint.textContent = 'Imprimer maintenant';
+          btnPrint.style.backgroundColor = '';
+        }
 
         // --- Apparence du bouton Paiement (avec éventuel compte à rebours) ---
-        if (timer) {
+        if (payTimer) {
           // Compte à rebours en cours
           btnPaid.style.backgroundColor = '#f97316';
           const updateLabel = () => {
-            const remain = timer.until - now();
+            const remain = payTimer.until - now();
             if (remain <= 0) {
               btnPaid.textContent = 'Paiement confirmé';
               return;
@@ -241,10 +287,63 @@ document.addEventListener('DOMContentLoaded', () => {
         actions.appendChild(btnPaid);
         card.appendChild(actions);
 
+        // --- Clic IMPRESSION avec compte à rebours 5s ---
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
+
+          // Si impression déjà en cours pour cette table → on ignore
+          if (leftPrintTimers[id]) return;
+
+          // Lance le compte à rebours UI 5s
+          const until = now() + 5000;
+          const timer = {
+            until,
+            timeoutId: null,
+            intervalId: null,
+          };
+          leftPrintTimers[id] = timer;
+
+          btnPrint.style.backgroundColor = '#f97316';
+          const updatePrintLabel = () => {
+            const remain = timer.until - now();
+            if (remain <= 0) {
+              btnPrint.textContent = 'Imprimer maintenant';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPrint.textContent = `Impression en cours (${sec}s)`;
+            }
+          };
+          updatePrintLabel();
+
+          timer.intervalId = setInterval(() => {
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(timer.intervalId);
+              return;
+            }
+            const remain = timer.until - now();
+            if (remain <= 0) {
+              clearInterval(timer.intervalId);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPrint.textContent = `Impression en cours (${sec}s)`;
+            }
+          }, 250);
+
+          timer.timeoutId = setTimeout(() => {
+            const current = leftPrintTimers[id];
+            if (current === timer) {
+              delete leftPrintTimers[id];
+            }
+            clearInterval(timer.intervalId);
+            btnPrint.textContent = 'Imprimer maintenant';
+            btnPrint.style.backgroundColor = '';
+          }, 5000);
+
+          // Appel API /print (comme avant)
           try {
             await fetch(`${base}/print`, {
               method: 'POST',

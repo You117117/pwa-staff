@@ -28,6 +28,11 @@
   const detailAutoRefresh = (window.detailAutoRefresh =
     window.detailAutoRefresh || { timerId: null, tableId: null });
 
+  // 🔁 Timers d'impression pour le panneau de droite
+  // { [tableId]: { until } }
+  const detailPrintTimers = (window.detailPrintTimers =
+    window.detailPrintTimers || {});
+
   // Fermeture par clic en dehors du panneau
   document.addEventListener('click', (e) => {
     if (panel.style.display === 'none') return;
@@ -345,6 +350,23 @@
     let btnPay = null;
     let btnCloseTable = null;
 
+    // Impression : compte à rebours 5s
+    let pendingPrint = false;
+    let printSeconds = 5;
+    let printTimeoutId = null;
+    let printIntervalId = null;
+
+    function updatePrintButtonLabel() {
+      if (!btnPrint) return;
+      if (pendingPrint) {
+        btnPrint.textContent = `Impression en cours (${printSeconds}s)`;
+        btnPrint.style.backgroundColor = '#f97316';
+      } else {
+        btnPrint.textContent = 'Imprimer maintenant';
+        btnPrint.style.backgroundColor = '';
+      }
+    }
+
     // Paiement : compte à rebours 5s
     let pendingPayClose = false;
     let paySeconds = 5;
@@ -370,10 +392,26 @@
     // Boutons Imprimer / Paiement
     if (isActive) {
       btnPrint = document.createElement('button');
-      btnPrint.textContent = 'Imprimer maintenant';
       btnPrint.className = 'btn btn-primary';
       btnPrint.style.width = '100%';
       btnPrint.style.fontSize = '14px';
+
+      // Si un timer d'impression global existe déjà pour cette table, on l'affiche
+      const pt = detailPrintTimers[id];
+      if (pt) {
+        const nowTs = Date.now();
+        const remain = pt.until - nowTs;
+        if (remain > 0) {
+          pendingPrint = true;
+          printSeconds = Math.max(1, Math.ceil(remain / 1000));
+        } else {
+          // timer expiré, on nettoie
+          delete detailPrintTimers[id];
+          pendingPrint = false;
+          printSeconds = 5;
+        }
+      }
+      updatePrintButtonLabel();
 
       btnPay = document.createElement('button');
       btnPay.className = 'btn btn-primary';
@@ -477,8 +515,55 @@
     if (isActive && btnPrint) {
       btnPrint.addEventListener('click', async (e) => {
         e.stopPropagation();
+        const apiBase = getApiBase();
+        if (!apiBase) return;
+
+        // Si impression déjà en cours pour cette table → on ignore
+        const existing = detailPrintTimers[id];
+        if (existing) return;
+
+        // Démarre un nouveau timer global pour cette table
+        const until = Date.now() + 5000;
+        detailPrintTimers[id] = { until };
+
+        // Démarre le compte à rebours local
+        pendingPrint = true;
+        printSeconds = 5;
+        updatePrintButtonLabel();
+
+        if (printIntervalId) clearInterval(printIntervalId);
+        if (printTimeoutId) clearTimeout(printTimeoutId);
+
+        printIntervalId = setInterval(() => {
+          if (!pendingPrint) {
+            clearInterval(printIntervalId);
+            return;
+          }
+          const remain = detailPrintTimers[id]
+            ? detailPrintTimers[id].until - Date.now()
+            : 0;
+          if (remain <= 0) {
+            clearInterval(printIntervalId);
+            pendingPrint = false;
+            printSeconds = 5;
+            delete detailPrintTimers[id];
+            updatePrintButtonLabel();
+            return;
+          }
+          printSeconds = Math.max(1, Math.ceil(remain / 1000));
+          updatePrintButtonLabel();
+        }, 1000);
+
+        printTimeoutId = setTimeout(() => {
+          pendingPrint = false;
+          printSeconds = 5;
+          delete detailPrintTimers[id];
+          updatePrintButtonLabel();
+        }, 5000);
+
+        // Appel API /print (comme avant)
         try {
-          await fetch(`${base}/print`, {
+          await fetch(`${apiBase}/print`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ table: id }),
@@ -489,7 +574,7 @@
           if (window.refreshTables) {
             window.refreshTables();
           }
-          showTableDetail(id);
+          // On laisse l'auto-refresh gérer le rechargement du détail
         }
       });
     }

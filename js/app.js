@@ -22,6 +22,84 @@ document.addEventListener('DOMContentLoaded', () => {
   const normId = (id) => (id || '').toString().trim().toUpperCase();
   const now = () => Date.now();
 
+  // --- Détection de nouvelles commandes pour bip sonore (tableau de gauche uniquement)
+
+  let prevTablesSnapshot = window.__prevTablesSnapshot || {};
+  window.__prevTablesSnapshot = prevTablesSnapshot;
+
+  function playStaffBeep() {
+    try {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.3);
+    } catch (e) {
+      console.warn('[staff-beep] AudioContext non disponible', e);
+    }
+  }
+
+  function detectTablesChangesAndBeep(tables) {
+    if (!Array.isArray(tables)) return;
+
+    let shouldBeep = false;
+    const nextSnapshot = {};
+
+    tables.forEach((tb) => {
+      const id = normId(tb.id);
+      if (!id) return;
+
+      const status = (tb.status || 'Vide').toString().trim();
+      const lastAt =
+        tb.lastTicket && tb.lastTicket.at
+          ? String(tb.lastTicket.at)
+          : null;
+
+      nextSnapshot[id] = { status, lastAt };
+
+      const prev = prevTablesSnapshot[id];
+      if (!prev) {
+        // Table qui devient active alors qu'on n'avait pas d'historique
+        if (status !== 'Vide' && lastAt) {
+          shouldBeep = true;
+        }
+        return;
+      }
+
+      // Nouveau ticket pour cette table
+      if (prev.lastAt !== lastAt && lastAt) {
+        shouldBeep = true;
+        return;
+      }
+
+      // Table qui passe de "Vide" à un autre statut
+      if (prev.status === 'Vide' && status !== 'Vide') {
+        shouldBeep = true;
+        return;
+      }
+    });
+
+    prevTablesSnapshot = nextSnapshot;
+    window.__prevTablesSnapshot = prevTablesSnapshot;
+
+    if (shouldBeep) {
+      playStaffBeep();
+    }
+  }
+
   function getApiBase() {
     const raw = apiInput ? apiInput.value.trim() : '';
     if (!raw) return '';
@@ -517,6 +595,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const tablesData = await fetchTables();
       const tables = tablesData.tables || [];
+      detectTablesChangesAndBeep(tables);
       renderTables(tables);
     } catch (err) {
       console.error('Erreur refreshTables', err);

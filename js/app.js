@@ -1,258 +1,348 @@
-// app.js — Staff (tables, buffer 120s, paiement, reset 03:00, tri par activité locale)
+// app.js — Staff (synchronisé, logique statuts côté backend uniquement)
 
 document.addEventListener('DOMContentLoaded', () => {
-  // --- Sélecteurs
+  // Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
+  const btnSaveApi = document.querySelector('#btnSaveApi');
+  const btnRefreshTables = document.querySelector('#btnRefreshTables');
+  const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
+
   const tablesContainer = document.querySelector('#tables');
   const tablesEmpty = document.querySelector('#tablesEmpty');
   const filterSelect = document.querySelector('#filterTables');
+
   const summaryContainer = document.querySelector('#summary');
   const summaryEmpty = document.querySelector('#summaryEmpty');
 
-  // --- Constantes
   const REFRESH_MS = 5000;
-  const PREP_MS = 20 * 60 * 1000;
-  const BUFFER_MS = 120 * 1000;
-  const RESET_HOUR = 3; // heure de "fin de journée" (03:00)
+  const LS_KEY_API = 'staff-api';
 
   // --- Utils
-  const normId = (id) => (id || '').trim().toUpperCase();
-  const now = () => Date.now();
-  const getApiBase = () => (apiInput ? apiInput.value.trim().replace(/\/+$/, '') : '');
-  const formatTime = (dateString) => {
+
+  const normId = (id) => (id || '').toString().trim().toUpperCase();
+
+  function getApiBase() {
+    const raw = apiInput ? apiInput.value.trim() : '';
+    if (!raw) return '';
+    return raw.replace(/\/+$/, '');
+  }
+
+  function formatTime(dateString) {
     if (!dateString) return '--:--';
     const d = new Date(dateString);
+    if (Number.isNaN(d.getTime())) return dateString;
     const h = d.getHours().toString().padStart(2, '0');
     const m = d.getMinutes().toString().padStart(2, '0');
     return `${h}:${m}`;
-  };
-
-  // --- "Business day" (gestion de la journée de service)
-  function getBusinessDayKey(date = new Date()) {
-    const y = date.getFullYear();
-    const m = (date.getMonth() + 1).toString().padStart(2, '0');
-    const d = date.getDate().toString().padStart(2, '0');
-    return `${y}-${m}-${d}`;
   }
 
-  function isAfterResetHour(date = new Date()) {
-    return date.getHours() >= RESET_HOUR;
-  }
-
-  function getCurrentServiceDayKey() {
-    const nowDate = new Date();
-    if (isAfterResetHour(nowDate)) {
-      return getBusinessDayKey(nowDate);
-    } else {
-      const yesterday = new Date(nowDate);
-      yesterday.setDate(nowDate.getDate() - 1);
-      return getBusinessDayKey(yesterday);
-    }
-  }
-
-  // --- Mémoire globale locale (par device)
-  const tableMemory     = (window.tableMemory     = window.tableMemory     || {});   // { tableId: { isClosed, ignoreIds:Set } }
-  const detailPayTimeouts = (window.detailPayTimeouts = window.detailPayTimeouts || {}); // pour panneau droit (si utilisé)
-  const autoBuffer      = (window.autoBuffer      = window.autoBuffer      || {});   // { tableId: { timeoutId } }
-  const payClose        = (window.payClose        = window.payClose        || {});   // { closeAt, timeoutId, displayUntil }
-  const alertedTickets  = (window.alertedTickets  = window.alertedTickets  || {});   // { tid -> Set(ids) }
-  const prevStatusBeforePay = (window.prevStatusBeforePay = window.prevStatusBeforePay || {}); // { tableId: {label, local} }
-  const localLastActivity   = (window.localLastActivity   = window.localLastActivity   || {}); // { tableId -> timestamp }
-  const localTableStatus    = (window.localTableStatus    = window.localTableStatus    || {}); // { tableId -> {phase:'PREP'|'PAY', until } }
-  if (!window.lastKnownStatus) window.lastKnownStatus = {};
-  if (!window.businessDayKey) window.businessDayKey = null;
-
-  // --- Audio notif
-  const chime = {
-    ctx: null,
-    lastPlayAt: 0,
-    retryTimer: null,
-    el: null,
-    ensureCtx() {
-      if (this.ctx) return;
-      try {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
-        this.ctx = new AC();
-      } catch {}
-    },
-    playWebAudio() {
-      this.ensureCtx();
-      const ctx = this.ctx;
-      if (!ctx) return false;
-      const tnow = now();
-      if (tnow - this.lastPlayAt < 50) return false;
-      const g = ctx.createGain();
-      g.gain.value = 0.0001;
-      const notes = [
-        { t: 0.0, f: 880 },
-        { t: 0.18, f: 1108 },
-        { t: 0.36, f: 1319 },
-      ];
-      const oscs = notes.map((n) => {
-        const o = ctx.createOscillator();
-        o.type = 'sine';
-        o.frequency.setValueAtTime(n.f, ctx.currentTime + n.t);
-        o.connect(g);
-        return o;
-      });
-      g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.0001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.4, ctx.currentTime + 0.05);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
-      oscs.forEach((o, i) => {
-        o.start(ctx.currentTime + notes[i].t);
-        o.stop(ctx.currentTime + 1.25);
-      });
-      this.lastPlayAt = tnow;
-      return true;
-    },
-    ensureHtml5Audio() {
-      if (this.el) return;
-      const a = document.createElement('audio');
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      this.el = a;
-    },
-    tryPlayHtml5() {
-      this.ensureHtml5Audio();
-      const a = this.el;
-      if (!a) return false;
-      const tnow = now();
-      if (tnow - this.lastPlayAt < 50) return false;
-      try {
-        a.currentTime = 0;
-        const p = a.play();
-        if (p && p.catch) p.catch(() => {});
-        this.lastPlayAt = tnow;
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    playRobust() {
-      if (this.playWebAudio()) return;
-      if (this.tryPlayHtml5()) return;
-    },
-    startAutoUnlock() {
-      document.addEventListener('click', () => this.playRobust(), { once: true });
-    },
-  };
-
-  // --- Persistance
-  const STORAGE_KEY = 'staff-state-v1';
-  function saveState() {
+  function loadApiFromStorage() {
     try {
-      const data = {
-        tableMemory: serializeTableMemory(),
-        payClose,
-        prevStatusBeforePay,
-        localLastActivity,
-        localTableStatus,
-        lastKnownStatus: window.lastKnownStatus,
-        businessDayKey: window.businessDayKey,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      const v = localStorage.getItem(LS_KEY_API);
+      if (v && apiInput) apiInput.value = v;
     } catch {}
   }
 
-  function serializeTableMemory() {
-    const obj = {};
-    for (const [k, v] of Object.entries(tableMemory)) {
-      obj[k] = {
-        isClosed: !!v.isClosed,
-        ignoreIds: v.ignoreIds ? Array.from(v.ignoreIds) : [],
-      };
-    }
-    return obj;
-  }
-
-  function loadState() {
+  function saveApiToStorage() {
+    if (!apiInput) return;
+    const v = apiInput.value.trim();
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (data.tableMemory) {
-        for (const [k, v] of Object.entries(data.tableMemory)) {
-          tableMemory[k] = {
-            isClosed: !!v.isClosed,
-            ignoreIds: new Set(v.ignoreIds || []),
-          };
-        }
-      }
-      if (data.payClose) {
-        for (const [k, v] of Object.entries(data.payClose)) {
-          payClose[k] = v;
-        }
-      }
-      if (data.prevStatusBeforePay) {
-        for (const [k, v] of Object.entries(data.prevStatusBeforePay)) {
-          prevStatusBeforePay[k] = v;
-        }
-      }
-      if (data.localLastActivity) {
-        Object.assign(localLastActivity, data.localLastActivity);
-      }
-      if (data.localTableStatus) {
-        Object.assign(localTableStatus, data.localTableStatus);
-      }
-      if (data.lastKnownStatus) {
-        Object.assign(window.lastKnownStatus, data.lastKnownStatus);
-      }
-      if (data.businessDayKey) {
-        window.businessDayKey = data.businessDayKey;
-      }
+      if (v) localStorage.setItem(LS_KEY_API, v);
     } catch {}
   }
 
-  // --- Gestion jour de service
-  function ensureBusinessDayFresh() {
-    const currentKey = getCurrentServiceDayKey();
-    if (window.businessDayKey && window.businessDayKey !== currentKey) {
-      for (const k of Object.keys(tableMemory)) delete tableMemory[k];
-      for (const k of Object.keys(payClose)) delete payClose[k];
-      for (const k of Object.keys(prevStatusBeforePay)) delete prevStatusBeforePay[k];
-      for (const k of Object.keys(localLastActivity)) delete localLastActivity[k];
-      for (const k of Object.keys(localTableStatus)) delete localTableStatus[k];
-      window.lastKnownStatus = {};
+  // --- Résumé du jour
+
+  function renderSummary(tickets) {
+    if (!summaryContainer) return;
+    summaryContainer.innerHTML = '';
+
+    if (!tickets || tickets.length === 0) {
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
+      return;
     }
-    window.businessDayKey = currentKey;
-    saveState();
+    if (summaryEmpty) summaryEmpty.style.display = 'none';
+
+    tickets.forEach((t) => {
+      const head = document.createElement('div');
+      head.className = 'head';
+
+      const chipTable = document.createElement('span');
+      chipTable.className = 'chip';
+      chipTable.textContent = t.table;
+      head.appendChild(chipTable);
+
+      if (t.time) {
+        const chipTime = document.createElement('span');
+        chipTime.className = 'chip';
+        chipTime.innerHTML = `<i class="icon-clock"></i> ${t.time}`;
+        head.appendChild(chipTime);
+      }
+
+      if (typeof t.total === 'number') {
+        const chipTotal = document.createElement('span');
+        chipTotal.className = 'chip';
+        chipTotal.textContent = `Total : ${t.total} €`;
+        head.appendChild(chipTotal);
+      }
+
+      const body = document.createElement('div');
+      body.className = 'body';
+
+      let bodyText = '';
+      if (t.label) {
+        bodyText = t.label;
+      } else if (Array.isArray(t.items)) {
+        bodyText = t.items
+          .map((it) => {
+            const qty = it.qty || it.quantity || 1;
+            const name = it.label || it.name || it.title || 'article';
+            return `${qty}× ${name}`;
+          })
+          .join(', ');
+      } else if (Array.isArray(t.lines)) {
+        bodyText = t.lines
+          .map((it) => {
+            const qty = it.qty || it.quantity || 1;
+            const name = it.label || it.name || it.title || 'article';
+            return `${qty}× ${name}`;
+          })
+          .join(', ');
+      }
+
+      body.textContent = bodyText || '';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'summaryItem';
+      wrapper.appendChild(head);
+      wrapper.appendChild(body);
+
+      summaryContainer.appendChild(wrapper);
+    });
   }
 
-  // --- Auto buffer & close
-  function setPreparationFor20min(id) {
-    id = normId(id);
-    const until = now() + PREP_MS;
-    localTableStatus[id] = { phase: 'PREP', until };
-    saveState();
+  // --- Rendu des tables
+
+  function renderTables(tables) {
+    if (!tablesContainer) return;
+    tablesContainer.innerHTML = '';
+
+    if (!tables || tables.length === 0) {
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
+      return;
+    }
+    if (tablesEmpty) tablesEmpty.style.display = 'none';
+
+    const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
+
+    tables.forEach((tb) => {
+      const id = normId(tb.id);
+      if (!id) return;
+
+      if (filterValue !== 'TOUTES' && filterValue !== id) return;
+
+      const status = tb.status || 'Vide';
+      const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
+
+      const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
+
+      const card = document.createElement('div');
+      card.className = 'table';
+      card.setAttribute('data-table', id);
+
+      const head = document.createElement('div');
+      head.className = 'card-head';
+
+      const chipId = document.createElement('span');
+      chipId.className = 'chip';
+      chipId.textContent = id;
+      head.appendChild(chipId);
+
+      const chipStatus = document.createElement('span');
+      chipStatus.className = 'chip';
+      chipStatus.textContent = status;
+      head.appendChild(chipStatus);
+
+      const chipTime = document.createElement('span');
+      chipTime.className = 'chip';
+      // Texte demandé : "Commandé à : (heure)"
+      chipTime.textContent = hasLastTicket ? `Commandé à : ${lastTime}` : '—';
+      head.appendChild(chipTime);
+
+      card.appendChild(head);
+
+      if (status !== 'Vide') {
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
+
+        const btnPrint = document.createElement('button');
+        btnPrint.className = 'btn btn-primary btn-print';
+        btnPrint.textContent = 'Imprimer maintenant';
+
+        const btnPaid = document.createElement('button');
+        btnPaid.className = 'btn btn-primary btn-paid';
+
+        const isPaid = status === 'Payée';
+        if (isPaid) {
+          btnPaid.textContent = 'Annuler paiement';
+          btnPaid.style.backgroundColor = '#f97316';
+        } else {
+          btnPaid.textContent = 'Paiement confirmé';
+          btnPaid.style.backgroundColor = '';
+        }
+
+        actions.appendChild(btnPrint);
+        actions.appendChild(btnPaid);
+        card.appendChild(actions);
+
+        btnPrint.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const base = getApiBase();
+          if (!base) return;
+          try {
+            await fetch(`${base}/print`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /print', err);
+          } finally {
+            await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
+          }
+        });
+
+        btnPaid.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const base = getApiBase();
+          if (!base) return;
+          const endpoint = isPaid ? '/cancel-confirm' : '/confirm';
+          try {
+            await fetch(`${base}${endpoint}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur', endpoint, err);
+          } finally {
+            await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
+          }
+        });
+      }
+
+      // 🔁 MODIF ICI : toggle du panneau de droite en recliquant sur la même table
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+
+        const currentId = window.__currentDetailTableId || null;
+        if (currentId && normId(currentId) === id) {
+          const panel = document.querySelector('#tableDetailPanel');
+          if (panel) {
+            panel.style.display = 'none';
+            panel.innerHTML = '';
+          }
+          window.__currentDetailTableId = null;
+          return;
+        }
+
+        if (window.showTableDetail) {
+          window.showTableDetail(id, status);
+        }
+      });
+
+      tablesContainer.appendChild(card);
+    });
   }
 
-  function scheduleCloseIn30s(id){
-    id=normId(id);
-    const nowTs=now();
-    const closeAt=nowTs+5_000;
-    const displayUntil=nowTs+5_000;
-    if(payClose[id]&&payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
-    const timeoutId=setTimeout(()=>closeTableAndIgnoreCurrentTickets(id),5_000);
-    payClose[id]={closeAt,displayUntil,timeoutId};
-    saveState();
+  // --- Appels API
+
+  async function fetchSummary() {
+    const base = getApiBase();
+    if (!base) return { tickets: [] };
+    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { tickets: [] };
   }
-  
-  function cancelPayClose(id){
-    id=normId(id);
-    if(payClose[id]&&payClose[id].timeoutId) clearTimeout(payClose[id].timeoutId);
-    delete payClose[id];
-    saveState();
+
+  async function fetchTables() {
+    const base = getApiBase();
+    if (!base) return { tables: [] };
+    const res = await fetch(`${base}/tables`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { tables: [] };
   }
-  window.cancelPayClose = cancelPayClose;
 
-  // ... (le reste de ton app.js est inchangé, y compris le rendu des cartes, résumé du jour, refresh, etc.)
-  // La seule autre modif est dans le bloc btnCancel :
+  async function refreshTables() {
+    const base = getApiBase();
+    if (!base) {
+      if (tablesContainer) tablesContainer.innerHTML = '';
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
+      return;
+    }
+    try {
+      const tablesData = await fetchTables();
+      const tables = tablesData.tables || [];
+      renderTables(tables);
+    } catch (err) {
+      console.error('Erreur refreshTables', err);
+    }
+  }
 
-  // Dans renderTables(), à l’endroit où tu as :
-  // const btnCancel=card.querySelector('.btn-cancel-pay'); if(btnCancel){ ... }
+  async function refreshSummary() {
+    const base = getApiBase();
+    if (!base) {
+      if (summaryContainer) summaryContainer.innerHTML = '';
+      if (summaryEmpty) summaryEmpty.style.display = 'block';
+      return;
+    }
+    try {
+      const summaryData = await fetchSummary();
+      renderSummary(summaryData.tickets || []);
+    } catch (err) {
+      console.error('Erreur refreshSummary', err);
+    }
+  }
 
-  // utilise la version avec compte à rebours que j’ai mise plus haut.
+  window.refreshTables = refreshTables;
+
+  if (btnSaveApi) {
+    btnSaveApi.addEventListener('click', () => {
+      saveApiToStorage();
+      refreshTables();
+      refreshSummary();
+    });
+  }
+
+  if (btnRefreshTables) {
+    btnRefreshTables.addEventListener('click', () => {
+      refreshTables();
+    });
+  }
+
+  if (btnRefreshSummary) {
+    btnRefreshSummary.addEventListener('click', () => {
+      refreshSummary();
+    });
+  }
+
+  if (filterSelect) {
+    filterSelect.addEventListener('change', () => {
+      refreshTables();
+    });
+  }
+
+  loadApiFromStorage();
+  refreshTables();
+  refreshSummary();
+  setInterval(() => {
+    refreshTables();
+    refreshSummary();
+  }, REFRESH_MS);
 });

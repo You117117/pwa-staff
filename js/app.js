@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Utils
 
   const normId = (id) => (id || '').toString().trim().toUpperCase();
+  const now = () => Date.now();
 
   function getApiBase() {
     const raw = apiInput ? apiInput.value.trim() : '';
@@ -50,6 +51,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (v) localStorage.setItem(LS_KEY_API, v);
     } catch {}
   }
+
+  // --- Compteurs de paiement côté tableau de gauche
+  // { [tableId]: { until, timeoutId, intervalId } }
+  const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
 
   // --- Résumé du jour
 
@@ -183,10 +188,51 @@ document.addEventListener('DOMContentLoaded', () => {
         btnPaid.className = 'btn btn-primary btn-paid';
 
         const isPaid = status === 'Payée';
-        if (isPaid) {
+        const timer = leftPayTimers[id];
+
+        // --- Apparence du bouton Paiement (avec éventuel compte à rebours) ---
+        if (timer) {
+          // Compte à rebours en cours
+          btnPaid.style.backgroundColor = '#f97316';
+          const updateLabel = () => {
+            const remain = timer.until - now();
+            if (remain <= 0) {
+              btnPaid.textContent = 'Paiement confirmé';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler paiement (${sec}s)`;
+          };
+          updateLabel();
+          // Petit interval local juste pour ce bouton (si la carte reste affichée)
+          const localInterval = setInterval(() => {
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(localInterval);
+              return;
+            }
+            const currentTimer = leftPayTimers[id];
+            if (!currentTimer) {
+              clearInterval(localInterval);
+              btnPaid.textContent = isPaid ? 'Annuler paiement' : 'Paiement confirmé';
+              btnPaid.style.backgroundColor = isPaid ? '#f97316' : '';
+              return;
+            }
+            const remain = currentTimer.until - now();
+            if (remain <= 0) {
+              clearInterval(localInterval);
+              btnPaid.textContent = 'Paiement confirmé';
+              btnPaid.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler paiement (${sec}s)`;
+          }, 250);
+        } else if (isPaid) {
+          // Payée sans compte à rebours actif
           btnPaid.textContent = 'Annuler paiement';
           btnPaid.style.backgroundColor = '#f97316';
         } else {
+          // Pas encore payée, pas de timer
           btnPaid.textContent = 'Paiement confirmé';
           btnPaid.style.backgroundColor = '';
         }
@@ -215,29 +261,112 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         });
 
+        // --- Gestion clic Paiement confirmé / Annuler paiement (avec compte à rebours) ---
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
-          const endpoint = isPaid ? '/cancel-confirm' : '/confirm';
+
+          const currentTimer = leftPayTimers[id];
+
+          // 1) Si déjà payée OU si un compte à rebours est en cours → ANNULER PAIEMENT
+          if (isPaid || currentTimer) {
+            if (currentTimer) {
+              clearTimeout(currentTimer.timeoutId);
+              clearInterval(currentTimer.intervalId);
+              delete leftPayTimers[id];
+            }
+            try {
+              await fetch(`${base}/cancel-confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {
+              console.error('Erreur /cancel-confirm', err);
+            } finally {
+              await refreshTables();
+              if (window.__currentDetailTableId === id && window.showTableDetail) {
+                window.showTableDetail(id);
+              }
+            }
+            return;
+          }
+
+          // 2) Sinon → PAIEMENT CONFIRMÉ + démarrage du compte à rebours 5s
           try {
-            await fetch(`${base}${endpoint}`, {
+            await fetch(`${base}/confirm`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ table: id }),
             });
           } catch (err) {
-            console.error('Erreur', endpoint, err);
-          } finally {
-            await refreshTables();
-            if (window.__currentDetailTableId === id && window.showTableDetail) {
-              window.showTableDetail(id);
-            }
+            console.error('Erreur /confirm', err);
           }
+
+          // On démarre le compte à rebours local de 5s
+          const until = now() + 5000;
+          const countdown = {
+            until,
+            timeoutId: null,
+            intervalId: null,
+          };
+          leftPayTimers[id] = countdown;
+
+          // Mise à jour immédiate du bouton
+          btnPaid.style.backgroundColor = '#f97316';
+          const updateLabel = () => {
+            const remain = countdown.until - now();
+            if (remain <= 0) {
+              btnPaid.textContent = 'Paiement confirmé';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPaid.textContent = `Annuler paiement (${sec}s)`;
+            }
+          };
+          updateLabel();
+
+          countdown.intervalId = setInterval(() => {
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(countdown.intervalId);
+              return;
+            }
+            const remain = countdown.until - now();
+            if (remain <= 0) {
+              clearInterval(countdown.intervalId);
+              btnPaid.textContent = 'Paiement confirmé';
+              btnPaid.style.backgroundColor = '';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPaid.textContent = `Annuler paiement (${sec}s)`;
+            }
+          }, 250);
+
+          // Au bout de 5s → clôture automatique de la table
+          countdown.timeoutId = setTimeout(async () => {
+            // Si entre-temps on a annulé ou remplacé le timer, on ne fait rien
+            if (leftPayTimers[id] !== countdown) return;
+            delete leftPayTimers[id];
+
+            try {
+              await fetch(`${base}/close-table`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {
+              console.error('Erreur /close-table', err);
+            } finally {
+              await refreshTables();
+              if (window.__currentDetailTableId === id && window.showTableDetail) {
+                window.showTableDetail(id);
+              }
+            }
+          }, 5000);
         });
       }
 
-      // 🔁 MODIF ICI : toggle du panneau de droite en recliquant sur la même table
+      // Toggle panneau de droite en recliquant sur la même table
       card.addEventListener('click', (e) => {
         if (e.target.closest('button')) return;
 

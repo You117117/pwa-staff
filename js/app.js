@@ -56,29 +56,41 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!staffAudioCtx) return;
 
       const ctx = staffAudioCtx;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const now = ctx.currentTime;
 
-      osc.type = 'sine';
-      osc.frequency.value = 880;
+      // 3 notes marquantes : do (261.63 Hz), ré (293.66 Hz), mi (329.63 Hz)
+      const notes = [
+        { freq: 261.63, start: 0.0, dur: 0.12 }, // do
+        { freq: 293.66, start: 0.13, dur: 0.12 }, // ré
+        { freq: 329.63, start: 0.26, dur: 0.14 }, // mi
+      ];
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
+      notes.forEach((note) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-      const t0 = ctx.currentTime;
-      gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.exponentialRampToValueAtTime(0.3, t0 + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
+        osc.type = 'sine';
+        osc.frequency.value = note.freq;
 
-      osc.start(t0);
-      osc.stop(t0 + 0.3);
+        const t0 = now + note.start;
+        const t1 = t0 + note.dur;
+
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.35, t0 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t1);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(t0);
+        osc.stop(t1 + 0.02);
+      });
     } catch (e) {
       console.warn('[staff-beep] Erreur lors du beep', e);
     }
   }
 
-
-  function detectTablesChangesAndBeep(tables) {
+function detectTablesChangesAndBeep(tables) {
     if (!Array.isArray(tables)) return;
 
     let shouldBeep = false;

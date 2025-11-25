@@ -33,6 +33,8 @@
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
   const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
 
+    window.detailPrintTimers || {});
+
   // Fermeture par clic en dehors du panneau
   document.addEventListener('click', (e) => {
     if (panel.style.display === 'none') return;
@@ -81,7 +83,7 @@
 
       // Rafraîchit le détail sans relancer un nouveau timer
       showTableDetail(id, null, { skipAutoRefresh: true });
-    }, 5000);
+    }, 3000);
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -341,12 +343,7 @@
     // ── Actions (Imprimer / Paiement / Clôturer) ───
     const actions = document.createElement('div');
     actions.style.display = 'flex';
-    actions.style.flexDirection = 'column';
-    actions.style.gap = '8px';
-
-    const isActive = currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
-
-
+  
     let btnPrint = null;
     let btnPay = null;
     let btnCloseTable = null;
@@ -354,12 +351,12 @@
     // Boutons Imprimer / Paiement
     if (isActive) {
       btnPrint = document.createElement('button');
-      btnPrint.className = 'btn btn-primary';
+      btnPrint.className = 'btn btn-primary btn-print-detail';
       btnPrint.style.width = '100%';
       btnPrint.style.fontSize = '14px';
 
       btnPay = document.createElement('button');
-      btnPay.className = 'btn btn-primary';
+      btnPay.className = 'btn btn-primary btn-pay-detail';
       btnPay.style.width = '100%';
       btnPay.style.fontSize = '14px';
 
@@ -514,7 +511,6 @@
 
     // ── Listeners Imprimer / Paiement ──────────────
 
-
     if (isActive && btnPrint) {
       btnPrint.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -525,9 +521,6 @@
         }
       });
     }
-
-    }
-
 
     if (isActive && btnPay) {
       btnPay.addEventListener('click', (e) => {
@@ -540,7 +533,13 @@
       });
     }
 
-
+ySeconds = 5;
+          if (window.refreshTables) {
+            window.refreshTables();
+          }
+          showTableDetail(id);
+        }, 5000);
+      });
     }
 
     // 🔁 Démarrer l’auto-refresh si ce n’est pas un refresh interne

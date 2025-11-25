@@ -81,7 +81,7 @@
 
       // Rafraîchit le détail sans relancer un nouveau timer
       showTableDetail(id, null, { skipAutoRefresh: true });
-    }, 3000);
+    }, 5000);
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite

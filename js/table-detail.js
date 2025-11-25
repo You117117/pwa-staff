@@ -419,6 +419,16 @@
         }
         syncPrintButtonFromGlobal();
         syncPayButtonFromGlobal();
+
+        // Synchroniser aussi la visibilité du bouton de clôture
+        if (btnCloseTable) {
+          const payTimerGlobalForClose = leftPayTimers[id];
+          if (currentStatus === 'Payée' || payTimerGlobalForClose) {
+            btnCloseTable.style.display = 'none';
+          } else {
+            btnCloseTable.style.display = 'block';
+          }
+        }
       }, 250);
 
       actions.appendChild(btnPrint);
@@ -448,6 +458,15 @@
         }
       }
       updateCloseButtonLabel();
+
+      // Cacher le bouton de clôture si paiement confirmé ou timer de paiement actif (synchro avec app.js)
+      const payTimerGlobalForClose = leftPayTimers[id];
+      if (currentStatus === 'Payée' || payTimerGlobalForClose) {
+        btnCloseTable.style.display = 'none';
+      } else {
+        btnCloseTable.style.display = 'block';
+      }
+
 
       btnCloseTable.addEventListener('click', async (e) => {
         e.stopPropagation();

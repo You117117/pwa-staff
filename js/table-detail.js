@@ -28,10 +28,9 @@
   const detailAutoRefresh = (window.detailAutoRefresh =
     window.detailAutoRefresh || { timerId: null, tableId: null });
 
-  // 🔁 Timers d'impression pour le panneau de droite
-  // { [tableId]: { until } }
-  const detailPrintTimers = (window.detailPrintTimers =
-    window.detailPrintTimers || {});
+  // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
+  const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
+  const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
 
   // Fermeture par clic en dehors du panneau
   document.addEventListener('click', (e) => {
@@ -346,48 +345,10 @@
 
     const isActive = currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
 
+
     let btnPrint = null;
     let btnPay = null;
     let btnCloseTable = null;
-
-    // Impression : compte à rebours 5s
-    let pendingPrint = false;
-    let printSeconds = 5;
-    let printTimeoutId = null;
-    let printIntervalId = null;
-
-    function updatePrintButtonLabel() {
-      if (!btnPrint) return;
-      if (pendingPrint) {
-        btnPrint.textContent = `Impression en cours (${printSeconds}s)`;
-        btnPrint.style.backgroundColor = '#f97316';
-      } else {
-        btnPrint.textContent = 'Imprimer maintenant';
-        btnPrint.style.backgroundColor = '';
-      }
-    }
-
-    // Paiement : compte à rebours 5s
-    let pendingPayClose = false;
-    let paySeconds = 5;
-    let payTimeoutId = null;
-    let payIntervalId = null;
-
-    function updatePayButtonLabel() {
-      if (!btnPay) return;
-      if (pendingPayClose) {
-        btnPay.textContent = `Annuler paiement (${paySeconds}s)`;
-        btnPay.style.backgroundColor = '#f97316';
-        return;
-      }
-      if (currentStatus === 'Payée') {
-        btnPay.textContent = 'Annuler paiement';
-        btnPay.style.backgroundColor = '#f97316';
-      } else {
-        btnPay.textContent = 'Paiement confirmé';
-        btnPay.style.backgroundColor = '';
-      }
-    }
 
     // Boutons Imprimer / Paiement
     if (isActive) {
@@ -396,29 +357,69 @@
       btnPrint.style.width = '100%';
       btnPrint.style.fontSize = '14px';
 
-      // Si un timer d'impression global existe déjà pour cette table, on l'affiche
-      const pt = detailPrintTimers[id];
-      if (pt) {
-        const nowTs = Date.now();
-        const remain = pt.until - nowTs;
-        if (remain > 0) {
-          pendingPrint = true;
-          printSeconds = Math.max(1, Math.ceil(remain / 1000));
-        } else {
-          // timer expiré, on nettoie
-          delete detailPrintTimers[id];
-          pendingPrint = false;
-          printSeconds = 5;
-        }
-      }
-      updatePrintButtonLabel();
-
       btnPay = document.createElement('button');
       btnPay.className = 'btn btn-primary';
       btnPay.style.width = '100%';
       btnPay.style.fontSize = '14px';
 
-      updatePayButtonLabel();
+      // --- Synchronisation avec les timers globaux (gauche / app.js) ---
+
+      function syncPrintButtonFromGlobal() {
+        if (!btnPrint) return;
+        const timers = window.leftPrintTimers || {};
+        const t = timers[id];
+        if (!t) {
+          btnPrint.textContent = 'Imprimer maintenant';
+          btnPrint.style.backgroundColor = '';
+          return;
+        }
+        const remain = t.until - Date.now();
+        if (remain <= 0) {
+          btnPrint.textContent = 'Imprimer maintenant';
+          btnPrint.style.backgroundColor = '';
+        } else {
+          const sec = Math.max(1, Math.ceil(remain / 1000));
+          btnPrint.textContent = `Impression en cours (${sec}s)`;
+          btnPrint.style.backgroundColor = '#f97316';
+        }
+      }
+
+      function syncPayButtonFromGlobal() {
+        if (!btnPay) return;
+        const timers = window.leftPayTimers || {};
+        const t = timers[id];
+        if (t) {
+          const remain = t.until - Date.now();
+          if (remain > 0) {
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPay.textContent = `Annuler paiement (${sec}s)`;
+            btnPay.style.backgroundColor = '#f97316';
+            return;
+          }
+        }
+        // Aucun timer actif → état basé sur le statut courant
+        if (currentStatus === 'Payée') {
+          btnPay.textContent = 'Annuler paiement';
+          btnPay.style.backgroundColor = '#f97316';
+        } else {
+          btnPay.textContent = 'Paiement confirmé';
+          btnPay.style.backgroundColor = '';
+        }
+      }
+
+      // Sync initial
+      syncPrintButtonFromGlobal();
+      syncPayButtonFromGlobal();
+
+      // Sync périodique toutes les 250ms (tant que le bouton existe dans le DOM)
+      const syncIntervalId = setInterval(() => {
+        if (!document.body.contains(btnPrint) && !document.body.contains(btnPay)) {
+          clearInterval(syncIntervalId);
+          return;
+        }
+        syncPrintButtonFromGlobal();
+        syncPayButtonFromGlobal();
+      }, 250);
 
       actions.appendChild(btnPrint);
       actions.appendChild(btnPay);
@@ -508,6 +509,30 @@
 
     if (actions.children.length > 0) {
       panel.appendChild(actions);
+    }
+
+    // ── Listeners Imprimer / Paiement ──────────────
+
+    if (isActive && btnPrint) {
+      btnPrint.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Délègue l'action au bouton "Imprimer" du tableau de gauche (cerveau unique dans app.js)
+        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-print`);
+        if (leftBtn) {
+          leftBtn.click();
+        }
+      });
+    }
+
+    if (isActive && btnPay) {
+      btnPay.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Délègue l'action au bouton Paiement du tableau de gauche (cerveau unique dans app.js)
+        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
+        if (leftBtn) {
+          leftBtn.click();
+        }
+      });
     }
 
     // ── Listeners Imprimer / Paiement ──────────────

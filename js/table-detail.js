@@ -28,11 +28,9 @@
   const detailAutoRefresh = (window.detailAutoRefresh =
     window.detailAutoRefresh || { timerId: null, tableId: null });
 
-  // 🔁 Timers globaux partagés avec le tableau de gauche
-  // Utilise window.leftPrintTimers et window.leftPayTimers définis dans app.js
-  const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
-  const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
-
+  // 🔁 Timers d'impression pour le panneau de droite
+  // { [tableId]: { until } }
+  const detailPrintTimers = (window.detailPrintTimers =
     window.detailPrintTimers || {});
 
   // Fermeture par clic en dehors du panneau
@@ -83,7 +81,7 @@
 
       // Rafraîchit le détail sans relancer un nouveau timer
       showTableDetail(id, null, { skipAutoRefresh: true });
-    }, 3000);
+    }, 5000);
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -343,81 +341,84 @@
     // ── Actions (Imprimer / Paiement / Clôturer) ───
     const actions = document.createElement('div');
     actions.style.display = 'flex';
-  
+    actions.style.flexDirection = 'column';
+    actions.style.gap = '8px';
+
+    const isActive = currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
+
     let btnPrint = null;
     let btnPay = null;
     let btnCloseTable = null;
 
+    // Impression : compte à rebours 5s
+    let pendingPrint = false;
+    let printSeconds = 5;
+    let printTimeoutId = null;
+    let printIntervalId = null;
+
+    function updatePrintButtonLabel() {
+      if (!btnPrint) return;
+      if (pendingPrint) {
+        btnPrint.textContent = `Impression en cours (${printSeconds}s)`;
+        btnPrint.style.backgroundColor = '#f97316';
+      } else {
+        btnPrint.textContent = 'Imprimer maintenant';
+        btnPrint.style.backgroundColor = '';
+      }
+    }
+
+    // Paiement : compte à rebours 5s
+    let pendingPayClose = false;
+    let paySeconds = 5;
+    let payTimeoutId = null;
+    let payIntervalId = null;
+
+    function updatePayButtonLabel() {
+      if (!btnPay) return;
+      if (pendingPayClose) {
+        btnPay.textContent = `Annuler paiement (${paySeconds}s)`;
+        btnPay.style.backgroundColor = '#f97316';
+        return;
+      }
+      if (currentStatus === 'Payée') {
+        btnPay.textContent = 'Annuler paiement';
+        btnPay.style.backgroundColor = '#f97316';
+      } else {
+        btnPay.textContent = 'Paiement confirmé';
+        btnPay.style.backgroundColor = '';
+      }
+    }
+
     // Boutons Imprimer / Paiement
     if (isActive) {
       btnPrint = document.createElement('button');
-      btnPrint.className = 'btn btn-primary btn-print-detail';
+      btnPrint.className = 'btn btn-primary';
       btnPrint.style.width = '100%';
       btnPrint.style.fontSize = '14px';
 
+      // Si un timer d'impression global existe déjà pour cette table, on l'affiche
+      const pt = detailPrintTimers[id];
+      if (pt) {
+        const nowTs = Date.now();
+        const remain = pt.until - nowTs;
+        if (remain > 0) {
+          pendingPrint = true;
+          printSeconds = Math.max(1, Math.ceil(remain / 1000));
+        } else {
+          // timer expiré, on nettoie
+          delete detailPrintTimers[id];
+          pendingPrint = false;
+          printSeconds = 5;
+        }
+      }
+      updatePrintButtonLabel();
+
       btnPay = document.createElement('button');
-      btnPay.className = 'btn btn-primary btn-pay-detail';
+      btnPay.className = 'btn btn-primary';
       btnPay.style.width = '100%';
       btnPay.style.fontSize = '14px';
 
-      // --- Synchronisation avec les timers globaux (gauche) ---
-
-      function syncPrintButtonFromGlobal() {
-        if (!btnPrint) return;
-        const timers = window.leftPrintTimers || {};
-        const t = timers[id];
-        if (!t) {
-          btnPrint.textContent = 'Imprimer maintenant';
-          btnPrint.style.backgroundColor = '';
-          return;
-        }
-        const remain = t.until - Date.now();
-        if (remain <= 0) {
-          btnPrint.textContent = 'Imprimer maintenant';
-          btnPrint.style.backgroundColor = '';
-        } else {
-          const sec = Math.max(1, Math.ceil(remain / 1000));
-          btnPrint.textContent = `Impression en cours (${sec}s)`;
-          btnPrint.style.backgroundColor = '#f97316';
-        }
-      }
-
-      function syncPayButtonFromGlobal() {
-        if (!btnPay) return;
-        const timers = window.leftPayTimers || {};
-        const t = timers[id];
-        if (t) {
-          const remain = t.until - Date.now();
-          if (remain > 0) {
-            const sec = Math.max(1, Math.ceil(remain / 1000));
-            btnPay.textContent = `Annuler paiement (${sec}s)`;
-            btnPay.style.backgroundColor = '#f97316';
-            return;
-          }
-        }
-        // Aucun timer actif → état basé sur le statut courant
-        if (currentStatus === 'Payée') {
-          btnPay.textContent = 'Annuler paiement';
-          btnPay.style.backgroundColor = '#f97316';
-        } else {
-          btnPay.textContent = 'Paiement confirmé';
-          btnPay.style.backgroundColor = '';
-        }
-      }
-
-      // Sync initial
-      syncPrintButtonFromGlobal();
-      syncPayButtonFromGlobal();
-
-      // Sync périodique toutes les 250ms (tant que le bouton existe dans le DOM)
-      const syncIntervalId = setInterval(() => {
-        if (!document.body.contains(btnPrint) && !document.body.contains(btnPay)) {
-          clearInterval(syncIntervalId);
-          return;
-        }
-        syncPrintButtonFromGlobal();
-        syncPayButtonFromGlobal();
-      }, 250);
+      updatePayButtonLabel();
 
       actions.appendChild(btnPrint);
       actions.appendChild(btnPay);
@@ -512,28 +513,171 @@
     // ── Listeners Imprimer / Paiement ──────────────
 
     if (isActive && btnPrint) {
-      btnPrint.addEventListener('click', (e) => {
+      btnPrint.addEventListener('click', async (e) => {
         e.stopPropagation();
-        // On délègue l'action au bouton "Imprimer" du tableau de gauche (cerveau unique)
-        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-print`);
-        if (leftBtn) {
-          leftBtn.click();
+        const apiBase = getApiBase();
+        if (!apiBase) return;
+
+        // Si impression déjà en cours pour cette table → on ignore
+        const existing = detailPrintTimers[id];
+        if (existing) return;
+
+        // Démarre un nouveau timer global pour cette table
+        const until = Date.now() + 5000;
+        detailPrintTimers[id] = { until };
+
+        // Démarre le compte à rebours local
+        pendingPrint = true;
+        printSeconds = 5;
+        updatePrintButtonLabel();
+
+        if (printIntervalId) clearInterval(printIntervalId);
+        if (printTimeoutId) clearTimeout(printTimeoutId);
+
+        printIntervalId = setInterval(() => {
+          if (!pendingPrint) {
+            clearInterval(printIntervalId);
+            return;
+          }
+          const remain = detailPrintTimers[id]
+            ? detailPrintTimers[id].until - Date.now()
+            : 0;
+          if (remain <= 0) {
+            clearInterval(printIntervalId);
+            pendingPrint = false;
+            printSeconds = 5;
+            delete detailPrintTimers[id];
+            updatePrintButtonLabel();
+            return;
+          }
+          printSeconds = Math.max(1, Math.ceil(remain / 1000));
+          updatePrintButtonLabel();
+        }, 1000);
+
+        printTimeoutId = setTimeout(() => {
+          pendingPrint = false;
+          printSeconds = 5;
+          delete detailPrintTimers[id];
+          updatePrintButtonLabel();
+        }, 5000);
+
+        // Appel API /print (comme avant)
+        try {
+          await fetch(`${apiBase}/print`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: id }),
+          });
+        } catch (err) {
+          console.error('Erreur /print (détail)', err);
+        } finally {
+          if (window.refreshTables) {
+            window.refreshTables();
+          }
+          // On laisse l'auto-refresh gérer le rechargement du détail
         }
       });
     }
 
     if (isActive && btnPay) {
-      btnPay.addEventListener('click', (e) => {
+      btnPay.addEventListener('click', async (e) => {
         e.stopPropagation();
-        // On délègue l'action au bouton Paiement du tableau de gauche (cerveau unique)
-        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
-        if (leftBtn) {
-          leftBtn.click();
-        }
-      });
-    }
+        const apiBase = getApiBase();
+        if (!apiBase) return;
 
-ySeconds = 5;
+        // Si un compte à rebours paiement est en cours → annuler paiement
+        if (pendingPayClose) {
+          pendingPayClose = false;
+          paySeconds = 5;
+          if (payTimeoutId) clearTimeout(payTimeoutId);
+          if (payIntervalId) clearInterval(payIntervalId);
+
+          try {
+            await fetch(`${apiBase}/cancel-confirm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /cancel-confirm (détail)', err);
+          } finally {
+            if (btnCloseTable) {
+              btnCloseTable.style.display = 'block';
+            }
+            updatePayButtonLabel();
+            if (window.refreshTables) {
+              window.refreshTables();
+            }
+            showTableDetail(id);
+          }
+
+          return;
+        }
+
+        // Si déjà Payée → annuler paiement (sans compte à rebours actif)
+        if (currentStatus === 'Payée') {
+          try {
+            await fetch(`${apiBase}/cancel-confirm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /cancel-confirm (détail)', err);
+          } finally {
+            if (btnCloseTable) {
+              btnCloseTable.style.display = 'block';
+            }
+            if (window.refreshTables) {
+              window.refreshTables();
+            }
+            showTableDetail(id);
+          }
+          return;
+        }
+
+        // Paiement confirmé
+        try {
+          await fetch(`${apiBase}/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: id }),
+          });
+        } catch (err) {
+          console.error('Erreur /confirm (détail)', err);
+        }
+
+        // Statut direct côté UI
+        currentStatus = 'Payée';
+        statusChip.textContent = `Statut : ${currentStatus}`;
+
+        // Démarre compte à rebours 5s
+        pendingPayClose = true;
+        paySeconds = 5;
+
+        if (btnCloseTable) {
+          btnCloseTable.style.display = 'none';
+        }
+
+        updatePayButtonLabel();
+
+        payIntervalId = setInterval(() => {
+          if (!pendingPayClose) {
+            clearInterval(payIntervalId);
+            return;
+          }
+          paySeconds -= 1;
+          if (paySeconds <= 0) {
+            paySeconds = 0;
+            clearInterval(payIntervalId);
+          }
+          updatePayButtonLabel();
+        }, 1000);
+
+        payTimeoutId = setTimeout(() => {
+          if (!pendingPayClose) return;
+          pendingPayClose = false;
+          paySeconds = 5;
           if (window.refreshTables) {
             window.refreshTables();
           }

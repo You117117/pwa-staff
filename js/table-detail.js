@@ -136,7 +136,7 @@
           : [];
 
       const wrapper = document.createElement('div');
-      wrapper.style.marginBottom = '6px';
+      wrapper.style.marginBottom = '8px';
 
       const line = document.createElement('div');
       line.style.display = 'flex';
@@ -158,9 +158,8 @@
 
       line.appendChild(left);
       line.appendChild(right);
-      wrapper.appendChild(line);
 
-      // Ligne "Client : Prénom"
+      // Ligne "Client : Prénom" AU-DESSUS de l'article
       if (lineClientName) {
         const clientLine = document.createElement('div');
         clientLine.textContent = `Client : ${lineClientName}`;
@@ -168,18 +167,33 @@
         clientLine.style.color = '#e5e7eb';
         clientLine.style.opacity = '0.9';
         clientLine.style.marginLeft = '4px';
+        clientLine.style.marginBottom = '2px';
         wrapper.appendChild(clientLine);
       }
 
-      // Ligne "Suppléments : ..."
+      // On ajoute ensuite la ligne produit
+      wrapper.appendChild(line);
+
+      // Bloc "Suppléments" en liste verticale
       if (extras.length) {
-        const extrasLine = document.createElement('div');
-        extrasLine.textContent = `Suppléments : ${extras.join(', ')}`;
-        extrasLine.style.fontSize = '13px';
-        extrasLine.style.color = '#cbd5f5';
-        extrasLine.style.opacity = '0.9';
-        extrasLine.style.marginLeft = '4px';
-        wrapper.appendChild(extrasLine);
+        const extrasLabel = document.createElement('div');
+        extrasLabel.textContent = 'Suppléments :';
+        extrasLabel.style.fontSize = '13px';
+        extrasLabel.style.color = '#cbd5f5';
+        extrasLabel.style.fontWeight = '700';
+        extrasLabel.style.marginLeft = '4px';
+        extrasLabel.style.marginTop = '2px';
+        wrapper.appendChild(extrasLabel);
+
+        extras.forEach((ex) => {
+          const exLine = document.createElement('div');
+          exLine.textContent = `• ${ex}`;
+          exLine.style.fontSize = '13px';
+          exLine.style.color = '#cbd5f5';
+          exLine.style.opacity = '0.9';
+          exLine.style.marginLeft = '12px';
+          wrapper.appendChild(exLine);
+        });
       }
 
       return wrapper;

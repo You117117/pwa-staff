@@ -136,8 +136,21 @@
           : [];
 
       const wrapper = document.createElement('div');
-      wrapper.style.marginBottom = '8px';
+      wrapper.style.marginBottom = '10px';
 
+      // Ligne "Client : Prénom" AU-DESSUS
+      if (lineClientName) {
+        const clientLine = document.createElement('div');
+        clientLine.textContent = `Client : ${lineClientName}`;
+        clientLine.style.fontSize = '13px';
+        clientLine.style.color = '#e5e7eb';
+        clientLine.style.opacity = '0.9';
+        clientLine.style.marginLeft = '4px';
+        clientLine.style.marginBottom = '2px';
+        wrapper.appendChild(clientLine);
+      }
+
+      // Ligne principale produit
       const line = document.createElement('div');
       line.style.display = 'flex';
       line.style.justifyContent = 'space-between';
@@ -158,20 +171,6 @@
 
       line.appendChild(left);
       line.appendChild(right);
-
-      // Ligne "Client : Prénom" AU-DESSUS de l'article
-      if (lineClientName) {
-        const clientLine = document.createElement('div');
-        clientLine.textContent = `Client : ${lineClientName}`;
-        clientLine.style.fontSize = '13px';
-        clientLine.style.color = '#e5e7eb';
-        clientLine.style.opacity = '0.9';
-        clientLine.style.marginLeft = '4px';
-        clientLine.style.marginBottom = '2px';
-        wrapper.appendChild(clientLine);
-      }
-
-      // On ajoute ensuite la ligne produit
       wrapper.appendChild(line);
 
       // Bloc "Suppléments" en liste verticale

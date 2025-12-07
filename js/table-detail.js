@@ -109,6 +109,35 @@
       const name = it.label || it.name || it.title || 'article';
       const price = it.price || it.unitPrice || it.amount || null;
 
+      // Prénom du client pour cette ligne (ou à défaut, celui du ticket)
+      const lineClientName =
+        it.clientName ||
+        it.customerName ||
+        it.ownerName ||
+        ticket.clientName ||
+        null;
+
+      // Suppléments / options
+      let extrasSrc = null;
+      if (Array.isArray(it.extras)) extrasSrc = it.extras;
+      else if (Array.isArray(it.options)) extrasSrc = it.options;
+      else if (Array.isArray(it.supplements)) extrasSrc = it.supplements;
+      else if (Array.isArray(it.toppings)) extrasSrc = it.toppings;
+
+      const extras =
+        Array.isArray(extrasSrc)
+          ? extrasSrc
+              .map((e) =>
+                typeof e === 'string'
+                  ? e.trim()
+                  : (e && (e.label || e.name || e.title || '')).trim()
+              )
+              .filter(Boolean)
+          : [];
+
+      const wrapper = document.createElement('div');
+      wrapper.style.marginBottom = '6px';
+
       const line = document.createElement('div');
       line.style.display = 'flex';
       line.style.justifyContent = 'space-between';
@@ -116,7 +145,6 @@
       line.style.fontSize = '15px';
       line.style.color = '#f9fafb';
       line.style.fontWeight = '700';
-      line.style.marginBottom = '4px';
 
       const left = document.createElement('span');
       left.textContent = `${qty}× ${name}`;
@@ -130,10 +158,33 @@
 
       line.appendChild(left);
       line.appendChild(right);
-      return line;
+      wrapper.appendChild(line);
+
+      // Ligne "Client : Prénom"
+      if (lineClientName) {
+        const clientLine = document.createElement('div');
+        clientLine.textContent = `Client : ${lineClientName}`;
+        clientLine.style.fontSize = '13px';
+        clientLine.style.color = '#e5e7eb';
+        clientLine.style.opacity = '0.9';
+        clientLine.style.marginLeft = '4px';
+        wrapper.appendChild(clientLine);
+      }
+
+      // Ligne "Suppléments : ..."
+      if (extras.length) {
+        const extrasLine = document.createElement('div');
+        extrasLine.textContent = `Suppléments : ${extras.join(', ')}`;
+        extrasLine.style.fontSize = '13px';
+        extrasLine.style.color = '#cbd5f5';
+        extrasLine.style.opacity = '0.9';
+        extrasLine.style.marginLeft = '4px';
+        wrapper.appendChild(extrasLine);
+      }
+
+      return wrapper;
     });
   }
-
   function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.6)';

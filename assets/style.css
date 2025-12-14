@@ -1,34 +1,125 @@
-
 :root{
-  --bg:#0b1220; --fg:#e8eefc; --panel:#111b2f; --muted:#89a0c6;
-  --accent:#4f7cff; --ok:#12b886; --warn:#fab005; --danger:#f03e3e;
-  --violet:#845ef7; --blue:#339af0; --gray:#495057;
+  --bg:#0b1220; --fg:#e8eefc; --panel:#111b2f; --muted:#89a0c6; --accent:#4f7cff; --ok:#12b886; --warn:#fab005; --danger:#f03e3e; --violet:#845ef7; --blue:#339af0; --gray:#495057;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial}
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1a2742}
+h1{margin:0;font-size:22px}
+.env{display:flex;gap:8px;align-items:center}
+.env input{width:360px;padding:8px 10px;background:#0e1730;border:1px solid #223155;border-radius:8px;color:var(--fg)}
+button{background:var(--accent);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer}
+button.secondary{background:#223155}
+button.ghost{background:transparent;border:1px solid #223155}
+.badge{margin-left:6px;font-size:12px;padding:4px 8px;border-radius:999px;background:#223155}
+.badge.ok{background:var(--ok);color:#062114}
+.badge.err{background:var(--danger)}
+main{display:grid;grid-template-columns:1fr 420px;gap:16px;padding:16px;max-width:1400px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid #1a2742;border-radius:14px;min-height:200px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a2742}
+.panel h2{margin:0;font-size:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:12px}
+.card{background:#0e1730;border:1px solid #1a2742;border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.card .title{font-weight:600}
+.card .muted{color:var(--muted);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.kpis{display:flex;gap:10px}
+.kpi{background:#091127;border:1px solid #132042;padding:6px 8px;border-radius:8px;font-size:12px;color:var(--muted)}
+.actions{display:flex;gap:8px;align-items:center}
+.btn{padding:8px 10px;border-radius:8px;border:1px solid #223155;background:#16203a;color:var(--fg);cursor:pointer}
+.btn.ok{background:var(--ok);color:#052311;border:none}
+.btn.warn{background:#2d2a00;border:1px solid #4b4700;color:#ffe066}
+.btn.danger{background:#2a0a0a;border:1px solid #551b1b;color:#ffa8a8}
+.list{padding:12px;display:flex;flex-direction:column;gap:8px}
+.item{padding:10px;border:1px solid #1a2742;border-radius:10px;background:#0e1730}
+footer{padding:10px 16px;color:var(--muted);border-top:1px solid #1a2742}
+@media(max-width:1100px){main{grid-template-columns:1fr} .env input{width:220px}}
+
+/* --- Grille des tables (Staff) --- */
+#tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  padding: 12px;
 }
 
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(240,62,62,0.6); }
-  70% { box-shadow: 0 0 0 12px rgba(240,62,62,0); }
-  100% { box-shadow: 0 0 0 0 rgba(240,62,62,0); }
+#tables .table {
+  background: #0e1730;
+  border: 1px solid #1a2742;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-/* Table card base */
-.table {
+
+/* ===== Staff UI additions (status couleurs / pulse / chips / layout) ===== */
+
+.select{
+  padding:8px 10px;background:#0e1730;border:1px solid #223155;border-radius:8px;color:var(--fg);
+}
+
+.empty{
+  padding:12px;
+  color:var(--muted);
+}
+
+.card-head{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.chip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  padding:6px 10px;
+  border-radius:999px;
+  background:#16203a;
+  border:1px solid #223155;
+  color:var(--fg);
+}
+
+.chip-status.status-commandee{ background:rgba(250,176,5,0.18); border-color:rgba(250,176,5,0.35); }
+.chip-status.status-nouvelle_commande{ background:rgba(240,62,62,0.18); border-color:rgba(240,62,62,0.35); }
+.chip-status.status-doit_payer{ background:rgba(132,94,247,0.18); border-color:rgba(132,94,247,0.35); }
+.chip-status.status-payee{ background:rgba(18,184,134,0.18); border-color:rgba(18,184,134,0.35); }
+.chip-status.status-en_cours{ background:rgba(51,154,240,0.18); border-color:rgba(51,154,240,0.35); }
+.chip-status.status-vide{ background:rgba(73,80,87,0.18); border-color:rgba(73,80,87,0.35); }
+
+.card-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.btn-primary{ background: var(--accent); border:none; color:#fff; }
+.btn-secondary{ background:#223155; border:1px solid #2a3a63; color:var(--fg); }
+.btn-print{ min-width:140px; }
+.btn-pay{ min-width:160px; }
+
+.table{
   border-left: 8px solid transparent;
 }
 
-/* Status colors */
-.status-vide { border-left-color: var(--gray); }
-.status-en_cours { border-left-color: var(--blue); }
-.status-commandee { border-left-color: var(--warn); }
-.status-nouvelle_commande {
-  border-left-color: var(--danger);
-  animation: pulse 1s infinite;
-}
-.status-doit_payer { border-left-color: var(--violet); }
-.status-payee { border-left-color: var(--ok); }
+/* Status couleurs (bord gauche) */
+.status-vide { border-left-color: #495057; }
+.status-en_cours { border-left-color: #339af0; }
+.status-commandee { border-left-color: #fab005; }
+.status-doit_payer { border-left-color: #845ef7; }
+.status-payee { border-left-color: #12b886; }
 
-/* Badge overrides */
-.badge.commandee { background: var(--warn); color:#2b2100; }
-.badge.nouvelle { background: var(--danger); }
-.badge.doitpayer { background: var(--violet); }
-.badge.payee { background: var(--ok); color:#062114; }
+/* NOUVELLE COMMANDE = urgence : rouge + pulse (60s max géré côté JS si besoin plus tard) */
+@keyframes pulseUrgent {
+  0% { box-shadow: 0 0 0 0 rgba(240,62,62,0.55); }
+  70% { box-shadow: 0 0 0 12px rgba(240,62,62,0); }
+  100% { box-shadow: 0 0 0 0 rgba(240,62,62,0); }
+}
+.status-nouvelle_commande{
+  border-left-color: #f03e3e;
+  animation: pulseUrgent 1s infinite;
+}

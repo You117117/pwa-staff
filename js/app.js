@@ -19,21 +19,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Utils
 
-  function statusToCssClass(statusKey){
-    switch(statusKey){
-      case 'VIDE': return 'status-vide';
-      case 'EN_COURS': return 'status-en_cours';
-      case 'COMMANDEE':
-      case 'COMMANDÉE': return 'status-commandee';
-      case 'NOUVELLE_COMMANDE': return 'status-nouvelle_commande';
-      case 'DOIT_PAYER': return 'status-doit_payer';
-      case 'PAYEE':
-      case 'PAYÉE': return 'status-payee';
-      default: return '';
-    }
-  }
-
-
   const normId = (id) => (id || '').toString().trim().toUpperCase();
   const now = () => Date.now();
 
@@ -63,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', ensureStaffAudioCtxUnlocked, { once: true });
   document.addEventListener('touchstart', ensureStaffAudioCtxUnlocked, { once: true });
 
-  function playStatusMelody(kind) {
+  function playStaffBeep() {
     try {
       if (!staffAudioCtx) {
         ensureStaffAudioCtxUnlocked();
@@ -71,83 +56,54 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!staffAudioCtx) return;
 
       const ctx = staffAudioCtx;
-      const t0 = ctx.currentTime;
+      const now = ctx.currentTime;
 
-      // Mélodies 3–4 notes (marquantes mais courtes)
-      const melodies = {
-        // COMMANDÉE : montée (C5–E5–G5)
-        COMMANDEE: [
-          { freq: 523.25, start: 0.00, dur: 0.11 },
-          { freq: 659.25, start: 0.12, dur: 0.11 },
-          { freq: 783.99, start: 0.24, dur: 0.13 },
-        ],
-        // NOUVELLE_COMMANDE : appel plus "urgent" (G5–E5–C5–B5)
-        NOUVELLE: [
-          { freq: 783.99, start: 0.00, dur: 0.10 },
-          { freq: 659.25, start: 0.11, dur: 0.10 },
-          { freq: 523.25, start: 0.22, dur: 0.10 },
-          { freq: 987.77, start: 0.33, dur: 0.12 },
-        ],
-      };
-
-      const notes = melodies[kind];
-      if (!notes) return;
+      // 3 notes marquantes : do (261.63 Hz), ré (293.66 Hz), mi (329.63 Hz)
+      const notes = [
+        { freq: 261.63, start: 0.0, dur: 0.12 }, // do
+        { freq: 293.66, start: 0.13, dur: 0.12 }, // ré
+        { freq: 329.63, start: 0.26, dur: 0.14 }, // mi
+      ];
 
       notes.forEach((note) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
 
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(note.freq, t0 + note.start);
+        osc.frequency.value = note.freq;
 
-        // Enveloppe douce (évite le son agressif)
-        gain.gain.setValueAtTime(0.0001, t0 + note.start);
-        gain.gain.exponentialRampToValueAtTime(0.18, t0 + note.start + 0.01);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + note.start + note.dur);
+        const t0 = now + note.start;
+        const t1 = t0 + note.dur;
+
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.35, t0 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t1);
 
         osc.connect(gain);
         gain.connect(ctx.destination);
 
-        osc.start(t0 + note.start);
-        osc.stop(t0 + note.start + note.dur + 0.02);
+        osc.start(t0);
+        osc.stop(t1 + 0.02);
       });
     } catch (e) {
-      console.warn('[staff-sound] Erreur lecture son', e);
+      console.warn('[staff-beep] Erreur lors du beep', e);
     }
-  }
-
-  // Anti-spam : 1 son par table par transition + cooldown global
-  const SOUND_GLOBAL_COOLDOWN_MS = 2500;
-  const SOUND_PER_TABLE_COOLDOWN_MS = 6000;
-  let lastGlobalSoundAt = 0;
-  const lastTableSoundAt = {};
-
-  function maybePlaySoundForTable(tableId, kind) {
-    const nowMs = Date.now();
-    if (nowMs - lastGlobalSoundAt < SOUND_GLOBAL_COOLDOWN_MS) return;
-
-    const lastTb = lastTableSoundAt[tableId] || 0;
-    if (nowMs - lastTb < SOUND_PER_TABLE_COOLDOWN_MS) return;
-
-    lastGlobalSoundAt = nowMs;
-    lastTableSoundAt[tableId] = nowMs;
-
-    playStatusMelody(kind);
   }
 
 function detectTablesChangesAndBeep(tables) {
     if (!Array.isArray(tables)) return;
 
+    let shouldBeep = false;
     const nextSnapshot = {};
-    // On garde en mémoire les transitions détectées (priorité NOUVELLE_COMMANDE > COMMANDÉE)
-    const events = [];
 
-    tables.forEach((tb) => {
+    tables
+      .slice()
+      .sort((a,b)=> statusPrio(a.status || 'Vide') - statusPrio(b.status || 'Vide'))
+      .forEach((tb) => {
       const id = normId(tb.id);
       if (!id) return;
 
-      const statusRaw = (tb.status || 'Vide').toString().trim();
-      const status = normId(statusRaw.replace(' ', '_')); // "Nouvelle commande" -> "NOUVELLE_COMMANDE"
+      const status = (tb.status || 'Vide').toString().trim();
       const lastAt =
         tb.lastTicket && tb.lastTicket.at
           ? String(tb.lastTicket.at)
@@ -156,40 +112,32 @@ function detectTablesChangesAndBeep(tables) {
       nextSnapshot[id] = { status, lastAt };
 
       const prev = prevTablesSnapshot[id];
-
-      // Première apparition dans le snapshot : si table active et statut intéressant, on sonne
       if (!prev) {
-        if ((status === 'COMMANDEE' || status === 'NOUVELLE_COMMANDE') && lastAt) {
-          events.push({ id, status });
+        // Table qui devient active alors qu'on n'avait pas d'historique
+        if (status !== 'Vide' && lastAt) {
+          shouldBeep = true;
         }
         return;
       }
 
-      // Transition de statut : on sonne uniquement quand on ENTRE dans COMMANDEE ou NOUVELLE_COMMANDE
-      if (prev.status !== status) {
-        if (status === 'COMMANDEE' || status === 'NOUVELLE_COMMANDE') {
-          events.push({ id, status });
-        }
+      // Nouveau ticket pour cette table
+      if (prev.lastAt !== lastAt && lastAt) {
+        shouldBeep = true;
         return;
       }
 
-      // Nouveau ticket sans changement de statut : on ne sonne PAS (sinon spam).
-      // Exemple : plusieurs commandes alors que statut déjà NOUVELLE_COMMANDE.
+      // Table qui passe de "Vide" à un autre statut
+      if (prev.status === 'Vide' && status !== 'Vide') {
+        shouldBeep = true;
+        return;
+      }
     });
 
     prevTablesSnapshot = nextSnapshot;
     window.__prevTablesSnapshot = prevTablesSnapshot;
 
-    if (events.length === 0) return;
-
-    // Priorité : NOUVELLE_COMMANDE d'abord
-    events.sort((a, b) => (b.status === 'NOUVELLE_COMMANDE') - (a.status === 'NOUVELLE_COMMANDE'));
-
-    const ev = events[0];
-    if (ev.status === 'NOUVELLE_COMMANDE') {
-      maybePlaySoundForTable(ev.id, 'NOUVELLE');
-    } else if (ev.status === 'COMMANDEE') {
-      maybePlaySoundForTable(ev.id, 'COMMANDEE');
+    if (shouldBeep) {
+      playStaffBeep();
     }
   }
 
@@ -231,7 +179,95 @@ function detectTablesChangesAndBeep(tables) {
   // { [tableId]: { until, timeoutId, intervalId } }
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
 
-  // --- Résumé du jour
+  
+  // === UI Status (couleurs / pulse / sons) ===
+  const STATUS_UI = {
+    'Vide': { key:'vide', prio: 60 },
+    'En cours': { key:'en_cours', prio: 40 },
+    'Commandée': { key:'commandee', prio: 10 },
+    'Nouvelle commande': { key:'nouvelle_commande', prio: 0 },
+    'Doit payé': { key:'doit_payer', prio: 20 },
+    'Payée': { key:'payee', prio: 50 },
+  };
+
+  const SOUND_COOLDOWN_MS = 6000; // anti-spam global
+  const soundGate = { lastAt: 0 };
+  const lastStatusByTable = {};   // per table transition tracking
+  const pulseTimers = {};         // per table pulse stop timeout
+
+  function statusKey(label){
+    return (STATUS_UI[label] && STATUS_UI[label].key) ? STATUS_UI[label].key : 'vide';
+  }
+  function statusPrio(label){
+    return (STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number') ? STATUS_UI[label].prio : 999;
+  }
+
+  function playToneSequence(freqs, durationMs=130){
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      let t = ctx.currentTime;
+      freqs.forEach((f)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        gain.gain.value = 0.14;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + (durationMs/1000));
+        t += (durationMs/1000);
+      });
+    }catch(e){
+      // audio can fail on some devices if not user-initiated; ignore safely
+    }
+  }
+
+  function maybePlayStatusSound(tableId, newStatusLabel){
+    const now = Date.now();
+    if (now - soundGate.lastAt < SOUND_COOLDOWN_MS) return;
+
+    // Only these two statuses
+    if (newStatusLabel === 'Commandée'){
+      soundGate.lastAt = now;
+      playToneSequence([523, 659, 784]); // 3 notes (C5 E5 G5)
+    } else if (newStatusLabel === 'Nouvelle commande'){
+      soundGate.lastAt = now;
+      playToneSequence([784, 659, 523, 988]); // 4 notes (G5 E5 C5 B5-ish)
+    }
+  }
+
+  function applyStatusClasses(cardEl, chipStatusEl, statusLabel){
+    const key = statusKey(statusLabel);
+    const cls = `status-${key}`;
+
+    // Card status classes
+    cardEl.classList.remove(
+      'status-vide','status-en_cours','status-commandee','status-nouvelle_commande','status-doit_payer','status-payee'
+    );
+    cardEl.classList.add(cls);
+
+    // Chip status classes
+    if (chipStatusEl){
+      chipStatusEl.classList.remove(
+        'status-vide','status-en_cours','status-commandee','status-nouvelle_commande','status-doit_payer','status-payee'
+      );
+      chipStatusEl.classList.add(cls);
+    }
+  }
+
+  function startPulseForNewOrder(cardEl, tableId){
+    // pulse for max 60s then keep red but stop animation (fatigue visuelle)
+    cardEl.classList.add('pulse');
+    if (pulseTimers[tableId]) clearTimeout(pulseTimers[tableId]);
+    pulseTimers[tableId] = setTimeout(()=>{
+      cardEl.classList.remove('pulse');
+      delete pulseTimers[tableId];
+    }, 60000);
+  }
+
+// --- Résumé du jour
 
   function renderSummary(tickets) {
     if (!summaryContainer) return;
@@ -327,8 +363,7 @@ function detectTablesChangesAndBeep(tables) {
       const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
 
       const card = document.createElement('div');
-      const statusKey = normId(String(status).trim().replace(' ', '_'));
-      card.className = 'table ' + statusToCssClass(statusKey);
+      card.className = 'table';
       card.setAttribute('data-table', id);
 
       const head = document.createElement('div');
@@ -340,8 +375,7 @@ function detectTablesChangesAndBeep(tables) {
       head.appendChild(chipId);
 
       const chipStatus = document.createElement('span');
-      const statusKey2 = normId(String(status).trim().replace(' ', '_'));
-      chipStatus.className = 'chip chip-status ' + statusToCssClass(statusKey2);
+      chipStatus.className = 'chip';
       chipStatus.textContent = status;
       head.appendChild(chipStatus);
 
@@ -352,6 +386,18 @@ function detectTablesChangesAndBeep(tables) {
       head.appendChild(chipTime);
 
       card.appendChild(head);
+
+      applyStatusClasses(card, chipStatus, status);
+      if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
+
+      // --- UI: couleurs / pulse / sons (transition) ---
+      const prev = lastStatusByTable[id];
+      if (prev !== status) {
+        // sound only on transitions to Commandée / Nouvelle commande
+        maybePlayStatusSound(id, status);
+        lastStatusByTable[id] = status;
+      }
+
 
       if (status !== 'Vide') {
         const actions = document.createElement('div');

@@ -96,7 +96,10 @@ function detectTablesChangesAndBeep(tables) {
     let shouldBeep = false;
     const nextSnapshot = {};
 
-    tables.forEach((tb) => {
+    tables
+      .slice()
+      .sort((a,b)=> statusPrio(a.status || 'Vide') - statusPrio(b.status || 'Vide'))
+      .forEach((tb) => {
       const id = normId(tb.id);
       if (!id) return;
 
@@ -176,7 +179,95 @@ function detectTablesChangesAndBeep(tables) {
   // { [tableId]: { until, timeoutId, intervalId } }
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
 
-  // --- Résumé du jour
+  
+  // === UI Status (couleurs / pulse / sons) ===
+  const STATUS_UI = {
+    'Vide': { key:'vide', prio: 60 },
+    'En cours': { key:'en_cours', prio: 40 },
+    'Commandée': { key:'commandee', prio: 10 },
+    'Nouvelle commande': { key:'nouvelle_commande', prio: 0 },
+    'Doit payé': { key:'doit_payer', prio: 20 },
+    'Payée': { key:'payee', prio: 50 },
+  };
+
+  const SOUND_COOLDOWN_MS = 6000; // anti-spam global
+  const soundGate = { lastAt: 0 };
+  const lastStatusByTable = {};   // per table transition tracking
+  const pulseTimers = {};         // per table pulse stop timeout
+
+  function statusKey(label){
+    return (STATUS_UI[label] && STATUS_UI[label].key) ? STATUS_UI[label].key : 'vide';
+  }
+  function statusPrio(label){
+    return (STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number') ? STATUS_UI[label].prio : 999;
+  }
+
+  function playToneSequence(freqs, durationMs=130){
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      let t = ctx.currentTime;
+      freqs.forEach((f)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        gain.gain.value = 0.14;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + (durationMs/1000));
+        t += (durationMs/1000);
+      });
+    }catch(e){
+      // audio can fail on some devices if not user-initiated; ignore safely
+    }
+  }
+
+  function maybePlayStatusSound(tableId, newStatusLabel){
+    const now = Date.now();
+    if (now - soundGate.lastAt < SOUND_COOLDOWN_MS) return;
+
+    // Only these two statuses
+    if (newStatusLabel === 'Commandée'){
+      soundGate.lastAt = now;
+      playToneSequence([523, 659, 784]); // 3 notes (C5 E5 G5)
+    } else if (newStatusLabel === 'Nouvelle commande'){
+      soundGate.lastAt = now;
+      playToneSequence([784, 659, 523, 988]); // 4 notes (G5 E5 C5 B5-ish)
+    }
+  }
+
+  function applyStatusClasses(cardEl, chipStatusEl, statusLabel){
+    const key = statusKey(statusLabel);
+    const cls = `status-${key}`;
+
+    // Card status classes
+    cardEl.classList.remove(
+      'status-vide','status-en_cours','status-commandee','status-nouvelle_commande','status-doit_payer','status-payee'
+    );
+    cardEl.classList.add(cls);
+
+    // Chip status classes
+    if (chipStatusEl){
+      chipStatusEl.classList.remove(
+        'status-vide','status-en_cours','status-commandee','status-nouvelle_commande','status-doit_payer','status-payee'
+      );
+      chipStatusEl.classList.add(cls);
+    }
+  }
+
+  function startPulseForNewOrder(cardEl, tableId){
+    // pulse for max 60s then keep red but stop animation (fatigue visuelle)
+    cardEl.classList.add('pulse');
+    if (pulseTimers[tableId]) clearTimeout(pulseTimers[tableId]);
+    pulseTimers[tableId] = setTimeout(()=>{
+      cardEl.classList.remove('pulse');
+      delete pulseTimers[tableId];
+    }, 60000);
+  }
+
+// --- Résumé du jour
 
   function renderSummary(tickets) {
     if (!summaryContainer) return;
@@ -194,15 +285,21 @@ function detectTablesChangesAndBeep(tables) {
 
       const chipTable = document.createElement('span');
       chipTable.className = 'chip';
+      this.style.fontSize = '14px';
+      this.style.padding = '8px 14px';
+      this.style.fontWeight = '700';
       chipTable.textContent = t.table;
       head.appendChild(chipTable);
 
       if (t.time) {
         const chipTime = document.createElement('span');
         chipTime.className = 'chip';
-      chipTime.style.fontSize = '12.5px';
-      chipTime.style.padding = '6px 10px';
+      chipTime.style.fontSize = '13px';
+      chipTime.style.padding = '7px 12px';
       chipTime.style.fontWeight = '600';
+      this.style.fontSize = '14px';
+      this.style.padding = '8px 14px';
+      this.style.fontWeight = '700';
         chipTime.innerHTML = `<i class="icon-clock"></i> ${t.time}`;
         head.appendChild(chipTime);
       }
@@ -210,6 +307,9 @@ function detectTablesChangesAndBeep(tables) {
       if (typeof t.total === 'number') {
         const chipTotal = document.createElement('span');
         chipTotal.className = 'chip';
+      this.style.fontSize = '14px';
+      this.style.padding = '8px 14px';
+      this.style.fontWeight = '700';
         chipTotal.textContent = `Total : ${t.total} €`;
         head.appendChild(chipTotal);
       }
@@ -277,37 +377,75 @@ function detectTablesChangesAndBeep(tables) {
       const card = document.createElement('div');
       card.className = 'table';
       card.setAttribute('data-table', id);
+      // ✅ UI: couleur plein badge (carte entière) selon statut
+      const __statusLabel = (status || 'Vide').toString().trim();
+      const __bgMap = {
+        'Vide': 'rgba(148,163,184,0.06)',
+        'En cours': 'rgba(59,130,246,0.14)',
+        'Commandée': 'rgba(245,158,11,0.16)',
+        'Nouvelle commande': 'rgba(239,68,68,0.16)',
+        'En préparation': 'rgba(245,158,11,0.16)',
+        'Doit payé': 'rgba(168,85,247,0.16)',
+        'Payée': 'rgba(16,185,129,0.16)',
+      };
+      card.style.background = __bgMap[__statusLabel] || 'rgba(15,23,42,0.6)';
 
       const head = document.createElement('div');
       head.className = 'card-head';
 
       const chipId = document.createElement('span');
       chipId.className = 'chip';
+      chipId.style.fontSize = '14px';
+      chipId.style.padding = '8px 14px';
+      chipId.style.fontWeight = '700';
+      this.style.fontSize = '14px';
+      this.style.padding = '8px 14px';
+      this.style.fontWeight = '700';
       chipId.textContent = id;
       head.appendChild(chipId);
 
       const chipStatus = document.createElement('span');
       chipStatus.className = 'chip';
-      chipStatus.style.fontSize = '13.5px';
-      chipStatus.style.padding = '7px 12px';
+      chipStatus.style.fontSize = '14px';
+      chipStatus.style.padding = '8px 14px';
       chipStatus.style.fontWeight = '700';
+      this.style.fontSize = '14px';
+      this.style.padding = '8px 14px';
+      this.style.fontWeight = '700';
       chipStatus.textContent = status;
       head.appendChild(chipStatus);
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      chipTime.style.fontSize = '12.5px';
-      chipTime.style.padding = '6px 10px';
+      chipTime.style.fontSize = '13px';
+      chipTime.style.padding = '7px 12px';
       chipTime.style.fontWeight = '600';
+      this.style.fontSize = '14px';
+      this.style.padding = '8px 14px';
+      this.style.fontWeight = '700';
       // Texte demandé : "Commandé à : (heure)"
-      chipTime.textContent = hasLastTicket ? `Commandé à : ${lastTime}` : '—';
+      chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
       head.appendChild(chipTime);
 
       card.appendChild(head);
 
+      applyStatusClasses(card, chipStatus, status);
+      if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
+
+      // --- UI: couleurs / pulse / sons (transition) ---
+      const prev = lastStatusByTable[id];
+      if (prev !== status) {
+        // sound only on transitions to Commandée / Nouvelle commande
+        maybePlayStatusSound(id, status);
+        lastStatusByTable[id] = status;
+      }
+
+
       if (status !== 'Vide') {
         const actions = document.createElement('div');
         actions.className = 'card-actions';
+        // ✅ UI: boutons uniquement dans le détail (on les garde cachés ici pour la délégation)
+        actions.style.display = 'none';
 
         const btnPrint = document.createElement('button');
         btnPrint.className = 'btn btn-primary btn-print';

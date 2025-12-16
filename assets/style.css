@@ -1,217 +1,110 @@
-
 :root{
-  --bg:#0b1220;
-  --fg:#e8eefc;
-  --panel:#111b2f;
-  --card:#0e1730;
-  --border:#1a2742;
-  --muted:#89a0c6;
-
-  --accent:#4f7cff;
-
-  --ok:#12b886;           /* Payée */
-  --warn:#fab005;         /* Commandée */
-  --danger:#f03e3e;       /* Nouvelle commande */
-  --violet:#845ef7;       /* Doit payer */
-  --blue:#339af0;         /* En cours */
-  --gray:#495057;         /* Vide */
+  --bg:#0b1220; --fg:#e8eefc; --panel:#111b2f; --muted:#89a0c6; --accent:#4f7cff; --ok:#12b886; --warn:#fab005; --danger:#f03e3e;
 }
-
 *{box-sizing:border-box}
 html,body{height:100%}
-body{
-  margin:0;
-  background:var(--bg);
-  color:var(--fg);
-  font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-  padding:16px;
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial}
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1a2742}
+h1{margin:0;font-size:22px}
+.env{display:flex;gap:8px;align-items:center}
+.env input{width:360px;padding:8px 10px;background:#0e1730;border:1px solid #223155;border-radius:8px;color:var(--fg)}
+button{background:var(--accent);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer}
+button.secondary{background:#223155}
+button.ghost{background:transparent;border:1px solid #223155}
+.badge{margin-left:6px;font-size:12px;padding:4px 8px;border-radius:999px;background:#223155}
+.badge.ok{background:var(--ok);color:#062114}
+.badge.err{background:var(--danger)}
+main{display:grid;grid-template-columns:1fr 420px;gap:16px;padding:16px;max-width:1400px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid #1a2742;border-radius:14px;min-height:200px}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #1a2742}
+.panel h2{margin:0;font-size:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:12px}
+.card{background:#0e1730;border:1px solid #1a2742;border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.card .title{font-weight:600}
+.card .muted{color:var(--muted);font-size:13px}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.kpis{display:flex;gap:10px}
+.kpi{background:#091127;border:1px solid #132042;padding:6px 8px;border-radius:8px;font-size:12px;color:var(--muted)}
+.actions{display:flex;gap:8px;align-items:center}
+.btn{padding:8px 10px;border-radius:8px;border:1px solid #223155;background:#16203a;color:var(--fg);cursor:pointer}
+.btn.ok{background:var(--ok);color:#052311;border:none}
+.btn.warn{background:#2d2a00;border:1px solid #4b4700;color:#ffe066}
+.btn.danger{background:#2a0a0a;border:1px solid #551b1b;color:#ffa8a8}
+.list{padding:12px;display:flex;flex-direction:column;gap:8px}
+.item{padding:10px;border:1px solid #1a2742;border-radius:10px;background:#0e1730}
+footer{padding:10px 16px;color:var(--muted);border-top:1px solid #1a2742}
+@media(max-width:1100px){main{grid-template-columns:1fr} .env input{width:220px}}
+
+/* --- Grille des tables (Staff) --- */
+#tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  padding: 12px;
 }
 
-h1{margin:0 0 12px 0;font-size:22px;font-weight:700}
-h2{margin:0;font-size:18px}
-
-.topbar{
-  display:flex;
-  gap:10px;
-  align-items:center;
-  padding:12px;
-  border:1px solid var(--border);
-  background:var(--panel);
-  border-radius:14px;
-  margin-bottom:14px;
-  flex-wrap:wrap;
-}
-.topbar label{color:var(--muted); font-size:13px}
-.topbar input{
-  width:min(520px, 100%);
-  padding:10px 12px;
-  background:var(--card);
-  border:1px solid #223155;
-  border-radius:10px;
-  color:var(--fg);
+#tables .table {
+  background: #0e1730;
+  border: 1px solid #1a2742;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-button{
-  background:var(--accent);
-  color:white;
-  border:none;
-  border-radius:10px;
-  padding:10px 12px;
-  cursor:pointer;
-  font-weight:600;
-}
-button:hover{filter:brightness(1.05)}
 
-.layout{
-  display:grid;
-  grid-template-columns: 1fr 420px;
-  gap:14px;
-  align-items:start;
-}
-@media (max-width:1100px){
-  .layout{grid-template-columns:1fr}
-}
 
-.tables-section,
-.summary-section{
-  border:1px solid var(--border);
-  background:var(--panel);
-  border-radius:14px;
-  overflow:hidden;
-}
+/* ================================
+   UI optimization (tables list)
+   - full-card color per status
+   - hide actions in list (buttons only in detail panel)
+   - compact last order time with clock icon
+================================ */
 
-.section-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  padding:12px 14px;
-  border-bottom:1px solid var(--border);
-}
+.table { position: relative; }
 
-.controls{
-  display:flex;
-  gap:10px;
-  align-items:center;
-}
-select{
-  background:var(--card);
-  color:var(--fg);
-  border:1px solid #223155;
-  border-radius:10px;
-  padding:8px 10px;
-}
+/* Hide list actions (we keep buttons in DOM hidden for delegation) */
+.table .card-actions { display: none !important; }
 
-.empty{
-  padding:14px;
-  color:var(--muted);
-}
+/* Make the whole card reflect status color (subtle, readable) */
+.table.status-vide { background: rgba(73,80,87,0.12); }
+.table.status-en_cours { background: rgba(51,154,240,0.12); }
+.table.status-commandee { background: rgba(250,176,5,0.14); }
+.table.status-nouvelle_commande { background: rgba(240,62,62,0.14); }
+.table.status-doit_payer { background: rgba(132,94,247,0.14); }
+.table.status-payee { background: rgba(18,184,134,0.14); }
 
-/* Grille des tables */
-#tables{
-  display:grid;
-  grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));
-  gap:12px;
-  padding:12px;
-}
-
-/* Carte table */
-.table{
-  background:var(--card);
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:12px;
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-
-  /* left border "status" */
-  border-left:8px solid transparent;
-}
-
-/* Header table */
-.card-head{
-  display:flex;
-  flex-wrap:wrap;
-  gap:8px;
-  align-items:center;
-}
-
-.chip{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  padding:6px 10px;
+/* Time chip with small clock icon */
+.icon-clock {
+  display:inline-block;
+  width:12px;
+  height:12px;
+  border:2px solid rgba(232,238,252,0.75);
   border-radius:999px;
-  background:#223155;
-  color:var(--fg);
-  font-size:12px;
-  font-weight:700;
-  letter-spacing:0.2px;
+  position:relative;
+  top:2px;
+  margin-right:6px;
 }
-.chip.muted{font-weight:600;color:var(--muted)}
-
-/* Actions */
-.card-actions{
-  display:flex;
-  gap:10px;
-  align-items:center;
+.icon-clock:before{
+  content:"";
+  position:absolute;
+  width:1.5px;
+  height:4px;
+  background:rgba(232,238,252,0.85);
+  left:50%;
+  top:2px;
+  transform:translateX(-50%);
+  border-radius:2px;
 }
-.btn{
-  flex:1;
-  padding:10px 12px;
-  border-radius:12px;
-  border:1px solid #223155;
-  background:#16203a;
-  color:var(--fg);
-  font-weight:800;
+.icon-clock:after{
+  content:"";
+  position:absolute;
+  width:3.8px;
+  height:1.5px;
+  background:rgba(232,238,252,0.85);
+  left:50%;
+  top:50%;
+  transform:translate(-10%, -50%);
+  border-radius:2px;
 }
-.btn-primary{border:none;background:var(--accent); color:white}
-.btn:active{transform:translateY(1px)}
-
-/* Status colors (card + chip) */
-.status-vide{border-left-color:var(--gray)}
-.status-en_cours{border-left-color:var(--blue)}
-.status-commandee{border-left-color:var(--warn)}
-.status-nouvelle_commande{border-left-color:var(--danger)}
-.status-doit_payer{border-left-color:var(--violet)}
-.status-payee{border-left-color:var(--ok)}
-
-.chip.status-vide{background:#2b2f36}
-.chip.status-en_cours{background:var(--blue); color:#061827}
-.chip.status-commandee{background:var(--warn); color:#2b2100}
-.chip.status-nouvelle_commande{background:var(--danger)}
-.chip.status-doit_payer{background:var(--violet)}
-.chip.status-payee{background:var(--ok); color:#062114}
-
-/* Pulse ONLY for Nouvelle commande, and only while class .pulse is present */
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(240,62,62,0.55); }
-  70% { box-shadow: 0 0 0 14px rgba(240,62,62,0); }
-  100% { box-shadow: 0 0 0 0 rgba(240,62,62,0); }
-}
-.status-nouvelle_commande.pulse{
-  animation:pulse 1s infinite;
-}
-
-/* Summary styling */
-#summary{
-  padding:12px;
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
-#summary .wrapper{
-  background:var(--card);
-  border:1px solid var(--border);
-  border-radius:14px;
-  padding:10px 12px;
-}
-#summary .head{
-  display:flex;
-  gap:8px;
-  align-items:center;
-  margin-bottom:6px;
-}
-#summary .line{color:var(--fg); font-size:13px}
-#summary .items{color:var(--muted); font-size:13px}

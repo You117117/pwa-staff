@@ -365,6 +365,18 @@ function detectTablesChangesAndBeep(tables) {
       const card = document.createElement('div');
       card.className = 'table';
       card.setAttribute('data-table', id);
+      // ✅ UI: couleur plein badge (carte entière) selon statut
+      const __statusLabel = (status || 'Vide').toString().trim();
+      const __bgMap = {
+        'Vide': 'rgba(148,163,184,0.06)',
+        'En cours': 'rgba(59,130,246,0.14)',
+        'Commandée': 'rgba(245,158,11,0.16)',
+        'Nouvelle commande': 'rgba(239,68,68,0.16)',
+        'En préparation': 'rgba(245,158,11,0.16)',
+        'Doit payé': 'rgba(168,85,247,0.16)',
+        'Payée': 'rgba(16,185,129,0.16)',
+      };
+      card.style.background = __bgMap[__statusLabel] || 'rgba(15,23,42,0.6)';
 
       const head = document.createElement('div');
       head.className = 'card-head';
@@ -381,7 +393,8 @@ function detectTablesChangesAndBeep(tables) {
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      chipTime.innerHTML = hasLastTicket ? `<i class="icon-clock"></i>${lastTime}` : '—';
+      // Texte demandé : "Commandé à : (heure)"
+      chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
       head.appendChild(chipTime);
 
       card.appendChild(head);
@@ -401,6 +414,8 @@ function detectTablesChangesAndBeep(tables) {
       if (status !== 'Vide') {
         const actions = document.createElement('div');
         actions.className = 'card-actions';
+        // ✅ UI: boutons uniquement dans le détail (on les garde cachés ici pour la délégation)
+        actions.style.display = 'none';
 
         const btnPrint = document.createElement('button');
         btnPrint.className = 'btn btn-primary btn-print';

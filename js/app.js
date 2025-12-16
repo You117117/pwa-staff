@@ -381,8 +381,7 @@ function detectTablesChangesAndBeep(tables) {
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      // Texte demandé : "Commandé à : (heure)"
-      chipTime.textContent = hasLastTicket ? `Commandé à : ${lastTime}` : '—';
+      chipTime.innerHTML = hasLastTicket ? `<i class="icon-clock"></i>${lastTime}` : '—';
       head.appendChild(chipTime);
 
       card.appendChild(head);

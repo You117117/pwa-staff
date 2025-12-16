@@ -285,9 +285,6 @@ function detectTablesChangesAndBeep(tables) {
 
       const chipTable = document.createElement('span');
       chipTable.className = 'chip';
-      this.style.fontSize = '14px';
-      this.style.padding = '8px 14px';
-      this.style.fontWeight = '700';
       chipTable.textContent = t.table;
       head.appendChild(chipTable);
 
@@ -296,10 +293,7 @@ function detectTablesChangesAndBeep(tables) {
         chipTime.className = 'chip';
       chipTime.style.fontSize = '13px';
       chipTime.style.padding = '7px 12px';
-      chipTime.style.fontWeight = '600';
-      this.style.fontSize = '14px';
-      this.style.padding = '8px 14px';
-      this.style.fontWeight = '700';
+      chipTime.style.fontWeight = '700';
         chipTime.innerHTML = `<i class="icon-clock"></i> ${t.time}`;
         head.appendChild(chipTime);
       }
@@ -307,9 +301,6 @@ function detectTablesChangesAndBeep(tables) {
       if (typeof t.total === 'number') {
         const chipTotal = document.createElement('span');
         chipTotal.className = 'chip';
-      this.style.fontSize = '14px';
-      this.style.padding = '8px 14px';
-      this.style.fontWeight = '700';
         chipTotal.textContent = `Total : ${t.total} €`;
         head.appendChild(chipTotal);
       }
@@ -395,12 +386,10 @@ function detectTablesChangesAndBeep(tables) {
 
       const chipId = document.createElement('span');
       chipId.className = 'chip';
+      /*__BIGGER_BADGES__*/
       chipId.style.fontSize = '14px';
       chipId.style.padding = '8px 14px';
-      chipId.style.fontWeight = '700';
-      this.style.fontSize = '14px';
-      this.style.padding = '8px 14px';
-      this.style.fontWeight = '700';
+      chipId.style.fontWeight = '800';
       chipId.textContent = id;
       head.appendChild(chipId);
 
@@ -408,21 +397,12 @@ function detectTablesChangesAndBeep(tables) {
       chipStatus.className = 'chip';
       chipStatus.style.fontSize = '14px';
       chipStatus.style.padding = '8px 14px';
-      chipStatus.style.fontWeight = '700';
-      this.style.fontSize = '14px';
-      this.style.padding = '8px 14px';
-      this.style.fontWeight = '700';
+      chipStatus.style.fontWeight = '800';
       chipStatus.textContent = status;
       head.appendChild(chipStatus);
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
-      chipTime.style.fontSize = '13px';
-      chipTime.style.padding = '7px 12px';
-      chipTime.style.fontWeight = '600';
-      this.style.fontSize = '14px';
-      this.style.padding = '8px 14px';
-      this.style.fontWeight = '700';
       // Texte demandé : "Commandé à : (heure)"
       chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
       head.appendChild(chipTime);

@@ -186,6 +186,7 @@ function detectTablesChangesAndBeep(tables) {
     'En cours': { key:'en_cours', prio: 40 },
     'Commandée': { key:'commandee', prio: 10 },
     'Nouvelle commande': { key:'nouvelle_commande', prio: 0 },
+    'En préparation': { key:'en_preparation', prio: 15 },
     'Doit payé': { key:'doit_payer', prio: 20 },
     'Payée': { key:'payee', prio: 50 },
   };
@@ -244,14 +245,14 @@ function detectTablesChangesAndBeep(tables) {
 
     // Card status classes
     cardEl.classList.remove(
-      'status-vide','status-en_cours','status-commandee','status-nouvelle_commande','status-doit_payer','status-payee'
+      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee'
     );
     cardEl.classList.add(cls);
 
     // Chip status classes
     if (chipStatusEl){
       chipStatusEl.classList.remove(
-        'status-vide','status-en_cours','status-commandee','status-nouvelle_commande','status-doit_payer','status-payee'
+        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee'
       );
       chipStatusEl.classList.add(cls);
     }

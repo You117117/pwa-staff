@@ -256,7 +256,3 @@ select{
   color:var(--muted);
   font-size:12px;
 }
-
-
-#summary .summaryItem .statusBadge{ margin-left:auto; }
-#summary .summaryItem{ display:block; }

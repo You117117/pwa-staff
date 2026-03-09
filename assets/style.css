@@ -173,6 +173,7 @@ select{
 .status-vide{border-left-color:var(--gray)}
 .status-en_cours{border-left-color:var(--blue)}
 .status-commandee{border-left-color:var(--warn)}
+.status-en_preparation{border-left-color:var(--warn)}
 .status-nouvelle_commande{border-left-color:var(--danger)}
 .status-doit_payer{border-left-color:var(--violet)}
 .status-payee{border-left-color:var(--ok)}
@@ -180,6 +181,7 @@ select{
 .chip.status-vide{background:#2b2f36}
 .chip.status-en_cours{background:var(--blue); color:#061827}
 .chip.status-commandee{background:var(--warn); color:#2b2100}
+.chip.status-en_preparation{background:var(--warn); color:#2b2100}
 .chip.status-nouvelle_commande{background:var(--danger)}
 .chip.status-doit_payer{background:var(--violet)}
 .chip.status-payee{background:var(--ok); color:#062114}

@@ -244,15 +244,5 @@ select{
   flex-wrap:wrap;
   gap:8px;
   align-items:center;
-  margin-bottom:8px;
-}
-#summary .summaryItem .body{
-  color:var(--fg);
-  font-size:13px;
-  line-height:1.45;
-}
-#summary .summaryMeta{
-  margin-top:8px;
-  color:var(--muted);
-  font-size:12px;
+  margin-bottom:0;
 }

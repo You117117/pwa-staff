@@ -308,7 +308,6 @@ function detectTablesChangesAndBeep(tables) {
       wrapper.className = 'summaryItem summaryItem--clickable';
       wrapper.setAttribute('data-table', tableId);
       wrapper.setAttribute('aria-label', `Voir le détail de la table ${tableId}`);
-      wrapper.title = `Ouvrir le détail de ${tableId}`;
 
       const head = document.createElement('div');
       head.className = 'head';

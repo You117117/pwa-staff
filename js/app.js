@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const REFRESH_MS = 5000;
   const LS_KEY_API = 'staff-api';
+  let latestTablesById = {};
 
   // --- Utils
 
@@ -203,6 +204,17 @@ function detectTablesChangesAndBeep(tables) {
     return (STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number') ? STATUS_UI[label].prio : 999;
   }
 
+  function statusClassName(label){
+    return `status-${statusKey(label)}`;
+  }
+
+  function buildStatusBadge(label){
+    const badge = document.createElement('span');
+    badge.className = `chip ${statusClassName(label)}`;
+    badge.textContent = label || 'Vide';
+    return badge;
+  }
+
   function playToneSequence(freqs, durationMs=130){
     try{
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -281,30 +293,45 @@ function detectTablesChangesAndBeep(tables) {
     if (summaryEmpty) summaryEmpty.style.display = 'none';
 
     tickets.forEach((t) => {
+      const tableId = normId(t.table);
+      const tableMeta = latestTablesById[tableId] || null;
+      const currentStatus = (tableMeta && tableMeta.status) || 'Vide';
+      const currentTotal =
+        tableMeta && typeof tableMeta.total === 'number'
+          ? tableMeta.total
+          : typeof t.total === 'number'
+          ? t.total
+          : null;
+
+      const wrapper = document.createElement('button');
+      wrapper.type = 'button';
+      wrapper.className = 'summaryItem summaryItem--clickable';
+      wrapper.setAttribute('data-table', tableId);
+      wrapper.setAttribute('aria-label', `Voir le détail de la table ${tableId}`);
+
       const head = document.createElement('div');
       head.className = 'head';
 
       const chipTable = document.createElement('span');
       chipTable.className = 'chip';
-      chipTable.textContent = t.table;
+      chipTable.textContent = tableId || t.table || 'Table';
       head.appendChild(chipTable);
 
       if (t.time) {
         const chipTime = document.createElement('span');
         chipTime.className = 'chip';
-      chipTime.style.fontSize = '13px';
-      chipTime.style.padding = '7px 12px';
-      chipTime.style.fontWeight = '700';
         chipTime.innerHTML = `<i class="icon-clock"></i> ${t.time}`;
         head.appendChild(chipTime);
       }
 
-      if (typeof t.total === 'number') {
+      if (typeof currentTotal === 'number') {
         const chipTotal = document.createElement('span');
         chipTotal.className = 'chip';
-        chipTotal.textContent = `Total : ${t.total} €`;
+        chipTotal.textContent = `Total : ${currentTotal.toFixed(2)} €`;
         head.appendChild(chipTotal);
       }
+
+      head.appendChild(buildStatusBadge(currentStatus));
 
       const body = document.createElement('div');
       body.className = 'body';
@@ -330,12 +357,23 @@ function detectTablesChangesAndBeep(tables) {
           .join(', ');
       }
 
-      body.textContent = bodyText || '';
+      body.textContent = bodyText || 'Voir le détail de la commande';
 
-      const wrapper = document.createElement('div');
-      wrapper.className = 'summaryItem';
+      const footer = document.createElement('div');
+      footer.className = 'summaryMeta';
+      footer.textContent = 'Touchez pour ouvrir le détail';
+
       wrapper.appendChild(head);
       wrapper.appendChild(body);
+      wrapper.appendChild(footer);
+
+      wrapper.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.showTableDetail) {
+          window.showTableDetail(tableId, currentStatus);
+        }
+      });
 
       summaryContainer.appendChild(wrapper);
     });
@@ -761,6 +799,11 @@ function detectTablesChangesAndBeep(tables) {
     try {
       const tablesData = await fetchTables();
       const tables = tablesData.tables || [];
+      latestTablesById = tables.reduce((acc, tb) => {
+        const id = normId(tb.id);
+        if (id) acc[id] = tb;
+        return acc;
+      }, {});
       detectTablesChangesAndBeep(tables);
       renderTables(tables);
     } catch (err) {
@@ -776,7 +819,13 @@ function detectTablesChangesAndBeep(tables) {
       return;
     }
     try {
-      const summaryData = await fetchSummary();
+      const [summaryData, tablesData] = await Promise.all([fetchSummary(), fetchTables()]);
+      const tables = tablesData.tables || [];
+      latestTablesById = tables.reduce((acc, tb) => {
+        const id = normId(tb.id);
+        if (id) acc[id] = tb;
+        return acc;
+      }, {});
       renderSummary(summaryData.tickets || []);
     } catch (err) {
       console.error('Erreur refreshSummary', err);

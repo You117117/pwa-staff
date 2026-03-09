@@ -217,3 +217,42 @@ select{
 }
 #summary .line{color:var(--fg); font-size:13px}
 #summary .items{color:var(--muted); font-size:13px}
+
+
+#summary .summaryItem{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:12px;
+}
+#summary .summaryItem--clickable{
+  width:100%;
+  text-align:left;
+  cursor:pointer;
+  transition:transform .12s ease, border-color .12s ease, background .12s ease, box-shadow .12s ease;
+}
+#summary .summaryItem--clickable:hover,
+#summary .summaryItem--clickable:focus-visible{
+  outline:none;
+  border-color:rgba(96,165,250,.55);
+  background:rgba(30,41,59,.96);
+  box-shadow:0 10px 24px rgba(2,6,23,.28);
+  transform:translateY(-1px);
+}
+#summary .summaryItem .head{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  margin-bottom:8px;
+}
+#summary .summaryItem .body{
+  color:var(--fg);
+  font-size:13px;
+  line-height:1.45;
+}
+#summary .summaryMeta{
+  margin-top:8px;
+  color:var(--muted);
+  font-size:12px;
+}

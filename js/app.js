@@ -333,39 +333,7 @@ function detectTablesChangesAndBeep(tables) {
 
       head.appendChild(buildStatusBadge(currentStatus));
 
-      const body = document.createElement('div');
-      body.className = 'body';
-
-      let bodyText = '';
-      if (t.label) {
-        bodyText = t.label;
-      } else if (Array.isArray(t.items)) {
-        bodyText = t.items
-          .map((it) => {
-            const qty = it.qty || it.quantity || 1;
-            const name = it.label || it.name || it.title || 'article';
-            return `${qty}× ${name}`;
-          })
-          .join(', ');
-      } else if (Array.isArray(t.lines)) {
-        bodyText = t.lines
-          .map((it) => {
-            const qty = it.qty || it.quantity || 1;
-            const name = it.label || it.name || it.title || 'article';
-            return `${qty}× ${name}`;
-          })
-          .join(', ');
-      }
-
-      body.textContent = bodyText || 'Voir le détail de la commande';
-
-      const footer = document.createElement('div');
-      footer.className = 'summaryMeta';
-      footer.textContent = 'Touchez pour ouvrir le détail';
-
       wrapper.appendChild(head);
-      wrapper.appendChild(body);
-      wrapper.appendChild(footer);
 
       wrapper.addEventListener('click', (e) => {
         e.preventDefault();

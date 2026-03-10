@@ -190,6 +190,7 @@ function detectTablesChangesAndBeep(tables) {
     'En préparation': { key:'en_preparation', prio: 15 },
     'Doit payé': { key:'doit_payer', prio: 20 },
     'Payée': { key:'payee', prio: 50 },
+    'Clôturée': { key:'cloturee', prio: 55 },
   };
 
   const SOUND_COOLDOWN_MS = 6000; // anti-spam global
@@ -257,14 +258,14 @@ function detectTablesChangesAndBeep(tables) {
 
     // Card status classes
     cardEl.classList.remove(
-      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee'
+      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee','status-cloturee'
     );
     cardEl.classList.add(cls);
 
     // Chip status classes
     if (chipStatusEl){
       chipStatusEl.classList.remove(
-        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee'
+        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee','status-cloturee'
       );
       chipStatusEl.classList.add(cls);
     }
@@ -294,12 +295,9 @@ function detectTablesChangesAndBeep(tables) {
 
     tickets.forEach((t) => {
       const tableId = normId(t.table);
-      const tableMeta = latestTablesById[tableId] || null;
-      const currentStatus = (tableMeta && tableMeta.status) || 'Vide';
+      const currentStatus = t.status || 'Vide';
       const currentTotal =
-        tableMeta && typeof tableMeta.total === 'number'
-          ? tableMeta.total
-          : typeof t.total === 'number'
+        typeof t.total === 'number'
           ? t.total
           : null;
 
@@ -339,7 +337,7 @@ function detectTablesChangesAndBeep(tables) {
         e.preventDefault();
         e.stopPropagation();
         if (window.showTableDetail) {
-          window.showTableDetail(tableId, currentStatus);
+          window.showTableDetail(tableId, currentStatus, { summaryEntry: t, historyMode: true });
         }
       });
 

@@ -245,6 +245,41 @@
     return await res.json();
   }
 
+
+  function normalizeSummaryEntry(summaryEntry, fallbackTableId, fallbackStatus) {
+    if (!summaryEntry) return null;
+
+    const orderedTickets = Array.isArray(summaryEntry.tickets)
+      ? [...summaryEntry.tickets].sort((a, b) => {
+          const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
+          const bTs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
+          if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return aTs - bTs;
+          return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+        })
+      : [];
+
+    const total = typeof summaryEntry.total === 'number'
+      ? summaryEntry.total
+      : orderedTickets.reduce((acc, t) => acc + (typeof t.total === 'number' ? t.total : 0), 0);
+
+    const createdAt = summaryEntry.createdAt || (orderedTickets[0] && orderedTickets[0].createdAt) || null;
+    const closedAt = summaryEntry.closedAt || (orderedTickets.length ? orderedTickets.map((t) => t.closedAt).filter(Boolean).sort().slice(-1)[0] : null) || null;
+    const paidAt = summaryEntry.paidAt || (orderedTickets.length ? orderedTickets.map((t) => t.paidAt).filter(Boolean).sort().slice(-1)[0] : null) || null;
+
+    return {
+      table: normId(summaryEntry.table || fallbackTableId),
+      status: summaryEntry.status || fallbackStatus || 'Vide',
+      tickets: orderedTickets,
+      total,
+      createdAt,
+      sessionKey: summaryEntry.sessionKey || summaryEntry.sessionStartedAt || createdAt || null,
+      time: summaryEntry.time || null,
+      closedAt,
+      paidAt,
+      isClosed: !!closedAt,
+    };
+  }
+
   async function showTableDetail(tableId, statusHint, opts) {
     const options = opts || {};
 
@@ -289,6 +324,12 @@
     head.appendChild(btnClose);
     panel.appendChild(head);
 
+    const contextMeta = document.createElement('div');
+    contextMeta.style.marginBottom = '10px';
+    contextMeta.style.color = '#cbd5e1';
+    contextMeta.style.fontSize = '13px';
+    panel.appendChild(contextMeta);
+
     const info = document.createElement('div');
     info.style.marginBottom = '10px';
     info.style.color = '#e5e7eb';
@@ -296,56 +337,59 @@
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
-    // ── Fetch backend ──────────────────────────────
-    let summaryData;
-    let tablesData;
-    try {
-      [summaryData, tablesData] = await Promise.all([
-        fetchSummary(base),
-        fetchTables(base),
-      ]);
-    } catch (err) {
-      console.error('Erreur fetch detail', err);
-      info.textContent = 'Erreur de chargement';
-      return;
-    }
+    const summaryEntry = normalizeSummaryEntry(options.summaryEntry, id, statusHint);
+    const historyMode = !!options.historyMode;
 
-    const tableMeta = (tablesData.tables || []).find((t) => normId(t.id) === id);
-    let currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
-    const cleared = !!(tableMeta && tableMeta.cleared);
-    const sessionStartAt =
-      tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
+    let currentStatus = statusHint || 'Vide';
+    let allTickets = [];
+    let total = 0;
+    let cleared = false;
+    let sessionStartAt = null;
+    let isHistoryView = historyMode;
 
-    // Tickets pour cette table
-    let allTickets = (summaryData.tickets || []).filter((t) => normId(t.table) === id);
-
-    // Si sessionStartAt présent → on ne garde que la session en cours
-    if (sessionStartAt) {
-      const threshold = new Date(sessionStartAt).getTime();
-      if (!Number.isNaN(threshold)) {
-        allTickets = allTickets.filter((t) => {
-          if (!t.createdAt) return true;
-          const ts = new Date(t.createdAt).getTime();
-          if (Number.isNaN(ts)) return true;
-          return ts >= threshold;
-        });
-      }
-    }
-
-    // ── Tickets / Montant ──────────────────────────
-    if (!allTickets.length || cleared) {
-      info.textContent = 'Aucune commande pour cette table.';
-
-      const totalBoxEmpty = document.createElement('div');
-      totalBoxEmpty.style.marginTop = '10px';
-      totalBoxEmpty.style.marginBottom = '16px';
-      totalBoxEmpty.innerHTML = `
-        <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total</div>
-        <div style="font-size:28px;font-weight:600;color:#f9fafb;">0.00 €</div>
-      `;
-      panel.appendChild(totalBoxEmpty);
+    // ── Source des données : historique immuable ou session active ──
+    if (summaryEntry) {
+      currentStatus = summaryEntry.status || currentStatus;
+      allTickets = summaryEntry.tickets || [];
+      total = typeof summaryEntry.total === 'number' ? summaryEntry.total : 0;
+      cleared = !!summaryEntry.isClosed;
+      sessionStartAt = summaryEntry.sessionKey || summaryEntry.createdAt || null;
+      isHistoryView = true;
+      info.textContent = `Historique (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`;
     } else {
-      // Tri des tickets de la session
+      let summaryData;
+      let tablesData;
+      try {
+        [summaryData, tablesData] = await Promise.all([
+          fetchSummary(base),
+          fetchTables(base),
+        ]);
+      } catch (err) {
+        console.error('Erreur fetch detail', err);
+        info.textContent = 'Erreur de chargement';
+        return;
+      }
+
+      const tableMeta = (tablesData.tables || []).find((t) => normId(t.id) === id);
+      currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
+      cleared = !!(tableMeta && tableMeta.cleared);
+      sessionStartAt =
+        tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
+
+      allTickets = (summaryData.tickets || []).filter((t) => normId(t.table) === id);
+
+      if (sessionStartAt) {
+        const threshold = new Date(sessionStartAt).getTime();
+        if (!Number.isNaN(threshold)) {
+          allTickets = allTickets.filter((t) => {
+            if (!t.createdAt) return true;
+            const ts = new Date(t.createdAt).getTime();
+            if (Number.isNaN(ts)) return true;
+            return ts >= threshold;
+          });
+        }
+      }
+
       allTickets.sort((a, b) => {
         const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
         const bTs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
@@ -358,22 +402,56 @@
         return 0;
       });
 
-      info.textContent = `Commandes en cours (${allTickets.length})`;
-
-      allTickets.forEach((t) => {
-        panel.appendChild(makeTicketCard(t));
-      });
-
-      const total = allTickets.reduce(
+      total = allTickets.reduce(
         (acc, t) => acc + (typeof t.total === 'number' ? t.total : 0),
         0
       );
+
+      if (!allTickets.length || cleared) {
+        info.textContent = 'Aucune commande pour cette table.';
+      } else {
+        info.textContent = `Commandes en cours (${allTickets.length})`;
+      }
+    }
+
+    if (summaryEntry) {
+      const parts = [];
+      if (summaryEntry.time) parts.push(`Commande à ${summaryEntry.time}`);
+      if (summaryEntry.closedAt) {
+        try {
+          const dtClose = new Date(summaryEntry.closedAt);
+          if (!Number.isNaN(dtClose.getTime())) {
+            parts.push(`Clôturée à ${dtClose.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`);
+          }
+        } catch (e) {}
+      }
+      contextMeta.textContent = parts.join(' · ');
+    } else {
+      contextMeta.textContent = '';
+    }
+
+    // ── Tickets / Montant ──────────────────────────
+    if (!allTickets.length) {
+      info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : 'Aucune commande pour cette table.';
+
+      const totalBoxEmpty = document.createElement('div');
+      totalBoxEmpty.style.marginTop = '10px';
+      totalBoxEmpty.style.marginBottom = '16px';
+      totalBoxEmpty.innerHTML = `
+        <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total</div>
+        <div style="font-size:28px;font-weight:600;color:#f9fafb;">0.00 €</div>
+      `;
+      panel.appendChild(totalBoxEmpty);
+    } else {
+      allTickets.forEach((t) => {
+        panel.appendChild(makeTicketCard(t));
+      });
 
       const totalBox = document.createElement('div');
       totalBox.style.marginTop = '10px';
       totalBox.style.marginBottom = '18px';
       totalBox.innerHTML = `
-        <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total (session)</div>
+        <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total ${isHistoryView ? '(historique)' : '(session)'}</div>
         <div style="font-size:30px;font-weight:650;color:#f9fafb;">${total.toFixed(
           2
         )} €</div>
@@ -394,7 +472,7 @@
     actions.style.flexDirection = 'column';
     actions.style.gap = '8px';
 
-    const isActive = currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
+    const isActive = !isHistoryView && currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
 
 
     let btnPrint = null;
@@ -782,7 +860,7 @@
     }
 
     // 🔁 Démarrer l’auto-refresh si ce n’est pas un refresh interne
-    if (!options.skipAutoRefresh) {
+    if (!options.skipAutoRefresh && !isHistoryView) {
       startDetailAutoRefresh(id);
     }
   }

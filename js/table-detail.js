@@ -376,19 +376,41 @@
       sessionStartAt =
         tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
 
-      allTickets = (summaryData.tickets || []).filter((t) => normId(t.table) === id);
+      const sessionGroups = (summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
 
+      const sameInstant = (a, b) => {
+        if (!a || !b) return false;
+        const aTs = new Date(a).getTime();
+        const bTs = new Date(b).getTime();
+        if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return aTs === bTs;
+        return String(a) === String(b);
+      };
+
+      let activeGroup = null;
       if (sessionStartAt) {
-        const threshold = new Date(sessionStartAt).getTime();
-        if (!Number.isNaN(threshold)) {
-          allTickets = allTickets.filter((t) => {
-            if (!t.createdAt) return true;
-            const ts = new Date(t.createdAt).getTime();
-            if (Number.isNaN(ts)) return true;
-            return ts >= threshold;
-          });
-        }
+        activeGroup = sessionGroups.find((entry) => {
+          return (
+            sameInstant(entry.sessionKey, sessionStartAt) ||
+            sameInstant(entry.sessionStartedAt, sessionStartAt) ||
+            sameInstant(entry.createdAt, sessionStartAt)
+          );
+        }) || null;
       }
+
+      if (!activeGroup) {
+        activeGroup = sessionGroups.find((entry) => !entry.isClosed) || null;
+      }
+
+      if (!activeGroup && sessionGroups.length) {
+        activeGroup = [...sessionGroups].sort((a, b) => {
+          const aTs = new Date(a.updatedAt || a.createdAt || 0).getTime();
+          const bTs = new Date(b.updatedAt || b.createdAt || 0).getTime();
+          if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return bTs - aTs;
+          return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+        })[0];
+      }
+
+      allTickets = Array.isArray(activeGroup && activeGroup.tickets) ? [...activeGroup.tickets] : [];
 
       allTickets.sort((a, b) => {
         const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
@@ -402,10 +424,12 @@
         return 0;
       });
 
-      total = allTickets.reduce(
-        (acc, t) => acc + (typeof t.total === 'number' ? t.total : 0),
-        0
-      );
+      total = typeof (activeGroup && activeGroup.total) === 'number'
+        ? activeGroup.total
+        : allTickets.reduce(
+            (acc, t) => acc + (typeof t.total === 'number' ? t.total : 0),
+            0
+          );
 
       if (!allTickets.length || cleared) {
         info.textContent = 'Aucune commande pour cette table.';

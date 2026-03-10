@@ -80,6 +80,12 @@ button:hover{filter:brightness(1.05)}
   overflow:hidden;
 }
 
+.summary-section{
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+}
+
 .section-head{
   display:flex;
   align-items:center;
@@ -87,6 +93,13 @@ button:hover{filter:brightness(1.05)}
   gap:10px;
   padding:12px 14px;
   border-bottom:1px solid var(--border);
+}
+
+.summary-section .section-head{
+  position:sticky;
+  top:0;
+  z-index:2;
+  background:var(--panel);
 }
 
 .controls{
@@ -177,6 +190,7 @@ select{
 .status-nouvelle_commande{border-left-color:var(--danger)}
 .status-doit_payer{border-left-color:var(--violet)}
 .status-payee{border-left-color:var(--ok)}
+.status-cloturee{border-left-color:var(--gray)}
 
 .chip.status-vide{background:#2b2f36}
 .chip.status-en_cours{background:var(--blue); color:#061827}
@@ -185,6 +199,7 @@ select{
 .chip.status-nouvelle_commande{background:var(--danger)}
 .chip.status-doit_payer{background:var(--violet)}
 .chip.status-payee{background:var(--ok); color:#062114}
+.chip.status-cloturee{background:#334155; color:#e2e8f0}
 
 /* Pulse ONLY for Nouvelle commande, and only while class .pulse is present */
 @keyframes pulse {
@@ -202,6 +217,9 @@ select{
   display:flex;
   flex-direction:column;
   gap:10px;
+  max-height:min(70vh, 720px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
 }
 #summary .wrapper{
   background:var(--card);

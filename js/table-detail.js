@@ -551,11 +551,11 @@
           }
         }
         // Aucun timer actif → état basé sur le statut courant
-        if (currentStatus === 'Payée') {
+        if (currentStatus === 'Encodage caisse confirmé') {
           btnPay.textContent = 'Annuler paiement';
           btnPay.style.backgroundColor = '#f97316';
         } else {
-          btnPay.textContent = 'Paiement confirmé';
+          btnPay.textContent = 'Encoder en caisse';
           btnPay.style.backgroundColor = '';
         }
       }
@@ -576,7 +576,7 @@
         // Synchroniser aussi la visibilité du bouton de clôture
         if (btnCloseTable) {
           const payTimerGlobalForClose = leftPayTimers[id];
-          if (currentStatus === 'Payée' || payTimerGlobalForClose) {
+          if (currentStatus === 'Encodage caisse confirmé' || payTimerGlobalForClose) {
             btnCloseTable.style.display = 'none';
           } else {
             btnCloseTable.style.display = 'block';
@@ -614,7 +614,7 @@
 
       // Cacher le bouton de clôture si paiement confirmé ou timer de paiement actif (synchro avec app.js)
       const payTimerGlobalForClose = leftPayTimers[id];
-      if (currentStatus === 'Payée' || payTimerGlobalForClose) {
+      if (currentStatus === 'Encodage caisse confirmé' || payTimerGlobalForClose) {
         btnCloseTable.style.display = 'none';
       } else {
         btnCloseTable.style.display = 'block';
@@ -626,54 +626,44 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        // Si une clôture est déjà en cours → annuler
-        if (pendingClose) {
-          pendingClose = false;
-          pendingSeconds = 5;
-          if (closeTimeoutId) clearTimeout(closeTimeoutId);
-          if (countdownIntervalId) clearInterval(countdownIntervalId);
-          updateCloseButtonLabel();
-          return;
+        let posConfirmed = currentStatus === 'Encodage caisse confirmé';
+        let closedWithException = false;
+
+        if (!posConfirmed) {
+          const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
+          if (answer === null) return;
+          const normalized = String(answer || '').trim().toUpperCase();
+          if (normalized === 'OUI') {
+            try {
+              await fetch(`${apiBase}/confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {
+              console.error('Erreur /confirm (clôture détail)', err);
+            }
+            posConfirmed = true;
+          } else {
+            closedWithException = true;
+            posConfirmed = false;
+          }
         }
 
-        // Démarre compte à rebours 5s
-        pendingClose = true;
-        pendingSeconds = 5;
-        updateCloseButtonLabel();
-
-        countdownIntervalId = setInterval(() => {
-          if (!pendingClose) {
-            clearInterval(countdownIntervalId);
-            return;
+        try {
+          await fetch(`${apiBase}/close-table`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: id, posConfirmed, closedWithException }),
+          });
+        } catch (err) {
+          console.error('Erreur clôture (close-table)', err);
+        } finally {
+          if (window.refreshTables) {
+            window.refreshTables();
           }
-          pendingSeconds -= 1;
-          if (pendingSeconds <= 0) {
-            pendingSeconds = 0;
-            clearInterval(countdownIntervalId);
-          }
-          updateCloseButtonLabel();
-        }, 1000);
-
-        closeTimeoutId = setTimeout(async () => {
-          if (!pendingClose) return; // annulé entre-temps
-          pendingClose = false;
-          pendingSeconds = 5;
-
-          try {
-            await fetch(`${apiBase}/close-table`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ table: id }),
-            });
-          } catch (err) {
-            console.error('Erreur clôture (close-table)', err);
-          } finally {
-            if (window.refreshTables) {
-              window.refreshTables();
-            }
-            showTableDetail(id);
-          }
-        }, 5000);
+          showTableDetail(id);
+        }
       });
 
       actions.appendChild(btnCloseTable);
@@ -699,7 +689,7 @@
     if (isActive && btnPay) {
       btnPay.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Délègue l'action au bouton Paiement du tableau de gauche (cerveau unique dans app.js)
+        // Délègue l'action au bouton Encoder en caisse du tableau de gauche (cerveau unique dans app.js)
         const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
         if (leftBtn) {
           leftBtn.click();
@@ -811,8 +801,8 @@
           return;
         }
 
-        // Si déjà Payée → annuler paiement (sans compte à rebours actif)
-        if (currentStatus === 'Payée') {
+        // Si déjà Encodage caisse confirmé → annuler
+        if (currentStatus === 'Encodage caisse confirmé') {
           try {
             await fetch(`${apiBase}/cancel-confirm`, {
               method: 'POST',
@@ -833,7 +823,7 @@
           return;
         }
 
-        // Paiement confirmé
+        // Encodage caisse confirmé
         try {
           await fetch(`${apiBase}/confirm`, {
             method: 'POST',
@@ -845,7 +835,7 @@
         }
 
         // Statut direct côté UI
-        currentStatus = 'Payée';
+        currentStatus = 'Encodage caisse confirmé';
         statusChip.textContent = `Statut : ${currentStatus}`;
 
         // Démarre compte à rebours 5s

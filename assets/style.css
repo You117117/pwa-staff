@@ -9,10 +9,10 @@
 
   --accent:#4f7cff;
 
-  --ok:#12b886;           /* Payée */
+  --ok:#12b886;           /* Encodage caisse confirmé */
   --warn:#fab005;         /* Commandée */
   --danger:#f03e3e;       /* Nouvelle commande */
-  --violet:#845ef7;       /* Doit payer */
+  --violet:#845ef7;       /* À encoder en caisse */
   --blue:#339af0;         /* En cours */
   --gray:#495057;         /* Vide */
 }
@@ -188,8 +188,9 @@ select{
 .status-commandee{border-left-color:var(--warn)}
 .status-en_preparation{border-left-color:var(--warn)}
 .status-nouvelle_commande{border-left-color:var(--danger)}
-.status-doit_payer{border-left-color:var(--violet)}
-.status-payee{border-left-color:var(--ok)}
+.status-a_encoder_caisse{border-left-color:var(--violet)}
+.status-encodage_caisse_confirme{border-left-color:var(--ok)}
+.status-cloture_anomalie{border-left-color:var(--danger)}
 .status-cloturee{border-left-color:var(--gray)}
 
 .chip.status-vide{background:#2b2f36}
@@ -197,8 +198,9 @@ select{
 .chip.status-commandee{background:var(--warn); color:#2b2100}
 .chip.status-en_preparation{background:var(--warn); color:#2b2100}
 .chip.status-nouvelle_commande{background:var(--danger)}
-.chip.status-doit_payer{background:var(--violet)}
-.chip.status-payee{background:var(--ok); color:#062114}
+.chip.status-a_encoder_caisse{background:var(--violet)}
+.chip.status-encodage_caisse_confirme{background:var(--ok); color:#062114}
+.chip.status-cloture_anomalie{background:var(--danger)}
 .chip.status-cloturee{background:#334155; color:#e2e8f0}
 
 /* Pulse ONLY for Nouvelle commande, and only while class .pulse is present */
@@ -274,3 +276,7 @@ select{
   color:var(--muted);
   font-size:12px;
 }
+
+.chip-action{background:#f97316;color:white;font-weight:800}
+.status-a_encoder_caisse + .chip-action{background:#ef4444}
+.status-encodage_caisse_confirme + .chip-action{background:#64748b}

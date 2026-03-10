@@ -188,8 +188,9 @@ function detectTablesChangesAndBeep(tables) {
     'Commandée': { key:'commandee', prio: 10 },
     'Nouvelle commande': { key:'nouvelle_commande', prio: 0 },
     'En préparation': { key:'en_preparation', prio: 15 },
-    'Doit payé': { key:'doit_payer', prio: 20 },
-    'Payée': { key:'payee', prio: 50 },
+    'À encoder en caisse': { key:'a_encoder_caisse', prio: 20 },
+    'Encodage caisse confirmé': { key:'encodage_caisse_confirme', prio: 50 },
+    'Clôture avec anomalie': { key:'cloture_anomalie', prio: 52 },
     'Clôturée': { key:'cloturee', prio: 55 },
   };
 
@@ -213,6 +214,25 @@ function detectTablesChangesAndBeep(tables) {
     const badge = document.createElement('span');
     badge.className = `chip ${statusClassName(label)}`;
     badge.textContent = label || 'Vide';
+    return badge;
+  }
+
+  function actionLabelForStatus(label){
+    switch(label){
+      case 'Commandée': return 'Imprimer ticket';
+      case 'Nouvelle commande': return 'Imprimer ajout';
+      case 'À encoder en caisse': return 'Encoder en caisse';
+      case 'Encodage caisse confirmé': return 'Clôturer';
+      default: return '';
+    }
+  }
+
+  function buildActionBadge(label){
+    const action = actionLabelForStatus(label);
+    if (!action) return null;
+    const badge = document.createElement('span');
+    badge.className = 'chip chip-action';
+    badge.textContent = action;
     return badge;
   }
 
@@ -258,14 +278,14 @@ function detectTablesChangesAndBeep(tables) {
 
     // Card status classes
     cardEl.classList.remove(
-      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee','status-cloturee'
+      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
     );
     cardEl.classList.add(cls);
 
     // Chip status classes
     if (chipStatusEl){
       chipStatusEl.classList.remove(
-        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-doit_payer','status-payee','status-cloturee'
+        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
       );
       chipStatusEl.classList.add(cls);
     }
@@ -330,6 +350,8 @@ function detectTablesChangesAndBeep(tables) {
       }
 
       head.appendChild(buildStatusBadge(currentStatus));
+      const actionBadge = buildActionBadge(currentStatus);
+      if (actionBadge) head.appendChild(actionBadge);
 
       wrapper.appendChild(head);
 
@@ -381,8 +403,9 @@ function detectTablesChangesAndBeep(tables) {
         'Commandée': 'rgba(245,158,11,0.16)',
         'Nouvelle commande': 'rgba(239,68,68,0.16)',
         'En préparation': 'rgba(245,158,11,0.16)',
-        'Doit payé': 'rgba(168,85,247,0.16)',
-        'Payée': 'rgba(16,185,129,0.16)',
+        'À encoder en caisse': 'rgba(168,85,247,0.16)',
+        'Encodage caisse confirmé': 'rgba(16,185,129,0.16)',
+        'Clôture avec anomalie': 'rgba(239,68,68,0.16)',
       };
       card.style.background = __bgMap[__statusLabel] || 'rgba(15,23,42,0.6)';
 
@@ -405,6 +428,8 @@ function detectTablesChangesAndBeep(tables) {
       chipStatus.style.fontWeight = '800';
       chipStatus.textContent = status;
       head.appendChild(chipStatus);
+      const actionBadge = buildActionBadge(status);
+      if (actionBadge) head.appendChild(actionBadge);
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
@@ -439,7 +464,7 @@ function detectTablesChangesAndBeep(tables) {
         const btnPaid = document.createElement('button');
         btnPaid.className = 'btn btn-primary btn-paid';
 
-        const isPaid = status === 'Payée';
+        const isPaid = status === 'Encodage caisse confirmé';
         const payTimer = leftPayTimers[id];
         const printTimer = leftPrintTimers[id];
 

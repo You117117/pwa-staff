@@ -23,6 +23,7 @@
 
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
+  // Auto-refresh réseau du panneau de droite désactivé.
 
   // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
@@ -46,8 +47,19 @@
     panel.style.display = 'none';
     panel.innerHTML = '';
     window.__currentDetailTableId = null;
-    }
   }
+
+  // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
+  function makeProductLines(ticket) {
+    const src = Array.isArray(ticket.items)
+      ? ticket.items
+      : Array.isArray(ticket.lines)
+      ? ticket.lines
+      : null;
+
+    if (!src) {
+      const lines = [];
+      if (ticket.label) {
         const div = document.createElement('div');
         div.textContent = ticket.label;
         div.style.fontSize = '14px';
@@ -580,64 +592,74 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        let closureType = currentStatus === 'Encodage caisse confirmé' ? 'normal' : null;
+        let posConfirmed = currentStatus === 'Encodage caisse confirmé';
+        let closedWithException = false;
 
-        if (!closureType) {
+        let closureType = 'normal';
+
+        if (!posConfirmed) {
           const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
           if (answer === null) return;
+
           const normalized = String(answer || '').trim().toUpperCase();
 
           if (normalized === 'OUI') {
             try {
-              const confirmResp = await fetch(`${apiBase}/confirm`, {
+              const confirmRes = await fetch(`${apiBase}/confirm`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
-              const confirmJson = await confirmResp.json().catch(() => ({}));
-              if (!confirmResp.ok || confirmJson?.ok === false) {
-                throw new Error(confirmJson?.error || `http_${confirmResp.status}`);
+              const confirmJson = await confirmRes.json().catch(() => ({}));
+              if (!confirmRes.ok || confirmJson.ok === false) {
+                window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
+                return;
               }
             } catch (err) {
               console.error('Erreur /confirm (clôture détail)', err);
-              alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
+              window.alert('Erreur réseau pendant la confirmation caisse');
               return;
             }
+            posConfirmed = true;
             closureType = 'normal';
           } else {
+            posConfirmed = false;
+            closedWithException = true;
             closureType = 'anomaly';
           }
         }
 
         try {
-          const payload =
-            closureType === 'anomaly'
-              ? {
-                  table: id,
-                  closureType: 'anomaly',
-                  reason: 'POS_NON_CONFIRME',
-                  note: 'Clôture avec anomalie depuis le panneau détail',
-                }
-              : {
-                  table: id,
-                  closureType: 'normal',
-                };
+          const closePayload = closureType === 'anomaly'
+            ? {
+                table: id,
+                closureType: 'anomaly',
+                reason: 'POS_NON_CONFIRME',
+                note: 'Clôture avec anomalie depuis le panneau détail staff',
+              }
+            : {
+                table: id,
+                closureType: 'normal',
+              };
 
-          const closeResp = await fetch(`${apiBase}/close-table`, {
+          const closeRes = await fetch(`${apiBase}/close-table`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(closePayload),
           });
-          const closeJson = await closeResp.json().catch(() => ({}));
-          if (!closeResp.ok || closeJson?.ok === false) {
-            throw new Error(closeJson?.error || `http_${closeResp.status}`);
+
+          const closeJson = await closeRes.json().catch(() => ({}));
+          if (!closeRes.ok || closeJson.ok === false) {
+            window.alert(closeJson.error || 'Échec clôture de table');
+            return;
           }
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
-          alert(`Impossible de clôturer la table : ${err.message || err}`);
+          window.alert('Erreur réseau pendant la clôture de table');
+          return;
         } finally {
           if (window.refreshTables) {
-            await window.refreshTables();
+            window.refreshTables();
           }
           showTableDetail(id);
         }
@@ -850,7 +872,9 @@
       });
     }
 
-    // Pas de polling automatique du panneau de droite : rechargement manuel uniquement.
+    // Pas d'auto-refresh du panneau de droite : rechargement manuel uniquement.
+    if (!options.skipAutoRefresh && !isHistoryView) {
+    }
   }
 
   window.showTableDetail = showTableDetail;

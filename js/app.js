@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryContainer = document.querySelector('#summary');
   const summaryEmpty = document.querySelector('#summaryEmpty');
 
+  const REFRESH_MS = 5000;
   const LS_KEY_API = 'staff-api';
   let latestTablesById = {};
 

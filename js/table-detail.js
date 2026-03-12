@@ -1,4 +1,4 @@
-// table-detail.js — détail table (sans auto-refresh 5s du panneau de droite, produits en gras avec prix)
+// table-detail.js — détail table (sessions, paiement 5s, clôture 5s, produits en gras avec prix)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -24,10 +24,9 @@
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
 
-  // Auto-refresh du panneau de droite désactivé :
-  // on recharge uniquement à l'ouverture du détail et après une action utilisateur.
+  // 🔁 Auto-refresh de la vue détail
   const detailAutoRefresh = (window.detailAutoRefresh =
-    window.detailAutoRefresh || { timerId: null, tableId: null, enabled: false });
+    window.detailAutoRefresh || { timerId: null, tableId: null });
 
   // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
@@ -61,14 +60,27 @@
   }
 
   function startDetailAutoRefresh(id) {
-    // Polling volontairement désactivé pour éviter le bruit réseau
-    // et faciliter les tests métier.
+    // Clear ancien timer éventuel
     if (detailAutoRefresh.timerId) {
       clearInterval(detailAutoRefresh.timerId);
       detailAutoRefresh.timerId = null;
+      detailAutoRefresh.tableId = null;
     }
+
     detailAutoRefresh.tableId = id;
-    return;
+    detailAutoRefresh.timerId = setInterval(() => {
+      const panelEl = document.querySelector('#tableDetailPanel');
+      // Si le panneau est fermé, on stoppe tout
+      if (!panelEl || panelEl.style.display === 'none') {
+        clearInterval(detailAutoRefresh.timerId);
+        detailAutoRefresh.timerId = null;
+        detailAutoRefresh.tableId = null;
+        return;
+      }
+
+      // Rafraîchit le détail sans relancer un nouveau timer
+      showTableDetail(id, null, { skipAutoRefresh: true });
+    }, 5000);
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -614,41 +626,57 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        let posConfirmed = currentStatus === 'Encodage caisse confirmé';
-        let closedWithException = false;
+        let closureType = currentStatus === 'Encodage caisse confirmé' ? 'normal' : null;
+        let reason = null;
+        let note = null;
 
-        if (!posConfirmed) {
+        if (!closureType) {
           const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
           if (answer === null) return;
           const normalized = String(answer || '').trim().toUpperCase();
           if (normalized === 'OUI') {
             try {
-              await fetch(`${apiBase}/confirm`, {
+              const confirmResp = await fetch(`${apiBase}/confirm`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
+              const confirmJson = await confirmResp.json().catch(() => ({}));
+              if (!confirmResp.ok || confirmJson?.ok === false) {
+                throw new Error(confirmJson?.error || `http_${confirmResp.status}`);
+              }
             } catch (err) {
               console.error('Erreur /confirm (clôture détail)', err);
+              window.alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
+              return;
             }
-            posConfirmed = true;
+            closureType = 'normal';
+          } else if (normalized === 'NON') {
+            closureType = 'anomaly';
+            reason = 'POS_NON_CONFIRME';
+            note = 'Clôture avec anomalie depuis le détail staff';
           } else {
-            closedWithException = true;
-            posConfirmed = false;
+            window.alert('Réponse invalide. Tapez uniquement OUI ou NON.');
+            return;
           }
         }
 
         try {
-          await fetch(`${apiBase}/close-table`, {
+          const closeResp = await fetch(`${apiBase}/close-table`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id, posConfirmed, closedWithException }),
+            body: JSON.stringify({ table: id, closureType, reason, note }),
           });
+          const closeJson = await closeResp.json().catch(() => ({}));
+          if (!closeResp.ok || closeJson?.ok === false) {
+            throw new Error(closeJson?.error || `http_${closeResp.status}`);
+          }
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
+          window.alert(`Impossible de clôturer la table : ${err.message || err}`);
         } finally {
           if (window.refreshTables) {
-            window.refreshTables();
+            await window.refreshTables();
           }
           showTableDetail(id);
         }
@@ -861,7 +889,7 @@
       });
     }
 
-    // Pas d'auto-refresh du panneau de droite : rechargement manuel uniquement.
+    // 🔁 Démarrer l’auto-refresh si ce n’est pas un refresh interne
     if (!options.skipAutoRefresh && !isHistoryView) {
       startDetailAutoRefresh(id);
     }

@@ -721,13 +721,18 @@ function detectTablesChangesAndBeep(tables) {
             delete leftPayTimers[id];
 
             try {
-              await fetch(`${base}/close-table`, {
+              const closeResp = await fetch(`${base}/close-table`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ table: id }),
+                body: JSON.stringify({ table: id, closureType: 'normal' }),
               });
+              const closeJson = await closeResp.json().catch(() => ({}));
+              if (!closeResp.ok || closeJson?.ok === false) {
+                throw new Error(closeJson?.error || `http_${closeResp.status}`);
+              }
             } catch (err) {
               console.error('Erreur /close-table', err);
+              alert(`Impossible de clôturer la table : ${err.message || err}`);
             } finally {
               await refreshTables();
               if (window.__currentDetailTableId === id && window.showTableDetail) {

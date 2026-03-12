@@ -744,7 +744,7 @@ function detectTablesChangesAndBeep(tables) {
       }
 
       // Toggle panneau de droite en recliquant sur la même table
-      card.addEventListener('click', (e) => {
+      card.addEventListener('click', async (e) => {
         if (e.target.closest('button')) return;
 
         const currentId = window.__currentDetailTableId || null;
@@ -758,8 +758,16 @@ function detectTablesChangesAndBeep(tables) {
           return;
         }
 
+        // Sans polling permanent, on force un refresh ponctuel avant
+        // d'ouvrir le détail pour resynchroniser la carte de gauche.
+        await refreshTables();
+
+        const freshMap = window.__latestTablesById || {};
+        const freshTable = freshMap[id] || null;
+        const freshStatus = (freshTable && freshTable.status) ? freshTable.status : status;
+
         if (window.showTableDetail) {
-          window.showTableDetail(id, status);
+          window.showTableDetail(id, freshStatus);
         }
       });
 
@@ -800,6 +808,7 @@ function detectTablesChangesAndBeep(tables) {
         if (id) acc[id] = tb;
         return acc;
       }, {});
+      window.__latestTablesById = latestTablesById;
       detectTablesChangesAndBeep(tables);
       renderTables(tables);
     } catch (err) {
@@ -822,6 +831,7 @@ function detectTablesChangesAndBeep(tables) {
         if (id) acc[id] = tb;
         return acc;
       }, {});
+      window.__latestTablesById = latestTablesById;
       renderSummary(summaryData.tickets || []);
     } catch (err) {
       console.error('Erreur refreshSummary', err);
@@ -850,6 +860,19 @@ function detectTablesChangesAndBeep(tables) {
     });
   }
 
+  // Sans polling global, on resynchronise quand l'onglet redevient actif.
+  window.addEventListener('focus', () => {
+    refreshTables();
+    refreshSummary();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshTables();
+      refreshSummary();
+    }
+  });
+
   if (filterSelect) {
     filterSelect.addEventListener('change', () => {
       refreshTables();
@@ -859,4 +882,8 @@ function detectTablesChangesAndBeep(tables) {
   loadApiFromStorage();
   refreshTables();
   refreshSummary();
+  setInterval(() => {
+    refreshTables();
+    refreshSummary();
+  }, REFRESH_MS);
 });

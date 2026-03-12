@@ -23,7 +23,11 @@
 
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
-  // Auto-refresh réseau du panneau de droite désactivé.
+
+  // Auto-refresh du panneau de droite désactivé :
+  // on recharge uniquement à l'ouverture du détail et après une action utilisateur.
+  const detailAutoRefresh = (window.detailAutoRefresh =
+    window.detailAutoRefresh || { timerId: null, tableId: null, enabled: false });
 
   // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
@@ -47,6 +51,24 @@
     panel.style.display = 'none';
     panel.innerHTML = '';
     window.__currentDetailTableId = null;
+
+    // Stop auto-refresh
+    if (detailAutoRefresh.timerId) {
+      clearInterval(detailAutoRefresh.timerId);
+      detailAutoRefresh.timerId = null;
+      detailAutoRefresh.tableId = null;
+    }
+  }
+
+  function startDetailAutoRefresh(id) {
+    // Polling volontairement désactivé pour éviter le bruit réseau
+    // et faciliter les tests métier.
+    if (detailAutoRefresh.timerId) {
+      clearInterval(detailAutoRefresh.timerId);
+      detailAutoRefresh.timerId = null;
+    }
+    detailAutoRefresh.tableId = id;
+    return;
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -592,12 +614,9 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        let posConfirmed = currentStatus === 'Encodage caisse confirmé';
-        let closedWithException = false;
+        let closePayload = { table: id, closureType: 'normal' };
 
-        let closureType = 'normal';
-
-        if (!posConfirmed) {
+        if (currentStatus !== 'Encodage caisse confirmé') {
           const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
           if (answer === null) return;
 
@@ -605,61 +624,49 @@
 
           if (normalized === 'OUI') {
             try {
-              const confirmRes = await fetch(`${apiBase}/confirm`, {
+              const confirmResp = await fetch(`${apiBase}/confirm`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
-              const confirmJson = await confirmRes.json().catch(() => ({}));
-              if (!confirmRes.ok || confirmJson.ok === false) {
-                window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
-                return;
+              const confirmJson = await confirmResp.json().catch(() => ({}));
+              if (!confirmResp.ok || confirmJson?.ok === false) {
+                throw new Error(confirmJson?.error || `http_${confirmResp.status}`);
               }
             } catch (err) {
               console.error('Erreur /confirm (clôture détail)', err);
-              window.alert('Erreur réseau pendant la confirmation caisse');
+              alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
               return;
             }
-            posConfirmed = true;
-            closureType = 'normal';
+            closePayload = { table: id, closureType: 'normal' };
           } else {
-            posConfirmed = false;
-            closedWithException = true;
-            closureType = 'anomaly';
+            closePayload = {
+              table: id,
+              closureType: 'anomaly',
+              reason: 'POS_NON_CONFIRME',
+              note: 'Clôture avec anomalie depuis le détail staff',
+            };
           }
         }
 
         try {
-          const closePayload = closureType === 'anomaly'
-            ? {
-                table: id,
-                closureType: 'anomaly',
-                reason: 'POS_NON_CONFIRME',
-                note: 'Clôture avec anomalie depuis le panneau détail staff',
-              }
-            : {
-                table: id,
-                closureType: 'normal',
-              };
-
-          const closeRes = await fetch(`${apiBase}/close-table`, {
+          const closeResp = await fetch(`${apiBase}/close-table`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(closePayload),
           });
-
-          const closeJson = await closeRes.json().catch(() => ({}));
-          if (!closeRes.ok || closeJson.ok === false) {
-            window.alert(closeJson.error || 'Échec clôture de table');
-            return;
+          const closeJson = await closeResp.json().catch(() => ({}));
+          if (!closeResp.ok || closeJson?.ok === false) {
+            throw new Error(closeJson?.error || `http_${closeResp.status}`);
           }
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
-          window.alert('Erreur réseau pendant la clôture de table');
-          return;
+          alert(`Impossible de clôturer la table : ${err.message || err}`);
         } finally {
-          if (window.refreshTables) {
-            window.refreshTables();
+          if (window.refreshAll) {
+            await window.refreshAll();
+          } else if (window.refreshTables) {
+            await window.refreshTables();
           }
           showTableDetail(id);
         }
@@ -874,6 +881,7 @@
 
     // Pas d'auto-refresh du panneau de droite : rechargement manuel uniquement.
     if (!options.skipAutoRefresh && !isHistoryView) {
+      startDetailAutoRefresh(id);
     }
   }
 

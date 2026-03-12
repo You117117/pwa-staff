@@ -1,4 +1,4 @@
-// table-detail.js — détail table (sessions, paiement 5s, clôture 5s, produits en gras avec prix)
+// table-detail.js — détail table (sans auto-refresh 5s du panneau de droite, produits en gras avec prix)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -24,9 +24,10 @@
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
 
-  // 🔁 Auto-refresh de la vue détail
+  // Auto-refresh du panneau de droite désactivé :
+  // on recharge uniquement à l'ouverture du détail et après une action utilisateur.
   const detailAutoRefresh = (window.detailAutoRefresh =
-    window.detailAutoRefresh || { timerId: null, tableId: null });
+    window.detailAutoRefresh || { timerId: null, tableId: null, enabled: false });
 
   // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
@@ -60,27 +61,14 @@
   }
 
   function startDetailAutoRefresh(id) {
-    // Clear ancien timer éventuel
+    // Polling volontairement désactivé pour éviter le bruit réseau
+    // et faciliter les tests métier.
     if (detailAutoRefresh.timerId) {
       clearInterval(detailAutoRefresh.timerId);
       detailAutoRefresh.timerId = null;
-      detailAutoRefresh.tableId = null;
     }
-
     detailAutoRefresh.tableId = id;
-    detailAutoRefresh.timerId = setInterval(() => {
-      const panelEl = document.querySelector('#tableDetailPanel');
-      // Si le panneau est fermé, on stoppe tout
-      if (!panelEl || panelEl.style.display === 'none') {
-        clearInterval(detailAutoRefresh.timerId);
-        detailAutoRefresh.timerId = null;
-        detailAutoRefresh.tableId = null;
-        return;
-      }
-
-      // Rafraîchit le détail sans relancer un nouveau timer
-      showTableDetail(id, null, { skipAutoRefresh: true });
-    }, 5000);
+    return;
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -873,7 +861,7 @@
       });
     }
 
-    // 🔁 Démarrer l’auto-refresh si ce n’est pas un refresh interne
+    // Pas d'auto-refresh du panneau de droite : rechargement manuel uniquement.
     if (!options.skipAutoRefresh && !isHistoryView) {
       startDetailAutoRefresh(id);
     }

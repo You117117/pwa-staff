@@ -1,4 +1,4 @@
-// table-detail.js — détail table (sessions, paiement 5s, clôture 5s, produits en gras avec prix)
+// table-detail.js — détail table (sans auto-refresh 5s du panneau de droite, produits en gras avec prix)
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -24,10 +24,6 @@
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
 
-  // 🔁 Auto-refresh de la vue détail
-  const detailAutoRefresh = (window.detailAutoRefresh =
-    window.detailAutoRefresh || { timerId: null, tableId: null });
-
   // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
   const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
@@ -50,50 +46,8 @@
     panel.style.display = 'none';
     panel.innerHTML = '';
     window.__currentDetailTableId = null;
-
-    // Stop auto-refresh
-    if (detailAutoRefresh.timerId) {
-      clearInterval(detailAutoRefresh.timerId);
-      detailAutoRefresh.timerId = null;
-      detailAutoRefresh.tableId = null;
     }
   }
-
-  function startDetailAutoRefresh(id) {
-    // Clear ancien timer éventuel
-    if (detailAutoRefresh.timerId) {
-      clearInterval(detailAutoRefresh.timerId);
-      detailAutoRefresh.timerId = null;
-      detailAutoRefresh.tableId = null;
-    }
-
-    detailAutoRefresh.tableId = id;
-    detailAutoRefresh.timerId = setInterval(() => {
-      const panelEl = document.querySelector('#tableDetailPanel');
-      // Si le panneau est fermé, on stoppe tout
-      if (!panelEl || panelEl.style.display === 'none') {
-        clearInterval(detailAutoRefresh.timerId);
-        detailAutoRefresh.timerId = null;
-        detailAutoRefresh.tableId = null;
-        return;
-      }
-
-      // Rafraîchit le détail sans relancer un nouveau timer
-      showTableDetail(id, null, { skipAutoRefresh: true });
-    }, 5000);
-  }
-
-  // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
-  function makeProductLines(ticket) {
-    const src = Array.isArray(ticket.items)
-      ? ticket.items
-      : Array.isArray(ticket.lines)
-      ? ticket.lines
-      : null;
-
-    if (!src) {
-      const lines = [];
-      if (ticket.label) {
         const div = document.createElement('div');
         div.textContent = ticket.label;
         div.style.fontSize = '14px';
@@ -627,13 +581,12 @@
         if (!apiBase) return;
 
         let closureType = currentStatus === 'Encodage caisse confirmé' ? 'normal' : null;
-        let reason = null;
-        let note = null;
 
         if (!closureType) {
           const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
           if (answer === null) return;
           const normalized = String(answer || '').trim().toUpperCase();
+
           if (normalized === 'OUI') {
             try {
               const confirmResp = await fetch(`${apiBase}/confirm`, {
@@ -647,25 +600,33 @@
               }
             } catch (err) {
               console.error('Erreur /confirm (clôture détail)', err);
-              window.alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
+              alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
               return;
             }
             closureType = 'normal';
-          } else if (normalized === 'NON') {
-            closureType = 'anomaly';
-            reason = 'POS_NON_CONFIRME';
-            note = 'Clôture avec anomalie depuis le détail staff';
           } else {
-            window.alert('Réponse invalide. Tapez uniquement OUI ou NON.');
-            return;
+            closureType = 'anomaly';
           }
         }
 
         try {
+          const payload =
+            closureType === 'anomaly'
+              ? {
+                  table: id,
+                  closureType: 'anomaly',
+                  reason: 'POS_NON_CONFIRME',
+                  note: 'Clôture avec anomalie depuis le panneau détail',
+                }
+              : {
+                  table: id,
+                  closureType: 'normal',
+                };
+
           const closeResp = await fetch(`${apiBase}/close-table`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id, closureType, reason, note }),
+            body: JSON.stringify(payload),
           });
           const closeJson = await closeResp.json().catch(() => ({}));
           if (!closeResp.ok || closeJson?.ok === false) {
@@ -673,7 +634,7 @@
           }
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
-          window.alert(`Impossible de clôturer la table : ${err.message || err}`);
+          alert(`Impossible de clôturer la table : ${err.message || err}`);
         } finally {
           if (window.refreshTables) {
             await window.refreshTables();
@@ -889,10 +850,7 @@
       });
     }
 
-    // 🔁 Démarrer l’auto-refresh si ce n’est pas un refresh interne
-    if (!options.skipAutoRefresh && !isHistoryView) {
-      startDetailAutoRefresh(id);
-    }
+    // Pas de polling automatique du panneau de droite : rechargement manuel uniquement.
   }
 
   window.showTableDetail = showTableDetail;

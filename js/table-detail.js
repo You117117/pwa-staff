@@ -23,11 +23,7 @@
 
   // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
-
-  // Auto-refresh du panneau de droite désactivé :
-  // on recharge uniquement à l'ouverture du détail et après une action utilisateur.
-  const detailAutoRefresh = (window.detailAutoRefresh =
-    window.detailAutoRefresh || { timerId: null, tableId: null, enabled: false });
+  // Auto-refresh réseau du panneau de droite désactivé.
 
   // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
@@ -47,28 +43,24 @@
     return input ? input.value.trim().replace(/\/+$/, '') : '';
   };
 
+  async function refreshStaffViews() {
+    try {
+      if (window.refreshTables) await window.refreshTables();
+    } catch (err) {
+      console.error('Erreur refreshTables depuis détail', err);
+    }
+
+    try {
+      if (window.refreshSummary) await window.refreshSummary();
+    } catch (err) {
+      console.error('Erreur refreshSummary depuis détail', err);
+    }
+  }
+
   function closePanel() {
     panel.style.display = 'none';
     panel.innerHTML = '';
     window.__currentDetailTableId = null;
-
-    // Stop auto-refresh
-    if (detailAutoRefresh.timerId) {
-      clearInterval(detailAutoRefresh.timerId);
-      detailAutoRefresh.timerId = null;
-      detailAutoRefresh.tableId = null;
-    }
-  }
-
-  function startDetailAutoRefresh(id) {
-    // Polling volontairement désactivé pour éviter le bruit réseau
-    // et faciliter les tests métier.
-    if (detailAutoRefresh.timerId) {
-      clearInterval(detailAutoRefresh.timerId);
-      detailAutoRefresh.timerId = null;
-    }
-    detailAutoRefresh.tableId = id;
-    return;
   }
 
   // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
@@ -614,9 +606,12 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        let closePayload = { table: id, closureType: 'normal' };
+        let posConfirmed = currentStatus === 'Encodage caisse confirmé';
+        let closedWithException = false;
 
-        if (currentStatus !== 'Encodage caisse confirmé') {
+        let closureType = 'normal';
+
+        if (!posConfirmed) {
           const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
           if (answer === null) return;
 
@@ -624,51 +619,70 @@
 
           if (normalized === 'OUI') {
             try {
-              const confirmResp = await fetch(`${apiBase}/confirm`, {
+              const confirmRes = await fetch(`${apiBase}/confirm`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
               });
-              const confirmJson = await confirmResp.json().catch(() => ({}));
-              if (!confirmResp.ok || confirmJson?.ok === false) {
-                throw new Error(confirmJson?.error || `http_${confirmResp.status}`);
+              const confirmJson = await confirmRes.json().catch(() => ({}));
+              if (!confirmRes.ok || confirmJson.ok === false) {
+                window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
+                return;
               }
             } catch (err) {
               console.error('Erreur /confirm (clôture détail)', err);
-              alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
+              window.alert('Erreur réseau pendant la confirmation caisse');
               return;
             }
-            closePayload = { table: id, closureType: 'normal' };
+            posConfirmed = true;
+            closureType = 'normal';
           } else {
-            closePayload = {
-              table: id,
-              closureType: 'anomaly',
-              reason: 'POS_NON_CONFIRME',
-              note: 'Clôture avec anomalie depuis le détail staff',
-            };
+            posConfirmed = false;
+            closedWithException = true;
+            closureType = 'anomaly';
           }
         }
 
         try {
-          const closeResp = await fetch(`${apiBase}/close-table`, {
+          const closePayload = closureType === 'anomaly'
+            ? {
+                table: id,
+                closureType: 'anomaly',
+                reason: 'POS_NON_CONFIRME',
+                note: 'Clôture avec anomalie depuis le panneau détail staff',
+              }
+            : {
+                table: id,
+                closureType: 'normal',
+              };
+
+          const closeRes = await fetch(`${apiBase}/close-table`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(closePayload),
           });
-          const closeJson = await closeResp.json().catch(() => ({}));
-          if (!closeResp.ok || closeJson?.ok === false) {
-            throw new Error(closeJson?.error || `http_${closeResp.status}`);
+
+          const closeJson = await closeRes.json().catch(() => ({}));
+          if (!closeRes.ok || closeJson.ok === false) {
+            window.alert(closeJson.error || 'Échec clôture de table');
+            return;
           }
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
-          alert(`Impossible de clôturer la table : ${err.message || err}`);
+          window.alert('Erreur réseau pendant la clôture de table');
+          return;
         } finally {
-          if (window.refreshAll) {
-            await window.refreshAll();
-          } else if (window.refreshTables) {
-            await window.refreshTables();
+          await refreshStaffViews();
+
+          const latestMap = window.__latestTablesById || {};
+          const latestTable = latestMap[id] || null;
+          const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
+
+          if (latestStatus === 'Clôturée' || latestStatus === 'Clôture avec anomalie' || latestStatus === 'Vide') {
+            closePanel();
+          } else {
+            showTableDetail(id, latestStatus);
           }
-          showTableDetail(id);
         }
       });
 
@@ -764,10 +778,10 @@
         } catch (err) {
           console.error('Erreur /print (détail)', err);
         } finally {
-          if (window.refreshTables) {
-            window.refreshTables();
-          }
-          // On laisse l'auto-refresh gérer le rechargement du détail
+          await refreshStaffViews();
+          const latestMap = window.__latestTablesById || {};
+          const latestTable = latestMap[id] || null;
+          showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
         }
       });
     }
@@ -798,10 +812,10 @@
               btnCloseTable.style.display = 'block';
             }
             updatePayButtonLabel();
-            if (window.refreshTables) {
-              window.refreshTables();
-            }
-            showTableDetail(id);
+            await refreshStaffViews();
+            const latestMap = window.__latestTablesById || {};
+            const latestTable = latestMap[id] || null;
+            showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
           }
 
           return;
@@ -821,10 +835,10 @@
             if (btnCloseTable) {
               btnCloseTable.style.display = 'block';
             }
-            if (window.refreshTables) {
-              window.refreshTables();
-            }
-            showTableDetail(id);
+            await refreshStaffViews();
+            const latestMap = window.__latestTablesById || {};
+            const latestTable = latestMap[id] || null;
+            showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
           }
           return;
         }
@@ -867,21 +881,20 @@
           updatePayButtonLabel();
         }, 1000);
 
-        payTimeoutId = setTimeout(() => {
+        payTimeoutId = setTimeout(async () => {
           if (!pendingPayClose) return;
           pendingPayClose = false;
           paySeconds = 5;
-          if (window.refreshTables) {
-            window.refreshTables();
-          }
-          showTableDetail(id);
+          await refreshStaffViews();
+          const latestMap = window.__latestTablesById || {};
+          const latestTable = latestMap[id] || null;
+          showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
         }, 5000);
       });
     }
 
     // Pas d'auto-refresh du panneau de droite : rechargement manuel uniquement.
     if (!options.skipAutoRefresh && !isHistoryView) {
-      startDetailAutoRefresh(id);
     }
   }
 

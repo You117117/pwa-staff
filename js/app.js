@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const summaryContainer = document.querySelector('#summary');
   const summaryEmpty = document.querySelector('#summaryEmpty');
 
+  const TABLES_REFRESH_MS = 2000;
   const LS_KEY_API = 'staff-api';
   let latestTablesById = {};
 
@@ -757,12 +758,23 @@ function detectTablesChangesAndBeep(tables) {
           return;
         }
 
-        await refreshTables();
-        const freshStatus = latestTablesById[id]?.status || status;
+        const freshMap = window.__latestTablesById || {};
+        const freshTable = freshMap[id] || null;
+        const freshStatus = (freshTable && freshTable.status) ? freshTable.status : status;
 
         if (window.showTableDetail) {
           window.showTableDetail(id, freshStatus);
         }
+
+        // Refresh en arrière-plan pour garder la carte de gauche fraîche sans bloquer l'ouverture du détail.
+        refreshTables().then(() => {
+          const latestMap = window.__latestTablesById || {};
+          const latestTable = latestMap[id] || null;
+          const latestStatus = (latestTable && latestTable.status) ? latestTable.status : freshStatus;
+          if (window.__currentDetailTableId === id && window.showTableDetail) {
+            window.showTableDetail(id, latestStatus);
+          }
+        }).catch((err) => console.error('Erreur refresh après ouverture détail', err));
       });
 
       tablesContainer.appendChild(card);
@@ -802,6 +814,7 @@ function detectTablesChangesAndBeep(tables) {
         if (id) acc[id] = tb;
         return acc;
       }, {});
+      window.__latestTablesById = latestTablesById;
       detectTablesChangesAndBeep(tables);
       renderTables(tables);
     } catch (err) {
@@ -826,15 +839,12 @@ function detectTablesChangesAndBeep(tables) {
 
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
-  window.refreshAll = async () => {
-    await refreshTables();
-    await refreshSummary();
-  };
 
   if (btnSaveApi) {
-    btnSaveApi.addEventListener('click', async () => {
+    btnSaveApi.addEventListener('click', () => {
       saveApiToStorage();
-      await window.refreshAll();
+      refreshTables();
+      refreshSummary();
     });
   }
 
@@ -850,35 +860,30 @@ function detectTablesChangesAndBeep(tables) {
     });
   }
 
+  // On garde un refresh léger des tables uniquement. Pas de spam sur /summary.
+  window.addEventListener('focus', () => {
+    refreshTables();
+    refreshSummary();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshTables();
+      refreshSummary();
+    }
+  });
+
   if (filterSelect) {
     filterSelect.addEventListener('change', () => {
       refreshTables();
     });
   }
 
-  let refreshOnFocusBusy = false;
-  const refreshOnFocus = async () => {
-    if (refreshOnFocusBusy) return;
-    refreshOnFocusBusy = true;
-    try {
-      await window.refreshAll();
-      if (window.__currentDetailTableId && window.showTableDetail) {
-        const detailId = normId(window.__currentDetailTableId);
-        const freshStatus = latestTablesById[detailId]?.status || null;
-        window.showTableDetail(detailId, freshStatus);
-      }
-    } finally {
-      refreshOnFocusBusy = false;
-    }
-  };
-
-  window.addEventListener('focus', refreshOnFocus);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      refreshOnFocus();
-    }
-  });
-
   loadApiFromStorage();
-  window.refreshAll();
+  refreshTables();
+  refreshSummary();
+
+  setInterval(() => {
+    refreshTables();
+  }, TABLES_REFRESH_MS);
 });

@@ -1,11 +1,11 @@
-// app.js — Staff (Bloc 6 : tables actives + résumé robuste + historique sessions)
+// app.js — Staff (synchronisé, logique statuts côté backend uniquement)
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
-  const btnSaveApi = document.querySelector('#btnSaveApi') || document.querySelector('#btnMemorize');
-  const btnRefreshTables = document.querySelector('#btnRefreshTables') || document.querySelector('#btnRefresh');
+  const btnSaveApi = document.querySelector('#btnSaveApi');
+  const btnRefreshTables = document.querySelector('#btnRefreshTables');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
-  const btnRefreshHistory = document.querySelector('#btnRefreshHistory');
 
   const tablesContainer = document.querySelector('#tables');
   const tablesEmpty = document.querySelector('#tablesEmpty');
@@ -13,32 +13,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const summaryContainer = document.querySelector('#summary');
   const summaryEmpty = document.querySelector('#summaryEmpty');
-  const summaryStats = document.querySelector('#summaryStats');
+  const summaryKpis = document.querySelector('#summaryKpis');
 
-  const historyContainer = document.querySelector('#historySessions');
+  const historyList = document.querySelector('#historyList');
   const historyEmpty = document.querySelector('#historyEmpty');
-  const filterHistoryDate = document.querySelector('#historyDate');
-  const filterHistoryTable = document.querySelector('#historyTable');
-  const filterHistoryType = document.querySelector('#historyType');
+  const historyDateInput = document.querySelector('#historyDate');
+  const historyTableFilter = document.querySelector('#historyTableFilter');
+  const historyTypeFilter = document.querySelector('#historyTypeFilter');
+  const btnRefreshHistory = document.querySelector('#btnRefreshHistory');
+
+  const diagnosticKpis = document.querySelector('#diagnosticKpis');
+  const diagnosticList = document.querySelector('#diagnosticList');
+  const diagnosticEmpty = document.querySelector('#diagnosticEmpty');
+  const diagSeverityFilter = document.querySelector('#diagSeverityFilter');
+  const diagTableFilter = document.querySelector('#diagTableFilter');
+  const btnRefreshDiagnostic = document.querySelector('#btnRefreshDiagnostic');
 
   const TABLES_REFRESH_MS = 2000;
   const LS_KEY_API = 'staff-api';
   let latestTablesById = {};
 
+  // --- Utils
+
   const normId = (id) => (id || '').toString().trim().toUpperCase();
   const now = () => Date.now();
+  const todayKey = () => new Date().toISOString().slice(0, 10);
+
+  // --- Détection de nouvelles commandes pour bip sonore (tableau de gauche uniquement)
 
   let prevTablesSnapshot = window.__prevTablesSnapshot || {};
   window.__prevTablesSnapshot = prevTablesSnapshot;
 
+  
   let staffAudioCtx = null;
 
   function ensureStaffAudioCtxUnlocked() {
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
-      if (!staffAudioCtx) staffAudioCtx = new AudioContext();
-      if (staffAudioCtx.state === 'suspended') staffAudioCtx.resume();
+      if (!staffAudioCtx) {
+        staffAudioCtx = new AudioContext();
+      }
+      if (staffAudioCtx.state === 'suspended') {
+        staffAudioCtx.resume();
+      }
     } catch (e) {
       console.warn('[staff-beep] Impossible d\'initialiser l\'AudioContext', e);
     }
@@ -49,29 +67,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function playStaffBeep() {
     try {
-      if (!staffAudioCtx) ensureStaffAudioCtxUnlocked();
+      if (!staffAudioCtx) {
+        ensureStaffAudioCtxUnlocked();
+      }
       if (!staffAudioCtx) return;
 
       const ctx = staffAudioCtx;
-      const tNow = ctx.currentTime;
+      const now = ctx.currentTime;
+
+      // 3 notes marquantes : do (261.63 Hz), ré (293.66 Hz), mi (329.63 Hz)
       const notes = [
-        { freq: 261.63, start: 0.0, dur: 0.12 },
-        { freq: 293.66, start: 0.13, dur: 0.12 },
-        { freq: 329.63, start: 0.26, dur: 0.14 },
+        { freq: 261.63, start: 0.0, dur: 0.12 }, // do
+        { freq: 293.66, start: 0.13, dur: 0.12 }, // ré
+        { freq: 329.63, start: 0.26, dur: 0.14 }, // mi
       ];
 
       notes.forEach((note) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
+
         osc.type = 'sine';
         osc.frequency.value = note.freq;
-        const t0 = tNow + note.start;
+
+        const t0 = now + note.start;
         const t1 = t0 + note.dur;
+
         gain.gain.setValueAtTime(0.0001, t0);
         gain.gain.exponentialRampToValueAtTime(0.35, t0 + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.0001, t1);
+
         osc.connect(gain);
         gain.connect(ctx.destination);
+
         osc.start(t0);
         osc.stop(t1 + 0.02);
       });
@@ -80,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function detectTablesChangesAndBeep(tables) {
+function detectTablesChangesAndBeep(tables) {
     if (!Array.isArray(tables)) return;
 
     let shouldBeep = false;
@@ -88,71 +115,62 @@ document.addEventListener('DOMContentLoaded', () => {
 
     tables
       .slice()
-      .sort((a, b) => statusPrio(a.status || 'Vide') - statusPrio(b.status || 'Vide'))
+      .sort((a,b)=> statusPrio(a.status || 'Vide') - statusPrio(b.status || 'Vide'))
       .forEach((tb) => {
-        const id = normId(tb.id);
-        if (!id) return;
+      const id = normId(tb.id);
+      if (!id) return;
 
-        const status = (tb.status || 'Vide').toString().trim();
-        const lastAt = tb.lastTicket && tb.lastTicket.at ? String(tb.lastTicket.at) : null;
+      const status = (tb.status || 'Vide').toString().trim();
+      const lastAt =
+        tb.lastTicket && tb.lastTicket.at
+          ? String(tb.lastTicket.at)
+          : null;
 
-        nextSnapshot[id] = { status, lastAt };
+      nextSnapshot[id] = { status, lastAt };
 
-        const prev = prevTablesSnapshot[id];
-        if (!prev) {
-          if (status !== 'Vide' && lastAt) shouldBeep = true;
-          return;
-        }
-
-        if (prev.lastAt !== lastAt && lastAt) {
-          shouldBeep = true;
-          return;
-        }
-
-        if (prev.status === 'Vide' && status !== 'Vide') {
+      const prev = prevTablesSnapshot[id];
+      if (!prev) {
+        // Table qui devient active alors qu'on n'avait pas d'historique
+        if (status !== 'Vide' && lastAt) {
           shouldBeep = true;
         }
-      });
+        return;
+      }
+
+      // Nouveau ticket pour cette table
+      if (prev.lastAt !== lastAt && lastAt) {
+        shouldBeep = true;
+        return;
+      }
+
+      // Table qui passe de "Vide" à un autre statut
+      if (prev.status === 'Vide' && status !== 'Vide') {
+        shouldBeep = true;
+        return;
+      }
+    });
 
     prevTablesSnapshot = nextSnapshot;
     window.__prevTablesSnapshot = prevTablesSnapshot;
 
-    if (shouldBeep) playStaffBeep();
+    if (shouldBeep) {
+      playStaffBeep();
+    }
   }
 
   function getApiBase() {
     const raw = apiInput ? apiInput.value.trim() : '';
-    return raw ? raw.replace(/\/+$/, '') : '';
+    if (!raw) return '';
+    return raw.replace(/\/+$/, '');
   }
 
   function formatTime(dateString) {
     if (!dateString) return '--:--';
     const d = new Date(dateString);
     if (Number.isNaN(d.getTime())) return dateString;
-    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  }
-
-  function formatDateInput(dateString) {
-    if (!dateString) return '';
-    const d = new Date(dateString);
-    if (Number.isNaN(d.getTime())) return '';
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  }
-
-  function formatMoney(value) {
-    return `${Number(value || 0).toFixed(2)} €`;
-  }
-
-  function formatDuration(durationSeconds) {
-    if (typeof durationSeconds !== 'number' || Number.isNaN(durationSeconds) || durationSeconds < 0) return '—';
-    const totalMinutes = Math.round(durationSeconds / 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (!hours) return `${minutes} min`;
-    return `${hours} h ${String(minutes).padStart(2, '0')}`;
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
+    return `${h}:${m}`;
   }
 
   function loadApiFromStorage() {
@@ -170,63 +188,64 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch {}
   }
 
+  // --- Compteurs de paiement côté tableau de gauche
+  // { [tableId]: { until, timeoutId, intervalId } }
   const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
+
+  // --- Compteurs d'impression côté tableau de gauche
+  // { [tableId]: { until, timeoutId, intervalId } }
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
 
+  
+  // === UI Status (couleurs / pulse / sons) ===
   const STATUS_UI = {
-    'Vide': { key: 'vide', prio: 60 },
-    'En cours': { key: 'en_cours', prio: 40 },
-    'Commandée': { key: 'commandee', prio: 10 },
-    'Nouvelle commande': { key: 'nouvelle_commande', prio: 0 },
-    'En préparation': { key: 'en_preparation', prio: 15 },
-    'À encoder en caisse': { key: 'a_encoder_caisse', prio: 20 },
-    'Encodage caisse confirmé': { key: 'encodage_caisse_confirme', prio: 50 },
-    'Encodée en caisse': { key: 'encodage_caisse_confirme', prio: 55 },
-    'Clôture avec anomalie': { key: 'cloture_anomalie', prio: 52 },
-    'Anomalie pas encodé': { key: 'cloture_anomalie', prio: 56 },
-    'Clôturée': { key: 'cloturee', prio: 55 },
+    'Vide': { key:'vide', prio: 60 },
+    'En cours': { key:'en_cours', prio: 40 },
+    'Commandée': { key:'commandee', prio: 10 },
+    'Nouvelle commande': { key:'nouvelle_commande', prio: 0 },
+    'En préparation': { key:'en_preparation', prio: 15 },
+    'À encoder en caisse': { key:'a_encoder_caisse', prio: 20 },
+    'Encodage caisse confirmé': { key:'encodage_caisse_confirme', prio: 50 },
+    'Encodée en caisse': { key:'encodage_caisse_confirme', prio: 55 },
+    'Clôture avec anomalie': { key:'cloture_anomalie', prio: 52 },
+    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 56 },
+    'Clôturée': { key:'cloturee', prio: 55 },
   };
 
-  const SOUND_COOLDOWN_MS = 6000;
+  const SOUND_COOLDOWN_MS = 6000; // anti-spam global
   const soundGate = { lastAt: 0 };
-  const lastStatusByTable = {};
-  const pulseTimers = {};
+  const lastStatusByTable = {};   // per table transition tracking
+  const pulseTimers = {};         // per table pulse stop timeout
 
-  function statusKey(label) {
-    return STATUS_UI[label] && STATUS_UI[label].key ? STATUS_UI[label].key : 'vide';
+  function statusKey(label){
+    return (STATUS_UI[label] && STATUS_UI[label].key) ? STATUS_UI[label].key : 'vide';
+  }
+  function statusPrio(label){
+    return (STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number') ? STATUS_UI[label].prio : 999;
   }
 
-  function statusPrio(label) {
-    return STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number' ? STATUS_UI[label].prio : 999;
-  }
-
-  function statusClassName(label) {
+  function statusClassName(label){
     return `status-${statusKey(label)}`;
   }
 
-  function buildStatusBadge(label) {
+  function buildStatusBadge(label){
     const badge = document.createElement('span');
     badge.className = `chip ${statusClassName(label)}`;
     badge.textContent = label || 'Vide';
     return badge;
   }
 
-  function actionLabelForStatus(label) {
-    switch (label) {
-      case 'Commandée':
-        return 'Imprimer ticket';
-      case 'Nouvelle commande':
-        return 'Imprimer ajout';
-      case 'À encoder en caisse':
-        return 'Encoder en caisse';
-      case 'Encodage caisse confirmé':
-        return 'Clôturer';
-      default:
-        return '';
+  function actionLabelForStatus(label){
+    switch(label){
+      case 'Commandée': return 'Imprimer ticket';
+      case 'Nouvelle commande': return 'Imprimer ajout';
+      case 'À encoder en caisse': return 'Encoder en caisse';
+      case 'Encodage caisse confirmé': return 'Clôturer';
+      default: return '';
     }
   }
 
-  function buildActionBadge(label) {
+  function buildActionBadge(label){
     const action = actionLabelForStatus(label);
     if (!action) return null;
     const badge = document.createElement('span');
@@ -235,12 +254,12 @@ document.addEventListener('DOMContentLoaded', () => {
     return badge;
   }
 
-  function playToneSequence(freqs, durationMs = 130) {
-    try {
+  function playToneSequence(freqs, durationMs=130){
+    try{
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioCtx();
       let t = ctx.currentTime;
-      freqs.forEach((f) => {
+      freqs.forEach((f)=>{
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
@@ -249,155 +268,92 @@ document.addEventListener('DOMContentLoaded', () => {
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start(t);
-        osc.stop(t + durationMs / 1000);
-        t += durationMs / 1000;
+        osc.stop(t + (durationMs/1000));
+        t += (durationMs/1000);
       });
-    } catch (e) {}
-  }
-
-  function maybePlayStatusSound(tableId, newStatusLabel) {
-    const tNow = Date.now();
-    if (tNow - soundGate.lastAt < SOUND_COOLDOWN_MS) return;
-    if (newStatusLabel === 'Commandée') {
-      soundGate.lastAt = tNow;
-      playToneSequence([523, 659, 784]);
-    } else if (newStatusLabel === 'Nouvelle commande') {
-      soundGate.lastAt = tNow;
-      playToneSequence([784, 659, 523, 988]);
+    }catch(e){
+      // audio can fail on some devices if not user-initiated; ignore safely
     }
   }
 
-  function applyStatusClasses(cardEl, chipStatusEl, statusLabel) {
-    const cls = `status-${statusKey(statusLabel)}`;
+  function maybePlayStatusSound(tableId, newStatusLabel){
+    const now = Date.now();
+    if (now - soundGate.lastAt < SOUND_COOLDOWN_MS) return;
+
+    // Only these two statuses
+    if (newStatusLabel === 'Commandée'){
+      soundGate.lastAt = now;
+      playToneSequence([523, 659, 784]); // 3 notes (C5 E5 G5)
+    } else if (newStatusLabel === 'Nouvelle commande'){
+      soundGate.lastAt = now;
+      playToneSequence([784, 659, 523, 988]); // 4 notes (G5 E5 C5 B5-ish)
+    }
+  }
+
+  function applyStatusClasses(cardEl, chipStatusEl, statusLabel){
+    const key = statusKey(statusLabel);
+    const cls = `status-${key}`;
+
+    // Card status classes
     cardEl.classList.remove(
-      'status-vide',
-      'status-en_cours',
-      'status-commandee',
-      'status-en_preparation',
-      'status-nouvelle_commande',
-      'status-a_encoder_caisse',
-      'status-encodage_caisse_confirme',
-      'status-cloturee',
-      'status-cloture_anomalie'
+      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
     );
     cardEl.classList.add(cls);
 
-    if (chipStatusEl) {
+    // Chip status classes
+    if (chipStatusEl){
       chipStatusEl.classList.remove(
-        'status-vide',
-        'status-en_cours',
-        'status-commandee',
-        'status-en_preparation',
-        'status-nouvelle_commande',
-        'status-a_encoder_caisse',
-        'status-encodage_caisse_confirme',
-        'status-cloturee',
-        'status-cloture_anomalie'
+        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
       );
       chipStatusEl.classList.add(cls);
     }
   }
 
-  function startPulseForNewOrder(cardEl, tableId) {
+  function startPulseForNewOrder(cardEl, tableId){
+    // pulse for max 60s then keep red but stop animation (fatigue visuelle)
     cardEl.classList.add('pulse');
     if (pulseTimers[tableId]) clearTimeout(pulseTimers[tableId]);
-    pulseTimers[tableId] = setTimeout(() => {
+    pulseTimers[tableId] = setTimeout(()=>{
       cardEl.classList.remove('pulse');
       delete pulseTimers[tableId];
     }, 60000);
   }
 
-  function buildSessionCard(item, opts = {}) {
-    const tableId = normId(item.table || item.tableLabel || '');
-    const currentStatus = item.displayStatus || item.status || 'Vide';
-    const currentTotal = typeof item.total === 'number' ? item.total : 0;
-    const wrapper = document.createElement('button');
-    wrapper.type = 'button';
-    wrapper.className = 'summaryItem summaryItem--clickable';
-    wrapper.setAttribute('data-table', tableId);
+// --- Résumé du jour
 
-    const head = document.createElement('div');
-    head.className = 'head';
-
-    const chipTable = document.createElement('span');
-    chipTable.className = 'chip';
-    chipTable.textContent = item.tableLabel || item.table || 'Table';
-    head.appendChild(chipTable);
-
-    const chipOpen = document.createElement('span');
-    chipOpen.className = 'chip';
-    chipOpen.innerHTML = `<i class="icon-clock"></i> Ouverte : ${item.openedTime || item.time || '--:--'}`;
-    head.appendChild(chipOpen);
-
-    if (item.closedAt) {
-      const chipClose = document.createElement('span');
-      chipClose.className = 'chip';
-      chipClose.textContent = `Clôturée : ${item.closedTime || formatTime(item.closedAt)}`;
-      head.appendChild(chipClose);
-    }
-
-    const chipTotal = document.createElement('span');
-    chipTotal.className = 'chip';
-    chipTotal.textContent = `Total : ${formatMoney(currentTotal)}`;
-    head.appendChild(chipTotal);
-
-    head.appendChild(buildStatusBadge(currentStatus));
-    wrapper.appendChild(head);
-
-    const body = document.createElement('div');
-    body.className = 'body';
-    const ordersCount = Number(item.ordersCount || (Array.isArray(item.tickets) ? item.tickets.length : 0) || 0);
-    body.textContent = `${ordersCount} ticket${ordersCount > 1 ? 's' : ''} • Durée : ${formatDuration(item.durationSeconds)}${opts.showStateKind && item.stateKind === 'active' ? ' • Session active' : ''}`;
-    wrapper.appendChild(body);
-
-    wrapper.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (window.showTableDetail) {
-        window.showTableDetail(tableId, currentStatus, { summaryEntry: item, historyMode: item.stateKind !== 'active' || !!opts.forceHistoryMode });
-      }
+  function renderKpiGrid(container, cards = []) {
+    if (!container) return;
+    container.innerHTML = '';
+    cards.forEach((card) => {
+      const el = document.createElement('div');
+      el.className = 'kpiCard';
+      const label = document.createElement('div');
+      label.className = 'kpiLabel';
+      label.textContent = card.label;
+      const value = document.createElement('div');
+      value.className = 'kpiValue';
+      value.textContent = card.value;
+      el.appendChild(label);
+      el.appendChild(value);
+      container.appendChild(el);
     });
-
-    return wrapper;
   }
 
   function renderSummary(summaryData) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
 
-    const items = Array.isArray(summaryData?.items)
-      ? summaryData.items
-      : Array.isArray(summaryData?.tickets)
-      ? summaryData.tickets
-      : [];
+    const totals = summaryData?.totals || {};
+    const items = Array.isArray(summaryData?.items) ? summaryData.items : Array.isArray(summaryData?.tickets) ? summaryData.tickets : [];
 
-    const totals = summaryData?.totals || {
-      sessionsCount: 0,
-      activeCount: 0,
-      closedNormalCount: 0,
-      closedAnomalyCount: 0,
-      grossTotal: 0,
-      averageBasket: 0,
-      averageDurationSeconds: 0,
-    };
-
-    if (summaryStats) {
-      summaryStats.innerHTML = '';
-      const cards = [
-        { label: 'CA sessions', value: formatMoney(totals.grossTotal) },
-        { label: 'Sessions', value: String(totals.sessionsCount || 0) },
-        { label: 'Actives', value: String(totals.activeCount || 0) },
-        { label: 'Anomalies', value: String(totals.closedAnomalyCount || 0) },
-        { label: 'Panier moyen', value: formatMoney(totals.averageBasket) },
-        { label: 'Durée moyenne', value: formatDuration(totals.averageDurationSeconds) },
-      ];
-      cards.forEach((card) => {
-        const el = document.createElement('div');
-        el.className = 'summaryStatCard';
-        el.innerHTML = `<div class="summaryStatLabel">${card.label}</div><div class="summaryStatValue">${card.value}</div>`;
-        summaryStats.appendChild(el);
-      });
-    }
+    renderKpiGrid(summaryKpis, [
+      { label: 'CA sessions', value: `${Number(totals.grossTotal || 0).toFixed(2)} €` },
+      { label: 'Sessions', value: String(totals.sessionsCount || 0) },
+      { label: 'Actives', value: String(totals.activeCount || 0) },
+      { label: 'Anomalies', value: String(totals.closedAnomalyCount || 0) },
+      { label: 'Panier moyen', value: `${Number(totals.averageBasket || 0).toFixed(2)} €` },
+      { label: 'Durée moyenne', value: `${Math.round(Number(totals.averageDurationSeconds || 0) / 60)} min` },
+    ]);
 
     if (!items.length) {
       if (summaryEmpty) summaryEmpty.style.display = 'block';
@@ -405,46 +361,143 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (summaryEmpty) summaryEmpty.style.display = 'none';
 
-    items.forEach((item) => {
-      summaryContainer.appendChild(buildSessionCard(item, { showStateKind: true }));
+    items.forEach((t) => {
+      const tableId = normId(t.table);
+      const currentStatus = t.displayStatus || t.status || 'Vide';
+      const currentTotal = typeof t.total === 'number' ? t.total : null;
+
+      const wrapper = document.createElement('button');
+      wrapper.type = 'button';
+      wrapper.className = 'summaryItem summaryItem--clickable';
+      wrapper.setAttribute('data-table', tableId);
+      wrapper.setAttribute('aria-label', `Voir le détail de la table ${tableId}`);
+
+      const head = document.createElement('div');
+      head.className = 'head';
+
+      const chipTable = document.createElement('span');
+      chipTable.className = 'chip';
+      chipTable.textContent = t.tableLabel || tableId || t.table || 'Table';
+      head.appendChild(chipTable);
+
+      if (t.openTime) {
+        const chipOpen = document.createElement('span');
+        chipOpen.className = 'chip';
+        chipOpen.textContent = `Ouverte : ${t.openTime}`;
+        head.appendChild(chipOpen);
+      }
+
+      if (t.closedTime) {
+        const chipClosed = document.createElement('span');
+        chipClosed.className = 'chip';
+        chipClosed.textContent = `Clôturée : ${t.closedTime}`;
+        head.appendChild(chipClosed);
+      }
+
+      if (typeof currentTotal === 'number') {
+        const chipTotal = document.createElement('span');
+        chipTotal.className = 'chip';
+        chipTotal.textContent = `Total : ${currentTotal.toFixed(2)} €`;
+        head.appendChild(chipTotal);
+      }
+
+      head.appendChild(buildStatusBadge(currentStatus));
+      wrapper.appendChild(head);
+
+      const meta = document.createElement('div');
+      meta.className = 'summaryMeta';
+      meta.textContent = `${t.ordersCount || 0} ticket${(t.ordersCount || 0) > 1 ? 's' : ''} • Durée : ${Math.round(Number(t.durationSeconds || 0) / 60)} min`;
+      wrapper.appendChild(meta);
+
+      wrapper.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (window.showTableDetail) {
+          window.showTableDetail(tableId, currentStatus, { summaryEntry: t, historyMode: true });
+        }
+      });
+
+      summaryContainer.appendChild(wrapper);
     });
   }
 
-  function renderHistory(items) {
-    if (!historyContainer) return;
-    historyContainer.innerHTML = '';
-
-    if (!Array.isArray(items) || !items.length) {
+  function renderHistory(historyData) {
+    if (!historyList) return;
+    historyList.innerHTML = '';
+    const items = Array.isArray(historyData?.items) ? historyData.items : [];
+    if (!items.length) {
       if (historyEmpty) historyEmpty.style.display = 'block';
       return;
     }
     if (historyEmpty) historyEmpty.style.display = 'none';
 
     items.forEach((item) => {
-      historyContainer.appendChild(buildSessionCard(item, { forceHistoryMode: true }));
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'summaryItem summaryItem--clickable';
+      row.innerHTML = `
+        <div class="head">
+          <span class="chip">${item.tableLabel || item.table || 'Table'}</span>
+          <span class="chip">Ouverte : ${item.openTime || '--:--'}</span>
+          <span class="chip">Clôturée : ${item.closedTime || '—'}</span>
+          <span class="chip">${Number(item.total || 0).toFixed(2)} €</span>
+          <span class="chip ${statusClassName(item.displayStatus || item.status || 'Vide')}">${item.displayStatus || item.status || 'Vide'}</span>
+        </div>
+        <div class="summaryMeta">${item.ordersCount || 0} ticket(s) • ${item.itemsCount || 0} article(s) • durée ${Math.round(Number(item.durationSeconds || 0) / 60)} min</div>
+      `;
+      row.addEventListener('click', () => {
+        if (window.showTableDetail) {
+          window.showTableDetail(normId(item.table), item.displayStatus || item.status || 'Vide', { summaryEntry: item, historyMode: true });
+        }
+      });
+      historyList.appendChild(row);
     });
   }
 
-  function syncHistoryTableFilter(tables) {
-    if (!filterHistoryTable) return;
-    const previous = filterHistoryTable.value;
-    const options = ['<option value="">Toutes</option>'];
-    (tables || []).forEach((tb) => {
-      const id = normId(tb.id);
-      if (!id) return;
-      options.push(`<option value="${id}">${id}</option>`);
-    });
-    filterHistoryTable.innerHTML = options.join('');
-    if ([...filterHistoryTable.options].some((opt) => opt.value === previous)) {
-      filterHistoryTable.value = previous;
+  function renderDiagnostic(overviewData, eventsData) {
+    renderKpiGrid(diagnosticKpis, [
+      { label: 'Événements', value: String(overviewData?.totals?.total || 0) },
+      { label: 'Infos', value: String(overviewData?.totals?.infoCount || 0) },
+      { label: 'Warnings', value: String(overviewData?.totals?.warnCount || 0) },
+      { label: 'Erreurs', value: String(overviewData?.totals?.errorCount || 0) },
+    ]);
+
+    if (!diagnosticList) return;
+    diagnosticList.innerHTML = '';
+    const items = Array.isArray(eventsData?.items) ? eventsData.items : [];
+    if (!items.length) {
+      if (diagnosticEmpty) diagnosticEmpty.style.display = 'block';
+      return;
     }
+    if (diagnosticEmpty) diagnosticEmpty.style.display = 'none';
+
+    items.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = `summaryItem diagnosticItem diagnostic-${(item.severity || 'info').toLowerCase()}`;
+      const top = document.createElement('div');
+      top.className = 'head';
+      top.innerHTML = `
+        <span class="chip">${item.tableCode || 'GLOBAL'}</span>
+        <span class="chip">${item.eventCode || item.eventType || 'EVENT'}</span>
+        <span class="chip">${item.source || 'api'}</span>
+        <span class="chip chip-severity chip-severity--${(item.severity || 'info').toLowerCase()}">${(item.severity || 'info').toUpperCase()}</span>
+      `;
+      const msg = document.createElement('div');
+      msg.className = 'summaryMeta';
+      msg.textContent = `${item.message || 'Sans message'} • ${formatTime(item.createdAt)}`;
+      row.appendChild(top);
+      row.appendChild(msg);
+      diagnosticList.appendChild(row);
+    });
   }
+
+  // --- Rendu des tables
 
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
 
-    if (!tables || !tables.length) {
+    if (!tables || tables.length === 0) {
       if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
@@ -455,32 +508,37 @@ document.addEventListener('DOMContentLoaded', () => {
     tables.forEach((tb) => {
       const id = normId(tb.id);
       if (!id) return;
+
       if (filterValue !== 'TOUTES' && filterValue !== id) return;
 
       const status = tb.status || 'Vide';
       const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
+
       const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
 
       const card = document.createElement('div');
       card.className = 'table';
       card.setAttribute('data-table', id);
-      const bgMap = {
-        Vide: 'rgba(148,163,184,0.06)',
+      // ✅ UI: couleur plein badge (carte entière) selon statut
+      const __statusLabel = (status || 'Vide').toString().trim();
+      const __bgMap = {
+        'Vide': 'rgba(148,163,184,0.06)',
         'En cours': 'rgba(59,130,246,0.14)',
-        Commandée: 'rgba(245,158,11,0.16)',
+        'Commandée': 'rgba(245,158,11,0.16)',
         'Nouvelle commande': 'rgba(239,68,68,0.16)',
         'En préparation': 'rgba(245,158,11,0.16)',
         'À encoder en caisse': 'rgba(168,85,247,0.16)',
         'Encodage caisse confirmé': 'rgba(16,185,129,0.16)',
         'Clôture avec anomalie': 'rgba(239,68,68,0.16)',
       };
-      card.style.background = bgMap[status] || 'rgba(15,23,42,0.6)';
+      card.style.background = __bgMap[__statusLabel] || 'rgba(15,23,42,0.6)';
 
       const head = document.createElement('div');
       head.className = 'card-head';
 
       const chipId = document.createElement('span');
       chipId.className = 'chip';
+      /*__BIGGER_BADGES__*/
       chipId.style.fontSize = '14px';
       chipId.style.padding = '8px 14px';
       chipId.style.fontWeight = '800';
@@ -494,28 +552,33 @@ document.addEventListener('DOMContentLoaded', () => {
       chipStatus.style.fontWeight = '800';
       chipStatus.textContent = status;
       head.appendChild(chipStatus);
-
       const actionBadge = buildActionBadge(status);
       if (actionBadge) head.appendChild(actionBadge);
 
       const chipTime = document.createElement('span');
       chipTime.className = 'chip';
+      // Texte demandé : "Commandé à : (heure)"
       chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
       head.appendChild(chipTime);
 
       card.appendChild(head);
+
       applyStatusClasses(card, chipStatus, status);
       if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
 
+      // --- UI: couleurs / pulse / sons (transition) ---
       const prev = lastStatusByTable[id];
       if (prev !== status) {
+        // sound only on transitions to Commandée / Nouvelle commande
         maybePlayStatusSound(id, status);
         lastStatusByTable[id] = status;
       }
 
+
       if (status !== 'Vide') {
         const actions = document.createElement('div');
         actions.className = 'card-actions';
+        // ✅ UI: boutons uniquement dans le détail (on les garde cachés ici pour la délégation)
         actions.style.display = 'none';
 
         const btnPrint = document.createElement('button');
@@ -529,6 +592,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const payTimer = leftPayTimers[id];
         const printTimer = leftPrintTimers[id];
 
+        // --- Apparence du bouton IMPRESSION (avec éventuel compte à rebours) ---
         if (printTimer) {
           btnPrint.style.backgroundColor = '#f97316';
           const updatePrintLabel = () => {
@@ -538,11 +602,15 @@ document.addEventListener('DOMContentLoaded', () => {
               btnPrint.style.backgroundColor = '';
               return;
             }
-            btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
           };
           updatePrintLabel();
           const localPrintInterval = setInterval(() => {
-            if (!document.body.contains(btnPrint)) return clearInterval(localPrintInterval);
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(localPrintInterval);
+              return;
+            }
             const cur = leftPrintTimers[id];
             if (!cur) {
               clearInterval(localPrintInterval);
@@ -557,11 +625,17 @@ document.addEventListener('DOMContentLoaded', () => {
               btnPrint.style.backgroundColor = '';
               return;
             }
-            btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
           }, 250);
+        } else {
+          btnPrint.textContent = 'Imprimer maintenant';
+          btnPrint.style.backgroundColor = '';
         }
 
+        // --- Apparence du bouton Paiement (avec éventuel compte à rebours) ---
         if (payTimer) {
+          // Compte à rebours en cours
           btnPaid.style.backgroundColor = '#f97316';
           const updateLabel = () => {
             const remain = payTimer.until - now();
@@ -569,11 +643,16 @@ document.addEventListener('DOMContentLoaded', () => {
               btnPaid.textContent = 'Paiement confirmé';
               return;
             }
-            btnPaid.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler paiement (${sec}s)`;
           };
           updateLabel();
+          // Petit interval local juste pour ce bouton (si la carte reste affichée)
           const localInterval = setInterval(() => {
-            if (!document.body.contains(btnPaid)) return clearInterval(localInterval);
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(localInterval);
+              return;
+            }
             const currentTimer = leftPayTimers[id];
             if (!currentTimer) {
               clearInterval(localInterval);
@@ -588,12 +667,15 @@ document.addEventListener('DOMContentLoaded', () => {
               btnPaid.style.backgroundColor = '';
               return;
             }
-            btnPaid.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler paiement (${sec}s)`;
           }, 250);
         } else if (isPaid) {
+          // Payée sans compte à rebours actif
           btnPaid.textContent = 'Annuler paiement';
           btnPaid.style.backgroundColor = '#f97316';
         } else {
+          // Pas encore payée, pas de timer
           btnPaid.textContent = 'Paiement confirmé';
           btnPaid.style.backgroundColor = '';
         }
@@ -602,41 +684,63 @@ document.addEventListener('DOMContentLoaded', () => {
         actions.appendChild(btnPaid);
         card.appendChild(actions);
 
+        // --- Clic IMPRESSION avec compte à rebours 5s ---
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
-          if (!base || leftPrintTimers[id]) return;
+          if (!base) return;
 
+          // Si impression déjà en cours pour cette table → on ignore
+          if (leftPrintTimers[id]) return;
+
+          // Lance le compte à rebours UI 5s
           const until = now() + 5000;
-          const timer = { until, timeoutId: null, intervalId: null };
+          const timer = {
+            until,
+            timeoutId: null,
+            intervalId: null,
+          };
           leftPrintTimers[id] = timer;
-          btnPrint.style.backgroundColor = '#f97316';
 
+          btnPrint.style.backgroundColor = '#f97316';
           const updatePrintLabel = () => {
             const remain = timer.until - now();
-            btnPrint.textContent = remain <= 0 ? 'Imprimer maintenant' : `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            if (remain <= 0) {
+              btnPrint.textContent = 'Imprimer maintenant';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPrint.textContent = `Impression en cours (${sec}s)`;
+            }
           };
           updatePrintLabel();
 
           timer.intervalId = setInterval(() => {
-            if (!document.body.contains(btnPrint)) return clearInterval(timer.intervalId);
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(timer.intervalId);
+              return;
+            }
             const remain = timer.until - now();
             if (remain <= 0) {
               clearInterval(timer.intervalId);
               btnPrint.textContent = 'Imprimer maintenant';
               btnPrint.style.backgroundColor = '';
             } else {
-              btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPrint.textContent = `Impression en cours (${sec}s)`;
             }
           }, 250);
 
           timer.timeoutId = setTimeout(() => {
-            if (leftPrintTimers[id] === timer) delete leftPrintTimers[id];
+            const current = leftPrintTimers[id];
+            if (current === timer) {
+              delete leftPrintTimers[id];
+            }
             clearInterval(timer.intervalId);
             btnPrint.textContent = 'Imprimer maintenant';
             btnPrint.style.backgroundColor = '';
           }, 5000);
 
+          // Appel API /print (comme avant)
           try {
             await fetch(`${base}/print`, {
               method: 'POST',
@@ -647,18 +751,21 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Erreur /print', err);
           } finally {
             await refreshTables();
-            await refreshSummary();
-            await refreshHistory();
-            if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id);
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
           }
         });
 
+        // --- Gestion clic Paiement confirmé / Annuler paiement (avec compte à rebours) ---
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
 
           const currentTimer = leftPayTimers[id];
+
+          // 1) Si déjà payée OU si un compte à rebours est en cours → ANNULER PAIEMENT
           if (isPaid || currentTimer) {
             if (currentTimer) {
               clearTimeout(currentTimer.timeoutId);
@@ -675,13 +782,14 @@ document.addEventListener('DOMContentLoaded', () => {
               console.error('Erreur /cancel-confirm', err);
             } finally {
               await refreshTables();
-              await refreshSummary();
-              await refreshHistory();
-              if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id);
+              if (window.__currentDetailTableId === id && window.showTableDetail) {
+                window.showTableDetail(id);
+              }
             }
             return;
           }
 
+          // 2) Sinon → PAIEMENT CONFIRMÉ + démarrage du compte à rebours 5s
           try {
             await fetch(`${base}/confirm`, {
               method: 'POST',
@@ -692,32 +800,50 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Erreur /confirm', err);
           }
 
+          // On démarre le compte à rebours local de 5s
           const until = now() + 5000;
-          const countdown = { until, timeoutId: null, intervalId: null };
+          const countdown = {
+            until,
+            timeoutId: null,
+            intervalId: null,
+          };
           leftPayTimers[id] = countdown;
-          btnPaid.style.backgroundColor = '#f97316';
 
+          // Mise à jour immédiate du bouton
+          btnPaid.style.backgroundColor = '#f97316';
           const updateLabel = () => {
             const remain = countdown.until - now();
-            btnPaid.textContent = remain <= 0 ? 'Paiement confirmé' : `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            if (remain <= 0) {
+              btnPaid.textContent = 'Paiement confirmé';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPaid.textContent = `Annuler paiement (${sec}s)`;
+            }
           };
           updateLabel();
 
           countdown.intervalId = setInterval(() => {
-            if (!document.body.contains(btnPaid)) return clearInterval(countdown.intervalId);
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(countdown.intervalId);
+              return;
+            }
             const remain = countdown.until - now();
             if (remain <= 0) {
               clearInterval(countdown.intervalId);
               btnPaid.textContent = 'Paiement confirmé';
               btnPaid.style.backgroundColor = '';
             } else {
-              btnPaid.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPaid.textContent = `Annuler paiement (${sec}s)`;
             }
           }, 250);
 
+          // Au bout de 5s → clôture automatique de la table
           countdown.timeoutId = setTimeout(async () => {
+            // Si entre-temps on a annulé ou remplacé le timer, on ne fait rien
             if (leftPayTimers[id] !== countdown) return;
             delete leftPayTimers[id];
+
             try {
               const closeResp = await fetch(`${base}/close-table`, {
                 method: 'POST',
@@ -725,21 +851,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ table: id, closureType: 'normal' }),
               });
               const closeJson = await closeResp.json().catch(() => ({}));
-              if (!closeResp.ok || closeJson?.ok === false) throw new Error(closeJson?.error || `http_${closeResp.status}`);
+              if (!closeResp.ok || closeJson?.ok === false) {
+                throw new Error(closeJson?.error || `http_${closeResp.status}`);
+              }
             } catch (err) {
               console.error('Erreur /close-table', err);
               alert(`Impossible de clôturer la table : ${err.message || err}`);
             } finally {
               await refreshTables();
-              await refreshSummary();
-              await refreshHistory();
-              if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id);
+              if (window.__currentDetailTableId === id && window.showTableDetail) {
+                window.showTableDetail(id);
+              }
             }
           }, 5000);
         });
       }
 
-      card.addEventListener('click', () => {
+      // Toggle panneau de droite en recliquant sur la même table
+      card.addEventListener('click', async (e) => {
+        if (e.target.closest('button')) return;
+
         const currentId = window.__currentDetailTableId || null;
         if (currentId && normId(currentId) === id) {
           const panel = document.querySelector('#tableDetailPanel');
@@ -753,14 +884,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const freshMap = window.__latestTablesById || {};
         const freshTable = freshMap[id] || null;
-        const freshStatus = freshTable && freshTable.status ? freshTable.status : status;
-        if (window.showTableDetail) window.showTableDetail(id, freshStatus);
+        const freshStatus = (freshTable && freshTable.status) ? freshTable.status : status;
 
+        if (window.showTableDetail) {
+          window.showTableDetail(id, freshStatus);
+        }
+
+        // Refresh en arrière-plan pour garder la carte de gauche fraîche sans bloquer l'ouverture du détail.
         refreshTables().then(() => {
           const latestMap = window.__latestTablesById || {};
           const latestTable = latestMap[id] || null;
-          const latestStatus = latestTable && latestTable.status ? latestTable.status : freshStatus;
-          if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id, latestStatus);
+          const latestStatus = (latestTable && latestTable.status) ? latestTable.status : freshStatus;
+          if (window.__currentDetailTableId === id && window.showTableDetail) {
+            window.showTableDetail(id, latestStatus);
+          }
         }).catch((err) => console.error('Erreur refresh après ouverture détail', err));
       });
 
@@ -768,34 +905,57 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // --- Appels API
+
   async function fetchSummary() {
     const base = getApiBase();
     if (!base) return { items: [], totals: {} };
     const res = await fetch(`${base}/summary`, { cache: 'no-store' });
-    return (await res.json()) || { items: [], totals: {} };
-  }
-
-  async function fetchTables() {
-    const base = getApiBase();
-    if (!base) return { tables: [] };
-    const res = await fetch(`${base}/tables`, { cache: 'no-store' });
-    return (await res.json()) || { tables: [] };
+    const data = await res.json();
+    return data || { items: [], totals: {} };
   }
 
   async function fetchHistory() {
     const base = getApiBase();
     if (!base) return { items: [] };
     const params = new URLSearchParams();
-    const selectedDate = filterHistoryDate?.value?.trim();
-    const selectedTable = filterHistoryTable?.value?.trim();
-    const selectedType = filterHistoryType?.value?.trim();
-    if (selectedDate) params.set('date', selectedDate);
-    if (selectedTable) params.set('tableId', selectedTable);
-    if (selectedType) params.set('closureType', selectedType);
-    const includeActive = selectedType === 'active';
-    if (includeActive) params.set('includeActive', 'true');
+    params.set('date', historyDateInput?.value || todayKey());
+    if (historyTableFilter?.value) params.set('tableId', historyTableFilter.value);
+    if (historyTypeFilter?.value) params.set('closureType', historyTypeFilter.value);
     const res = await fetch(`${base}/history-sessions?${params.toString()}`, { cache: 'no-store' });
-    return (await res.json()) || { items: [] };
+    const data = await res.json();
+    return data || { items: [] };
+  }
+
+  async function fetchDiagnosticOverview() {
+    const base = getApiBase();
+    if (!base) return { totals: {} };
+    const params = new URLSearchParams();
+    params.set('date', historyDateInput?.value || todayKey());
+    const res = await fetch(`${base}/diagnostic/overview?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { totals: {} };
+  }
+
+  async function fetchDiagnosticEvents() {
+    const base = getApiBase();
+    if (!base) return { items: [] };
+    const params = new URLSearchParams();
+    params.set('date', historyDateInput?.value || todayKey());
+    if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
+    if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
+    params.set('limit', '25');
+    const res = await fetch(`${base}/diagnostic/events?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { items: [] };
+  }
+
+  async function fetchTables() {
+    const base = getApiBase();
+    if (!base) return { tables: [] };
+    const res = await fetch(`${base}/tables`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { tables: [] };
   }
 
   async function refreshTables() {
@@ -815,7 +975,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }, {});
       window.__latestTablesById = latestTablesById;
       detectTablesChangesAndBeep(tables);
-      syncHistoryTableFilter(tables);
       renderTables(tables);
     } catch (err) {
       console.error('Erreur refreshTables', err);
@@ -826,7 +985,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const base = getApiBase();
     if (!base) {
       if (summaryContainer) summaryContainer.innerHTML = '';
-      if (summaryStats) summaryStats.innerHTML = '';
       if (summaryEmpty) summaryEmpty.style.display = 'block';
       return;
     }
@@ -841,21 +999,40 @@ document.addEventListener('DOMContentLoaded', () => {
   async function refreshHistory() {
     const base = getApiBase();
     if (!base) {
-      if (historyContainer) historyContainer.innerHTML = '';
+      if (historyList) historyList.innerHTML = '';
       if (historyEmpty) historyEmpty.style.display = 'block';
       return;
     }
     try {
       const historyData = await fetchHistory();
-      renderHistory(historyData.items || []);
+      renderHistory(historyData);
     } catch (err) {
       console.error('Erreur refreshHistory', err);
+    }
+  }
+
+  async function refreshDiagnostic() {
+    const base = getApiBase();
+    if (!base) {
+      if (diagnosticList) diagnosticList.innerHTML = '';
+      if (diagnosticEmpty) diagnosticEmpty.style.display = 'block';
+      return;
+    }
+    try {
+      const [overviewData, eventsData] = await Promise.all([
+        fetchDiagnosticOverview(),
+        fetchDiagnosticEvents(),
+      ]);
+      renderDiagnostic(overviewData, eventsData);
+    } catch (err) {
+      console.error('Erreur refreshDiagnostic', err);
     }
   }
 
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
   window.refreshHistory = refreshHistory;
+  window.refreshDiagnostic = refreshDiagnostic;
 
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', () => {
@@ -863,38 +1040,77 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshTables();
       refreshSummary();
       refreshHistory();
+      refreshDiagnostic();
+      refreshHistory();
+      refreshDiagnostic();
     });
   }
 
-  if (btnRefreshTables) btnRefreshTables.addEventListener('click', refreshTables);
-  if (btnRefreshSummary) btnRefreshSummary.addEventListener('click', refreshSummary);
-  if (btnRefreshHistory) btnRefreshHistory.addEventListener('click', refreshHistory);
+  if (btnRefreshTables) {
+    btnRefreshTables.addEventListener('click', () => {
+      refreshTables();
+    });
+  }
 
+  if (btnRefreshSummary) {
+    btnRefreshSummary.addEventListener('click', () => {
+      refreshSummary();
+      refreshHistory();
+      refreshDiagnostic();
+    });
+  }
+
+  if (btnRefreshHistory) {
+    btnRefreshHistory.addEventListener('click', () => {
+      refreshHistory();
+    });
+  }
+
+  if (btnRefreshDiagnostic) {
+    btnRefreshDiagnostic.addEventListener('click', () => {
+      refreshDiagnostic();
+    });
+  }
+
+  [historyDateInput, historyTableFilter, historyTypeFilter].forEach((el) => {
+    if (el) el.addEventListener('change', () => refreshHistory());
+  });
+  [historyDateInput, diagSeverityFilter, diagTableFilter].forEach((el) => {
+    if (el) el.addEventListener('change', () => refreshDiagnostic());
+  });
+
+  // On garde un refresh léger des tables uniquement. Pas de spam sur /summary.
   window.addEventListener('focus', () => {
     refreshTables();
     refreshSummary();
     refreshHistory();
+    refreshDiagnostic();
   });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       refreshTables();
       refreshSummary();
-      refreshHistory();
     }
   });
 
-  if (filterSelect) filterSelect.addEventListener('change', refreshTables);
-  if (filterHistoryDate) filterHistoryDate.addEventListener('change', refreshHistory);
-  if (filterHistoryTable) filterHistoryTable.addEventListener('change', refreshHistory);
-  if (filterHistoryType) filterHistoryType.addEventListener('change', refreshHistory);
+  if (filterSelect) {
+    filterSelect.addEventListener('change', () => {
+      refreshTables();
+    });
+  }
+
+  if (historyDateInput && !historyDateInput.value) {
+    historyDateInput.value = todayKey();
+  }
 
   loadApiFromStorage();
-  if (filterHistoryDate && !filterHistoryDate.value) filterHistoryDate.value = formatDateInput(new Date().toISOString());
-
   refreshTables();
   refreshSummary();
   refreshHistory();
+  refreshDiagnostic();
 
-  setInterval(refreshTables, TABLES_REFRESH_MS);
+  setInterval(() => {
+    refreshTables();
+  }, TABLES_REFRESH_MS);
 });

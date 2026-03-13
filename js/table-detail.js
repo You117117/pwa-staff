@@ -1,4 +1,4 @@
-// table-detail.js — détail table (sans auto-refresh 5s du panneau de droite, produits en gras avec prix)
+// table-detail.js — panneau détail table / historique Bloc 6
 
 (function () {
   let panel = document.querySelector('#tableDetailPanel');
@@ -21,15 +21,10 @@
     document.body.appendChild(panel);
   }
 
-  // Empêcher que le clic qui ouvre le panel le ferme directement
   window.__suppressOutsideClose = false;
-  // Auto-refresh réseau du panneau de droite désactivé.
-
-  // 🔁 Timers globaux partagés avec le tableau de gauche (app.js)
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
   const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
 
-  // Fermeture par clic en dehors du panneau
   document.addEventListener('click', (e) => {
     if (panel.style.display === 'none') return;
     if (window.__suppressOutsideClose) return;
@@ -43,6 +38,25 @@
     return input ? input.value.trim().replace(/\/+$/, '') : '';
   };
 
+  function formatTime(dateValue) {
+    if (!dateValue) return '--:--';
+    const d = new Date(dateValue);
+    if (Number.isNaN(d.getTime())) return '--:--';
+    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatMoney(value) {
+    return `${Number(value || 0).toFixed(2)} €`;
+  }
+
+  function formatDuration(durationSeconds) {
+    if (typeof durationSeconds !== 'number' || Number.isNaN(durationSeconds) || durationSeconds < 0) return '—';
+    const totalMinutes = Math.round(durationSeconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (!hours) return `${minutes} min`;
+    return `${hours} h ${String(minutes).padStart(2, '0')}`;
+  }
 
   function showStaffChoiceModal({
     title = 'Confirmation',
@@ -157,11 +171,15 @@
     } catch (err) {
       console.error('Erreur refreshTables depuis détail', err);
     }
-
     try {
       if (window.refreshSummary) await window.refreshSummary();
     } catch (err) {
       console.error('Erreur refreshSummary depuis détail', err);
+    }
+    try {
+      if (window.refreshHistory) await window.refreshHistory();
+    } catch (err) {
+      console.error('Erreur refreshHistory depuis détail', err);
     }
   }
 
@@ -171,7 +189,6 @@
     window.__currentDetailTableId = null;
   }
 
-  // 🔹 Lignes produits : chaque produit en gras + prix en gras à droite
   function makeProductLines(ticket) {
     const src = Array.isArray(ticket.items)
       ? ticket.items
@@ -196,32 +213,21 @@
       const qty = it.qty || it.quantity || 1;
       const name = it.label || it.name || it.title || 'article';
       const price = it.price || it.unitPrice || it.amount || null;
-
-      // Prénom du client pour cette ligne (ou à défaut, celui du ticket)
-      const lineClientName =
-        it.clientName ||
-        it.customerName ||
-        it.ownerName ||
-        ticket.clientName ||
-        null;
-
-      // Suppléments / options
-      let extrasSrc = null;
-      if (Array.isArray(it.extras)) extrasSrc = it.extras;
-      else if (Array.isArray(it.options)) extrasSrc = it.options;
-      else if (Array.isArray(it.supplements)) extrasSrc = it.supplements;
-      else if (Array.isArray(it.toppings)) extrasSrc = it.toppings;
-
-      const extras =
-        Array.isArray(extrasSrc)
-          ? extrasSrc
-              .map((e) =>
-                typeof e === 'string'
-                  ? e.trim()
-                  : (e && (e.label || e.name || e.title || '')).trim()
-              )
-              .filter(Boolean)
-          : [];
+      const lineClientName = it.clientName || it.customerName || it.ownerName || ticket.clientName || null;
+      const extrasSrc = Array.isArray(it.extras)
+        ? it.extras
+        : Array.isArray(it.options)
+        ? it.options
+        : Array.isArray(it.supplements)
+        ? it.supplements
+        : Array.isArray(it.toppings)
+        ? it.toppings
+        : [];
+      const extras = Array.isArray(extrasSrc)
+        ? extrasSrc
+            .map((e) => (typeof e === 'string' ? e.trim() : (e && (e.label || e.name || e.title || '')).trim()))
+            .filter(Boolean)
+        : [];
 
       const wrapper = document.createElement('div');
       wrapper.style.marginBottom = '6px';
@@ -236,19 +242,12 @@
 
       const left = document.createElement('span');
       left.textContent = `${qty}× ${name}`;
-
       const right = document.createElement('span');
-      if (typeof price === 'number') {
-        right.textContent = `${price.toFixed(2)} €`;
-      } else {
-        right.textContent = '';
-      }
-
+      right.textContent = typeof price === 'number' ? formatMoney(price) : '';
       line.appendChild(left);
       line.appendChild(right);
       wrapper.appendChild(line);
 
-      // Ligne "Client : Prénom"
       if (lineClientName) {
         const clientLine = document.createElement('div');
         clientLine.textContent = `Client : ${lineClientName}`;
@@ -259,7 +258,6 @@
         wrapper.appendChild(clientLine);
       }
 
-      // Ligne "Suppléments : ..."
       if (extras.length) {
         const extrasLine = document.createElement('div');
         extrasLine.textContent = `Suppléments : ${extras.join(', ')}`;
@@ -273,6 +271,7 @@
       return wrapper;
     });
   }
+
   function makeTicketCard(ticket) {
     const card = document.createElement('div');
     card.style.background = 'rgba(15,23,42,0.6)';
@@ -297,29 +296,20 @@
     chipId.textContent = ticket.id ? `Ticket #${ticket.id}` : 'Ticket';
     head.appendChild(chipId);
 
-    if (ticket.time) {
-      const chipTime = document.createElement('span');
-      chipTime.className = 'chip';
-      chipTime.textContent = `Commandé à : ${ticket.time}`;
-      head.appendChild(chipTime);
-    }
+    const chipTime = document.createElement('span');
+    chipTime.className = 'chip';
+    chipTime.textContent = `Commandé à : ${ticket.time || formatTime(ticket.createdAt)}`;
+    head.appendChild(chipTime);
 
-    if (typeof ticket.total === 'number') {
-      const chipTotal = document.createElement('span');
-      chipTotal.className = 'chip';
-      chipTotal.textContent = `${ticket.total.toFixed(2)} €`;
-      chipTotal.style.fontSize = '15px';
-      chipTotal.style.fontWeight = '700';
-      chipTotal.style.letterSpacing = '0.02em';
-      head.appendChild(chipTotal);
-    }
+    const chipTotal = document.createElement('span');
+    chipTotal.className = 'chip';
+    chipTotal.textContent = formatMoney(ticket.total);
+    chipTotal.style.fontSize = '15px';
+    chipTotal.style.fontWeight = '700';
+    head.appendChild(chipTotal);
 
     card.appendChild(head);
-
-    // Lignes produits (en gras + prix en gras à droite)
-    const productLines = makeProductLines(ticket);
-    productLines.forEach((ln) => card.appendChild(ln));
-
+    makeProductLines(ticket).forEach((line) => card.appendChild(line));
     return card;
   }
 
@@ -333,10 +323,8 @@
     return await res.json();
   }
 
-
   function normalizeSummaryEntry(summaryEntry, fallbackTableId, fallbackStatus) {
     if (!summaryEntry) return null;
-
     const orderedTickets = Array.isArray(summaryEntry.tickets)
       ? [...summaryEntry.tickets].sort((a, b) => {
           const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
@@ -350,34 +338,35 @@
       ? summaryEntry.total
       : orderedTickets.reduce((acc, t) => acc + (typeof t.total === 'number' ? t.total : 0), 0);
 
-    const createdAt = summaryEntry.createdAt || (orderedTickets[0] && orderedTickets[0].createdAt) || null;
-    const closedAt = summaryEntry.closedAt || (orderedTickets.length ? orderedTickets.map((t) => t.closedAt).filter(Boolean).sort().slice(-1)[0] : null) || null;
-    const paidAt = summaryEntry.paidAt || (orderedTickets.length ? orderedTickets.map((t) => t.paidAt).filter(Boolean).sort().slice(-1)[0] : null) || null;
-
     return {
+      id: summaryEntry.id || summaryEntry.sessionId || null,
       table: normId(summaryEntry.table || fallbackTableId),
-      status: summaryEntry.status || fallbackStatus || 'Vide',
+      tableLabel: summaryEntry.tableLabel || summaryEntry.table || fallbackTableId,
+      status: summaryEntry.displayStatus || summaryEntry.status || fallbackStatus || 'Vide',
+      displayStatus: summaryEntry.displayStatus || summaryEntry.status || fallbackStatus || 'Vide',
       tickets: orderedTickets,
       total,
-      createdAt,
-      sessionKey: summaryEntry.sessionKey || summaryEntry.sessionStartedAt || createdAt || null,
-      time: summaryEntry.time || null,
-      closedAt,
-      paidAt,
-      isClosed: !!closedAt,
+      createdAt: summaryEntry.createdAt || summaryEntry.openedAt || (orderedTickets[0] && orderedTickets[0].createdAt) || null,
+      sessionKey: summaryEntry.sessionKey || summaryEntry.sessionStartedAt || summaryEntry.openedAt || null,
+      time: summaryEntry.time || formatTime(summaryEntry.createdAt || summaryEntry.openedAt),
+      openedAt: summaryEntry.openedAt || summaryEntry.sessionStartedAt || summaryEntry.createdAt || null,
+      openedTime: summaryEntry.openedTime || formatTime(summaryEntry.openedAt || summaryEntry.sessionStartedAt || summaryEntry.createdAt),
+      closedAt: summaryEntry.closedAt || null,
+      closedTime: summaryEntry.closedTime || formatTime(summaryEntry.closedAt),
+      paidAt: summaryEntry.paidAt || null,
+      durationSeconds: summaryEntry.durationSeconds || null,
+      stateKind: summaryEntry.stateKind || (summaryEntry.closedAt ? 'closed_normal' : 'active'),
+      isClosed: !!summaryEntry.closedAt,
     };
   }
 
   async function showTableDetail(tableId, statusHint, opts) {
     const options = opts || {};
-
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
 
     window.__currentDetailTableId = id;
-
-    // Empêche le clic qui ouvre le panel de le fermer immédiatement
     window.__suppressOutsideClose = true;
     setTimeout(() => {
       window.__suppressOutsideClose = false;
@@ -386,7 +375,6 @@
     panel.innerHTML = '';
     panel.style.display = 'flex';
 
-    // ── Header ─────────────────────────────────────
     const head = document.createElement('div');
     head.style.display = 'flex';
     head.style.justifyContent = 'space-between';
@@ -426,32 +414,33 @@
     panel.appendChild(info);
 
     const summaryEntry = normalizeSummaryEntry(options.summaryEntry, id, statusHint);
-    const historyMode = !!options.historyMode;
-
     let currentStatus = statusHint || 'Vide';
     let allTickets = [];
     let total = 0;
     let cleared = false;
-    let sessionStartAt = null;
-    let isHistoryView = historyMode;
+    let isHistoryView = !!options.historyMode;
+    let durationSeconds = null;
 
-    // ── Source des données : historique immuable ou session active ──
     if (summaryEntry) {
-      currentStatus = summaryEntry.status || currentStatus;
+      currentStatus = summaryEntry.displayStatus || currentStatus;
       allTickets = summaryEntry.tickets || [];
       total = typeof summaryEntry.total === 'number' ? summaryEntry.total : 0;
       cleared = !!summaryEntry.isClosed;
-      sessionStartAt = summaryEntry.sessionKey || summaryEntry.createdAt || null;
-      isHistoryView = true;
-      info.textContent = `Historique (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`;
+      isHistoryView = summaryEntry.stateKind !== 'active' || !!options.historyMode;
+      durationSeconds = summaryEntry.durationSeconds;
+      info.textContent = isHistoryView
+        ? `Historique (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`
+        : `Session active (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`;
+
+      const metaParts = [`Ouverte à ${summaryEntry.openedTime || formatTime(summaryEntry.openedAt)}`];
+      if (summaryEntry.closedAt) metaParts.push(`Clôturée à ${summaryEntry.closedTime || formatTime(summaryEntry.closedAt)}`);
+      if (summaryEntry.durationSeconds) metaParts.push(`Durée : ${formatDuration(summaryEntry.durationSeconds)}`);
+      contextMeta.textContent = metaParts.join(' · ');
     } else {
       let summaryData;
       let tablesData;
       try {
-        [summaryData, tablesData] = await Promise.all([
-          fetchSummary(base),
-          fetchTables(base),
-        ]);
+        [summaryData, tablesData] = await Promise.all([fetchSummary(base), fetchTables(base)]);
       } catch (err) {
         console.error('Erreur fetch detail', err);
         info.textContent = 'Erreur de chargement';
@@ -461,97 +450,34 @@
       const tableMeta = (tablesData.tables || []).find((t) => normId(t.id) === id);
       currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
       cleared = !!(tableMeta && tableMeta.cleared);
-      sessionStartAt =
-        tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
 
-      let sessionGroups = (summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
+      const sessionGroups = (summaryData.items || summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
+      const activeGroup = sessionGroups.find((entry) => entry.stateKind === 'active') || null;
 
-      // Petit retry anti-course: la carte de gauche peut se mettre à jour un poil avant /summary.
-      if (!sessionGroups.length && currentStatus !== 'Vide') {
-        await new Promise((resolve) => setTimeout(resolve, 180));
-        try {
-          summaryData = await fetchSummary(base);
-          sessionGroups = (summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
-        } catch (e) {}
-      }
-
-      const sameInstant = (a, b) => {
-        if (!a || !b) return false;
-        const aTs = new Date(a).getTime();
-        const bTs = new Date(b).getTime();
-        if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return aTs === bTs;
-        return String(a) === String(b);
-      };
-
-      let activeGroup = null;
-      if (sessionStartAt) {
-        activeGroup = sessionGroups.find((entry) => {
-          return (
-            sameInstant(entry.sessionKey, sessionStartAt) ||
-            sameInstant(entry.sessionStartedAt, sessionStartAt) ||
-            sameInstant(entry.createdAt, sessionStartAt)
-          );
-        }) || null;
-      }
-
-      if (!activeGroup) {
-        activeGroup = sessionGroups.find((entry) => !entry.isClosed) || null;
-      }
-
-      // Si aucune session active ne matche, on ne réinjecte pas un ancien historique.
-      // L'historique se consulte depuis le résumé du jour, pas en cliquant une table vide.
-      if (!activeGroup && currentStatus === 'Vide') {
-        activeGroup = null;
-      }
-
-      allTickets = Array.isArray(activeGroup && activeGroup.tickets) ? [...activeGroup.tickets] : [];
-
-      allTickets.sort((a, b) => {
-        const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
-        const bTs = b.createdAt ? new Date(b.createdAt).getTime() : NaN;
-        if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return aTs - bTs;
-
-        const aId = Number(a.id);
-        const bId = Number(b.id);
-        if (!Number.isNaN(aId) && !Number.isNaN(bId)) return aId - bId;
-        if (a.time && b.time) return a.time.localeCompare(b.time);
-        return 0;
-      });
-
-      total = typeof (activeGroup && activeGroup.total) === 'number'
-        ? activeGroup.total
-        : allTickets.reduce(
-            (acc, t) => acc + (typeof t.total === 'number' ? t.total : 0),
-            0
-          );
-
-      if (!allTickets.length || cleared) {
-        info.textContent = currentStatus === 'Vide' ? 'Aucune commande pour cette table.' : 'Synchronisation en cours...';
+      if (activeGroup) {
+        const normalized = normalizeSummaryEntry(activeGroup, id, currentStatus);
+        allTickets = normalized.tickets || [];
+        total = normalized.total || 0;
+        durationSeconds = normalized.durationSeconds;
+        info.textContent = allTickets.length
+          ? `Commandes en cours (${allTickets.length})`
+          : currentStatus === 'Vide'
+          ? 'Aucune commande pour cette table.'
+          : 'Synchronisation en cours...';
+        const metaParts = [];
+        if (normalized.openedAt) metaParts.push(`Ouverte à ${normalized.openedTime}`);
+        if (durationSeconds) metaParts.push(`Durée : ${formatDuration(durationSeconds)}`);
+        contextMeta.textContent = metaParts.join(' · ');
       } else {
-        info.textContent = `Commandes en cours (${allTickets.length})`;
+        allTickets = [];
+        total = 0;
+        info.textContent = currentStatus === 'Vide' ? 'Aucune session active pour cette table.' : 'Synchronisation en cours...';
+        contextMeta.textContent = '';
       }
     }
 
-    if (summaryEntry) {
-      const parts = [];
-      if (summaryEntry.time) parts.push(`Commande à ${summaryEntry.time}`);
-      if (summaryEntry.closedAt) {
-        try {
-          const dtClose = new Date(summaryEntry.closedAt);
-          if (!Number.isNaN(dtClose.getTime())) {
-            parts.push(`Clôturée à ${dtClose.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`);
-          }
-        } catch (e) {}
-      }
-      contextMeta.textContent = parts.join(' · ');
-    } else {
-      contextMeta.textContent = '';
-    }
-
-    // ── Tickets / Montant ──────────────────────────
     if (!allTickets.length) {
-      info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : 'Aucune commande pour cette table.';
-
+      info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : info.textContent;
       const totalBoxEmpty = document.createElement('div');
       totalBoxEmpty.style.marginTop = '10px';
       totalBoxEmpty.style.marginBottom = '16px';
@@ -561,30 +487,23 @@
       `;
       panel.appendChild(totalBoxEmpty);
     } else {
-      allTickets.forEach((t) => {
-        panel.appendChild(makeTicketCard(t));
-      });
-
+      allTickets.forEach((ticket) => panel.appendChild(makeTicketCard(ticket)));
       const totalBox = document.createElement('div');
       totalBox.style.marginTop = '10px';
       totalBox.style.marginBottom = '18px';
       totalBox.innerHTML = `
         <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total ${isHistoryView ? '(historique)' : '(session)'}</div>
-        <div style="font-size:30px;font-weight:650;color:#f9fafb;">${total.toFixed(
-          2
-        )} €</div>
+        <div style="font-size:30px;font-weight:650;color:#f9fafb;">${formatMoney(total)}</div>
       `;
       panel.appendChild(totalBox);
     }
 
-    // ── Statut ─────────────────────────────────────
     const statusChip = document.createElement('div');
     statusChip.className = 'chip';
     statusChip.textContent = `Statut : ${currentStatus}`;
     statusChip.style.marginBottom = '12px';
     panel.appendChild(statusChip);
 
-    // ── Actions (Imprimer / Paiement / Clôturer) ───
     const actions = document.createElement('div');
     actions.style.display = 'flex';
     actions.style.flexDirection = 'column';
@@ -592,73 +511,66 @@
 
     const isActive = !isHistoryView && currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
 
-
-    let btnPrint = null;
-    let btnPay = null;
-    let btnCloseTable = null;
-
-    // Boutons Imprimer / Paiement
     if (isActive) {
-      btnPrint = document.createElement('button');
+      const btnPrint = document.createElement('button');
       btnPrint.className = 'btn btn-primary';
       btnPrint.style.width = '100%';
       btnPrint.style.fontSize = '14px';
 
-      btnPay = document.createElement('button');
+      const btnPay = document.createElement('button');
       btnPay.className = 'btn btn-primary';
       btnPay.style.width = '100%';
       btnPay.style.fontSize = '14px';
 
-      // --- Synchronisation avec les timers globaux (gauche / app.js) ---
+      const btnCloseTable = document.createElement('button');
+      btnCloseTable.className = 'btn btn-primary';
+      btnCloseTable.style.width = '100%';
+      btnCloseTable.style.fontSize = '14px';
+      btnCloseTable.textContent = 'Clôturer la table';
+      btnCloseTable.style.backgroundColor = '#ef4444';
 
       function syncPrintButtonFromGlobal() {
-        if (!btnPrint) return;
-        const timers = window.leftPrintTimers || {};
-        const t = timers[id];
-        if (!t) {
+        const timer = leftPrintTimers[id];
+        if (!timer) {
           btnPrint.textContent = 'Imprimer maintenant';
           btnPrint.style.backgroundColor = '';
           return;
         }
-        const remain = t.until - Date.now();
+        const remain = timer.until - Date.now();
         if (remain <= 0) {
           btnPrint.textContent = 'Imprimer maintenant';
           btnPrint.style.backgroundColor = '';
         } else {
-          const sec = Math.max(1, Math.ceil(remain / 1000));
-          btnPrint.textContent = `Impression en cours (${sec}s)`;
+          btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
           btnPrint.style.backgroundColor = '#f97316';
         }
       }
 
       function syncPayButtonFromGlobal() {
-        if (!btnPay) return;
-        const timers = window.leftPayTimers || {};
-        const t = timers[id];
-        if (t) {
-          const remain = t.until - Date.now();
+        const timer = leftPayTimers[id];
+        if (timer) {
+          const remain = timer.until - Date.now();
           if (remain > 0) {
-            const sec = Math.max(1, Math.ceil(remain / 1000));
-            btnPay.textContent = `Annuler paiement (${sec}s)`;
+            btnPay.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
             btnPay.style.backgroundColor = '#f97316';
+            btnCloseTable.style.display = 'none';
             return;
           }
         }
-        // Aucun timer actif → état basé sur le statut courant
         if (currentStatus === 'Encodage caisse confirmé') {
           btnPay.textContent = 'Annuler paiement';
           btnPay.style.backgroundColor = '#f97316';
+          btnCloseTable.style.display = 'none';
         } else {
           btnPay.textContent = 'Encoder en caisse';
           btnPay.style.backgroundColor = '';
+          btnCloseTable.style.display = 'block';
         }
       }
 
-      // Sync initial
       syncPrintButtonFromGlobal();
       syncPayButtonFromGlobal();
 
-      // Sync périodique toutes les 250ms (tant que le bouton existe dans le DOM)
       const syncIntervalId = setInterval(() => {
         if (!document.body.contains(btnPrint) && !document.body.contains(btnPay)) {
           clearInterval(syncIntervalId);
@@ -666,67 +578,31 @@
         }
         syncPrintButtonFromGlobal();
         syncPayButtonFromGlobal();
-
-        // Synchroniser aussi la visibilité du bouton de clôture
-        if (btnCloseTable) {
-          const payTimerGlobalForClose = leftPayTimers[id];
-          if (currentStatus === 'Encodage caisse confirmé' || payTimerGlobalForClose) {
-            btnCloseTable.style.display = 'none';
-          } else {
-            btnCloseTable.style.display = 'block';
-          }
-        }
       }, 250);
 
-      actions.appendChild(btnPrint);
-      actions.appendChild(btnPay);
-    }
+      btnPrint.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-print`);
+        if (leftBtn) leftBtn.click();
+      });
 
-    // Clôturer la table : bouton rouge + mode "Annuler clôture (5s)" orange
-    if (isActive) {
-      btnCloseTable = document.createElement('button');
-      btnCloseTable.style.width = '100%';
-      btnCloseTable.style.fontSize = '14px';
-      btnCloseTable.className = 'btn btn-primary';
-
-      let pendingClose = false;
-      let pendingSeconds = 5;
-      let closeTimeoutId = null;
-      let countdownIntervalId = null;
-
-      function updateCloseButtonLabel() {
-        if (!btnCloseTable) return;
-        if (pendingClose) {
-          btnCloseTable.textContent = `Annuler clôture (${pendingSeconds}s)`;
-          btnCloseTable.style.backgroundColor = '#f97316'; // ORANGE pendant compte à rebours
-        } else {
-          btnCloseTable.textContent = 'Clôturer la table';
-          btnCloseTable.style.backgroundColor = '#ef4444'; // ROUGE par défaut
-        }
-      }
-      updateCloseButtonLabel();
-
-      // Cacher le bouton de clôture si paiement confirmé ou timer de paiement actif (synchro avec app.js)
-      const payTimerGlobalForClose = leftPayTimers[id];
-      if (currentStatus === 'Encodage caisse confirmé' || payTimerGlobalForClose) {
-        btnCloseTable.style.display = 'none';
-      } else {
-        btnCloseTable.style.display = 'block';
-      }
-
+      btnPay.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
+        if (leftBtn) leftBtn.click();
+      });
 
       btnCloseTable.addEventListener('click', async (e) => {
         e.stopPropagation();
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        let posConfirmed = currentStatus === 'Encodage caisse confirmé';
         let closureType = 'normal';
-
-        if (!posConfirmed) {
+        if (currentStatus !== 'Encodage caisse confirmé') {
           const answer = await showStaffChoiceModal({
             title: 'Clôture de table',
-            message: 'L’encodage dans la caisse a-t-il été effectué ?\n\nOui = confirmation caisse puis clôture normale.\nNon = clôture avec anomalie.',
+            message:
+              'L’encodage dans la caisse a-t-il été effectué ?\n\nOui = confirmation caisse puis clôture normale.\nNon = clôture avec anomalie.',
             confirmLabel: 'Oui',
             dangerLabel: 'Non',
             cancelLabel: 'Annuler',
@@ -750,38 +626,36 @@
               window.alert('Erreur réseau pendant la confirmation caisse');
               return;
             }
-            posConfirmed = true;
             closureType = 'normal';
           } else {
-            posConfirmed = false;
             closureType = 'anomaly';
           }
         }
 
         try {
-          const closePayload = closureType === 'anomaly'
-            ? {
-                table: id,
-                closureType: 'anomaly',
-                answer: 'NON',
-                closedWithException: true,
-                posConfirmed: false,
-                reason: 'POS_NON_CONFIRME',
-                note: 'Clôture avec anomalie depuis le panneau détail staff',
-              }
-            : {
-                table: id,
-                closureType: 'normal',
-                answer: 'OUI',
-                posConfirmed: true,
-              };
+          const closePayload =
+            closureType === 'anomaly'
+              ? {
+                  table: id,
+                  closureType: 'anomaly',
+                  answer: 'NON',
+                  closedWithException: true,
+                  posConfirmed: false,
+                  reason: 'POS_NON_CONFIRME',
+                  note: 'Clôture avec anomalie depuis le panneau détail staff',
+                }
+              : {
+                  table: id,
+                  closureType: 'normal',
+                  answer: 'OUI',
+                  posConfirmed: true,
+                };
 
           const closeRes = await fetch(`${apiBase}/close-table`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(closePayload),
           });
-
           const closeJson = await closeRes.json().catch(() => ({}));
           if (!closeRes.ok || closeJson.ok === false) {
             window.alert(closeJson.error || 'Échec clôture de table');
@@ -794,228 +668,18 @@
           return;
         } finally {
           await refreshStaffViews();
-
           const latestMap = window.__latestTablesById || {};
           const latestTable = latestMap[id] || null;
           const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
-
-          if (latestStatus === 'Vide') {
-            closePanel();
-          } else {
-            showTableDetail(id, latestStatus);
-          }
+          if (latestStatus === 'Vide') closePanel();
+          else showTableDetail(id, latestStatus);
         }
       });
 
+      actions.appendChild(btnPrint);
+      actions.appendChild(btnPay);
       actions.appendChild(btnCloseTable);
-    }
-
-    if (actions.children.length > 0) {
       panel.appendChild(actions);
-    }
-
-    // ── Listeners Imprimer / Paiement ──────────────
-
-    if (isActive && btnPrint) {
-      btnPrint.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Délègue l'action au bouton "Imprimer" du tableau de gauche (cerveau unique dans app.js)
-        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-print`);
-        if (leftBtn) {
-          leftBtn.click();
-        }
-      });
-    }
-
-    if (isActive && btnPay) {
-      btnPay.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Délègue l'action au bouton Encoder en caisse du tableau de gauche (cerveau unique dans app.js)
-        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
-        if (leftBtn) {
-          leftBtn.click();
-        }
-      });
-    }
-
-    // ── Listeners Imprimer / Paiement ──────────────
-
-    if (isActive && btnPrint) {
-      btnPrint.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const apiBase = getApiBase();
-        if (!apiBase) return;
-
-        // Si impression déjà en cours pour cette table → on ignore
-        const existing = detailPrintTimers[id];
-        if (existing) return;
-
-        // Démarre un nouveau timer global pour cette table
-        const until = Date.now() + 5000;
-        detailPrintTimers[id] = { until };
-
-        // Démarre le compte à rebours local
-        pendingPrint = true;
-        printSeconds = 5;
-        updatePrintButtonLabel();
-
-        if (printIntervalId) clearInterval(printIntervalId);
-        if (printTimeoutId) clearTimeout(printTimeoutId);
-
-        printIntervalId = setInterval(() => {
-          if (!pendingPrint) {
-            clearInterval(printIntervalId);
-            return;
-          }
-          const remain = detailPrintTimers[id]
-            ? detailPrintTimers[id].until - Date.now()
-            : 0;
-          if (remain <= 0) {
-            clearInterval(printIntervalId);
-            pendingPrint = false;
-            printSeconds = 5;
-            delete detailPrintTimers[id];
-            updatePrintButtonLabel();
-            return;
-          }
-          printSeconds = Math.max(1, Math.ceil(remain / 1000));
-          updatePrintButtonLabel();
-        }, 1000);
-
-        printTimeoutId = setTimeout(() => {
-          pendingPrint = false;
-          printSeconds = 5;
-          delete detailPrintTimers[id];
-          updatePrintButtonLabel();
-        }, 5000);
-
-        // Appel API /print (comme avant)
-        try {
-          await fetch(`${apiBase}/print`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id }),
-          });
-        } catch (err) {
-          console.error('Erreur /print (détail)', err);
-        } finally {
-          await refreshStaffViews();
-          const latestMap = window.__latestTablesById || {};
-          const latestTable = latestMap[id] || null;
-          showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
-        }
-      });
-    }
-
-    if (isActive && btnPay) {
-      btnPay.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const apiBase = getApiBase();
-        if (!apiBase) return;
-
-        // Si un compte à rebours paiement est en cours → annuler paiement
-        if (pendingPayClose) {
-          pendingPayClose = false;
-          paySeconds = 5;
-          if (payTimeoutId) clearTimeout(payTimeoutId);
-          if (payIntervalId) clearInterval(payIntervalId);
-
-          try {
-            await fetch(`${apiBase}/cancel-confirm`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ table: id }),
-            });
-          } catch (err) {
-            console.error('Erreur /cancel-confirm (détail)', err);
-          } finally {
-            if (btnCloseTable) {
-              btnCloseTable.style.display = 'block';
-            }
-            updatePayButtonLabel();
-            await refreshStaffViews();
-            const latestMap = window.__latestTablesById || {};
-            const latestTable = latestMap[id] || null;
-            showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
-          }
-
-          return;
-        }
-
-        // Si déjà Encodage caisse confirmé → annuler
-        if (currentStatus === 'Encodage caisse confirmé') {
-          try {
-            await fetch(`${apiBase}/cancel-confirm`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ table: id }),
-            });
-          } catch (err) {
-            console.error('Erreur /cancel-confirm (détail)', err);
-          } finally {
-            if (btnCloseTable) {
-              btnCloseTable.style.display = 'block';
-            }
-            await refreshStaffViews();
-            const latestMap = window.__latestTablesById || {};
-            const latestTable = latestMap[id] || null;
-            showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
-          }
-          return;
-        }
-
-        // Encodage caisse confirmé
-        try {
-          await fetch(`${apiBase}/confirm`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ table: id }),
-          });
-        } catch (err) {
-          console.error('Erreur /confirm (détail)', err);
-        }
-
-        // Statut direct côté UI
-        currentStatus = 'Encodage caisse confirmé';
-        statusChip.textContent = `Statut : ${currentStatus}`;
-
-        // Démarre compte à rebours 5s
-        pendingPayClose = true;
-        paySeconds = 5;
-
-        if (btnCloseTable) {
-          btnCloseTable.style.display = 'none';
-        }
-
-        updatePayButtonLabel();
-
-        payIntervalId = setInterval(() => {
-          if (!pendingPayClose) {
-            clearInterval(payIntervalId);
-            return;
-          }
-          paySeconds -= 1;
-          if (paySeconds <= 0) {
-            paySeconds = 0;
-            clearInterval(payIntervalId);
-          }
-          updatePayButtonLabel();
-        }, 1000);
-
-        payTimeoutId = setTimeout(async () => {
-          if (!pendingPayClose) return;
-          pendingPayClose = false;
-          paySeconds = 5;
-          await refreshStaffViews();
-          const latestMap = window.__latestTablesById || {};
-          const latestTable = latestMap[id] || null;
-          showTableDetail(id, latestTable && latestTable.status ? latestTable.status : currentStatus);
-        }, 5000);
-      });
-    }
-
-    // Pas d'auto-refresh du panneau de droite : rechargement manuel uniquement.
-    if (!options.skipAutoRefresh && !isHistoryView) {
     }
   }
 

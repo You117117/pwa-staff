@@ -6,7 +6,7 @@
   <title>Resto QR — Staff</title>
 
   <!-- IMPORTANT: ton CSS est dans /assets/style.css?v=20260310-1 (pas à la racine) -->
-  <link rel="stylesheet" href="./assets/style.css?v=20260313-6" />
+  <link rel="stylesheet" href="./assets/style.css?v=20260313-7" />
 </head>
 
 <body>
@@ -15,7 +15,7 @@
   <div class="topbar">
     <label>URL API</label>
     <input type="text" id="apiUrl" placeholder="https://..." />
-    <button id="btnSaveApi">Mémoriser</button>
+    <button id="btnMemorize">Mémoriser</button>
     <button id="btnHealth">Tester /health</button>
   </div>
 
@@ -37,7 +37,7 @@
             <option value="T9">T9</option>
             <option value="T10">T10</option>
           </select>
-          <button id="btnRefreshTables">Rafraîchir</button>
+          <button id="btnRefresh">Rafraîchir</button>
         </div>
       </div>
 
@@ -50,35 +50,75 @@
         <h2>Résumé du jour</h2>
         <button id="btnRefreshSummary">Rafraîchir</button>
       </div>
-      <div id="summaryStats" class="summaryStats"></div>
+
+      <div id="summaryKpis" class="kpiGrid"></div>
       <div id="summaryEmpty" class="empty">Aucune session aujourd’hui.</div>
       <div id="summary" class="summary"></div>
 
       <div class="subsection-head">
-        <h2>Historique des sessions</h2>
-        <button id="btnRefreshHistory">Rafraîchir</button>
+        <h3>Historique des sessions</h3>
+        <div class="controls controls--tight">
+          <input type="date" id="historyDate" />
+          <select id="historyTableFilter">
+            <option value="">Toutes les tables</option>
+            <option value="T1">T1</option>
+            <option value="T2">T2</option>
+            <option value="T3">T3</option>
+            <option value="T4">T4</option>
+            <option value="T5">T5</option>
+            <option value="T6">T6</option>
+            <option value="T7">T7</option>
+            <option value="T8">T8</option>
+            <option value="T9">T9</option>
+            <option value="T10">T10</option>
+          </select>
+          <select id="historyTypeFilter">
+            <option value="all">Tout</option>
+            <option value="normal">Encodée en caisse</option>
+            <option value="anomaly">Anomalie</option>
+            <option value="active">Actives</option>
+          </select>
+          <button id="btnRefreshHistory">Rafraîchir</button>
+        </div>
       </div>
-      <div class="historyFilters">
-        <input type="date" id="historyDate" />
-        <select id="historyTable">
-          <option value="">Toutes</option>
-        </select>
-        <select id="historyType">
-          <option value="all">Toutes</option>
-          <option value="normal">Encodées en caisse</option>
-          <option value="anomaly">Anomalies</option>
-          <option value="active">Sessions actives</option>
-        </select>
+      <div id="historyEmpty" class="empty">Aucune session dans l’historique.</div>
+      <div id="historyList" class="summary historyList"></div>
+
+      <div class="subsection-head">
+        <h3>Diagnostic</h3>
+        <div class="controls controls--tight">
+          <select id="diagSeverityFilter">
+            <option value="">Toutes sévérités</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Erreur</option>
+          </select>
+          <select id="diagTableFilter">
+            <option value="">Toutes les tables</option>
+            <option value="T1">T1</option>
+            <option value="T2">T2</option>
+            <option value="T3">T3</option>
+            <option value="T4">T4</option>
+            <option value="T5">T5</option>
+            <option value="T6">T6</option>
+            <option value="T7">T7</option>
+            <option value="T8">T8</option>
+            <option value="T9">T9</option>
+            <option value="T10">T10</option>
+          </select>
+          <button id="btnRefreshDiagnostic">Rafraîchir</button>
+        </div>
       </div>
-      <div id="historyEmpty" class="empty">Aucune session pour ces filtres.</div>
-      <div id="historySessions" class="summary historyList"></div>
+      <div id="diagnosticKpis" class="kpiGrid kpiGrid--small"></div>
+      <div id="diagnosticEmpty" class="empty">Aucun événement diagnostic disponible.</div>
+      <div id="diagnosticList" class="summary diagnosticList"></div>
     </div>
   </div>
 
   <script src="./js/bridge-orders-staff.js"></script>
-  <script src="./js/app.js?v=20260313-6"></script>
+  <script src="./js/app.js?v=20260313-7"></script>
   <script src="./js/table-status.js"></script>
-  <script src="./js/table-detail.js?v=20260313-6"></script>
+  <script src="./js/table-detail.js?v=20260313-7"></script>
 <!-- workflow-pos-v2 -->
 </body>
 </html>

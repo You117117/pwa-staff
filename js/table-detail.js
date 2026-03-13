@@ -43,6 +43,114 @@
     return input ? input.value.trim().replace(/\/+$/, '') : '';
   };
 
+
+  function showStaffChoiceModal({
+    title = 'Confirmation',
+    message = '',
+    confirmLabel = 'Oui',
+    dangerLabel = 'Non',
+    cancelLabel = 'Annuler',
+  } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.background = 'rgba(2,6,23,0.7)';
+      overlay.style.backdropFilter = 'blur(4px)';
+      overlay.style.zIndex = '1200';
+      overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.padding = '20px';
+
+      const modal = document.createElement('div');
+      modal.style.width = '100%';
+      modal.style.maxWidth = '440px';
+      modal.style.background = 'linear-gradient(180deg, rgba(15,23,42,0.98) 0%, rgba(17,24,39,0.98) 100%)';
+      modal.style.border = '1px solid rgba(148,163,184,0.25)';
+      modal.style.borderRadius = '18px';
+      modal.style.boxShadow = '0 25px 60px rgba(2,6,23,0.55)';
+      modal.style.padding = '22px';
+      modal.style.display = 'flex';
+      modal.style.flexDirection = 'column';
+      modal.style.gap = '14px';
+      modal.addEventListener('click', (e) => e.stopPropagation());
+
+      const titleEl = document.createElement('div');
+      titleEl.textContent = title;
+      titleEl.style.fontSize = '18px';
+      titleEl.style.fontWeight = '800';
+      titleEl.style.color = '#f8fafc';
+
+      const messageEl = document.createElement('div');
+      messageEl.textContent = message;
+      messageEl.style.fontSize = '14px';
+      messageEl.style.lineHeight = '1.5';
+      messageEl.style.color = '#cbd5e1';
+
+      const actions = document.createElement('div');
+      actions.style.display = 'grid';
+      actions.style.gridTemplateColumns = '1fr 1fr';
+      actions.style.gap = '10px';
+      actions.style.marginTop = '6px';
+
+      const baseBtnStyle = (btn) => {
+        btn.type = 'button';
+        btn.style.border = 'none';
+        btn.style.borderRadius = '12px';
+        btn.style.padding = '12px 14px';
+        btn.style.fontSize = '14px';
+        btn.style.fontWeight = '700';
+        btn.style.cursor = 'pointer';
+      };
+
+      const yesBtn = document.createElement('button');
+      baseBtnStyle(yesBtn);
+      yesBtn.textContent = confirmLabel;
+      yesBtn.style.background = '#22c55e';
+      yesBtn.style.color = '#052e16';
+
+      const noBtn = document.createElement('button');
+      baseBtnStyle(noBtn);
+      noBtn.textContent = dangerLabel;
+      noBtn.style.background = '#ef4444';
+      noBtn.style.color = '#fff';
+
+      const cancelBtn = document.createElement('button');
+      baseBtnStyle(cancelBtn);
+      cancelBtn.textContent = cancelLabel;
+      cancelBtn.style.gridColumn = '1 / -1';
+      cancelBtn.style.background = 'rgba(148,163,184,0.12)';
+      cancelBtn.style.color = '#e2e8f0';
+      cancelBtn.style.border = '1px solid rgba(148,163,184,0.2)';
+
+      const cleanup = (value) => {
+        document.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        resolve(value);
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === 'Escape') cleanup(null);
+      };
+      document.addEventListener('keydown', onKeyDown);
+
+      overlay.addEventListener('click', () => cleanup(null));
+      yesBtn.addEventListener('click', () => cleanup('yes'));
+      noBtn.addEventListener('click', () => cleanup('no'));
+      cancelBtn.addEventListener('click', () => cleanup(null));
+
+      actions.appendChild(yesBtn);
+      actions.appendChild(noBtn);
+      actions.appendChild(cancelBtn);
+      modal.appendChild(titleEl);
+      modal.appendChild(messageEl);
+      modal.appendChild(actions);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    });
+  }
+
   async function refreshStaffViews() {
     try {
       if (window.refreshTables) await window.refreshTables();
@@ -607,17 +715,19 @@
         if (!apiBase) return;
 
         let posConfirmed = currentStatus === 'Encodage caisse confirmé';
-        let closedWithException = false;
-
         let closureType = 'normal';
 
         if (!posConfirmed) {
-          const answer = window.prompt('Encodage caisse effectué ? Tapez OUI pour confirmer, sinon NON pour clôturer avec anomalie.', 'OUI');
-          if (answer === null) return;
+          const answer = await showStaffChoiceModal({
+            title: 'Clôture de table',
+            message: 'L’encodage dans la caisse a-t-il été effectué ?\n\nOui = confirmation caisse puis clôture normale.\nNon = clôture avec anomalie.',
+            confirmLabel: 'Oui',
+            dangerLabel: 'Non',
+            cancelLabel: 'Annuler',
+          });
+          if (!answer) return;
 
-          const normalized = String(answer || '').trim().toUpperCase();
-
-          if (normalized === 'OUI') {
+          if (answer === 'yes') {
             try {
               const confirmRes = await fetch(`${apiBase}/confirm`, {
                 method: 'POST',
@@ -638,7 +748,6 @@
             closureType = 'normal';
           } else {
             posConfirmed = false;
-            closedWithException = true;
             closureType = 'anomaly';
           }
         }

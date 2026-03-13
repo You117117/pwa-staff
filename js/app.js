@@ -190,10 +190,10 @@ function detectTablesChangesAndBeep(tables) {
     'En préparation': { key:'en_preparation', prio: 15 },
     'À encoder en caisse': { key:'a_encoder_caisse', prio: 20 },
     'Encodage caisse confirmé': { key:'encodage_caisse_confirme', prio: 50 },
+    'Encodée en caisse': { key:'encodage_caisse_confirme', prio: 55 },
     'Clôture avec anomalie': { key:'cloture_anomalie', prio: 52 },
+    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 56 },
     'Clôturée': { key:'cloturee', prio: 55 },
-    'Encodée en caisse': { key:'encodage_caisse_confirme', prio: 56 },
-    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 57 },
   };
 
   const SOUND_COOLDOWN_MS = 6000; // anti-spam global

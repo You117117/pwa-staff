@@ -464,7 +464,16 @@
       sessionStartAt =
         tableMeta && tableMeta.sessionStartAt ? tableMeta.sessionStartAt : null;
 
-      const sessionGroups = (summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
+      let sessionGroups = (summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
+
+      // Petit retry anti-course: la carte de gauche peut se mettre à jour un poil avant /summary.
+      if (!sessionGroups.length && currentStatus !== 'Vide') {
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        try {
+          summaryData = await fetchSummary(base);
+          sessionGroups = (summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
+        } catch (e) {}
+      }
 
       const sameInstant = (a, b) => {
         if (!a || !b) return false;
@@ -489,13 +498,10 @@
         activeGroup = sessionGroups.find((entry) => !entry.isClosed) || null;
       }
 
-      if (!activeGroup && sessionGroups.length) {
-        activeGroup = [...sessionGroups].sort((a, b) => {
-          const aTs = new Date(a.updatedAt || a.createdAt || 0).getTime();
-          const bTs = new Date(b.updatedAt || b.createdAt || 0).getTime();
-          if (!Number.isNaN(aTs) && !Number.isNaN(bTs)) return bTs - aTs;
-          return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
-        })[0];
+      // Si aucune session active ne matche, on ne réinjecte pas un ancien historique.
+      // L'historique se consulte depuis le résumé du jour, pas en cliquant une table vide.
+      if (!activeGroup && currentStatus === 'Vide') {
+        activeGroup = null;
       }
 
       allTickets = Array.isArray(activeGroup && activeGroup.tickets) ? [...activeGroup.tickets] : [];
@@ -520,7 +526,7 @@
           );
 
       if (!allTickets.length || cleared) {
-        info.textContent = 'Aucune commande pour cette table.';
+        info.textContent = currentStatus === 'Vide' ? 'Aucune commande pour cette table.' : 'Synchronisation en cours...';
       } else {
         info.textContent = `Commandes en cours (${allTickets.length})`;
       }
@@ -793,7 +799,7 @@
           const latestTable = latestMap[id] || null;
           const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
 
-          if (latestStatus === 'Clôturée' || latestStatus === 'Clôture avec anomalie' || latestStatus === 'Vide') {
+          if (latestStatus === 'Vide') {
             closePanel();
           } else {
             showTableDetail(id, latestStatus);

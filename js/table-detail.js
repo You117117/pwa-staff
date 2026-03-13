@@ -489,7 +489,7 @@
         activeGroup = sessionGroups.find((entry) => !entry.isClosed) || null;
       }
 
-      if (!activeGroup && currentStatus !== 'Vide' && sessionGroups.length) {
+      if (!activeGroup && sessionGroups.length) {
         activeGroup = [...sessionGroups].sort((a, b) => {
           const aTs = new Date(a.updatedAt || a.createdAt || 0).getTime();
           const bTs = new Date(b.updatedAt || b.createdAt || 0).getTime();
@@ -499,11 +499,6 @@
       }
 
       allTickets = Array.isArray(activeGroup && activeGroup.tickets) ? [...activeGroup.tickets] : [];
-      if (currentStatus === 'Vide') {
-        allTickets = [];
-        total = 0;
-        sessionStartAt = null;
-      }
 
       allTickets.sort((a, b) => {
         const aTs = a.createdAt ? new Date(a.createdAt).getTime() : NaN;
@@ -719,7 +714,6 @@
         const apiBase = getApiBase();
         if (!apiBase) return;
 
-        let closeSucceeded = false;
         let posConfirmed = currentStatus === 'Encodage caisse confirmé';
         let closureType = 'normal';
 
@@ -787,7 +781,6 @@
             window.alert(closeJson.error || 'Échec clôture de table');
             return;
           }
-          closeSucceeded = true;
           await new Promise((resolve) => setTimeout(resolve, 180));
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
@@ -796,15 +789,15 @@
         } finally {
           await refreshStaffViews();
 
-          if (closeSucceeded) {
-            closePanel();
-            return;
-          }
-
           const latestMap = window.__latestTablesById || {};
           const latestTable = latestMap[id] || null;
           const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
-          showTableDetail(id, latestStatus);
+
+          if (latestStatus === 'Clôturée' || latestStatus === 'Clôture avec anomalie' || latestStatus === 'Vide') {
+            closePanel();
+          } else {
+            showTableDetail(id, latestStatus);
+          }
         }
       });
 

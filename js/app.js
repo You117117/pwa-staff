@@ -190,8 +190,10 @@ function detectTablesChangesAndBeep(tables) {
     'En préparation': { key:'en_preparation', prio: 15 },
     'À encoder en caisse': { key:'a_encoder_caisse', prio: 20 },
     'Encodage caisse confirmé': { key:'encodage_caisse_confirme', prio: 50 },
-    'Encodé dans la caisse': { key:'encodage_caisse_confirme', prio: 52 },
-    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 53 },
+    'Clôture avec anomalie': { key:'cloture_anomalie', prio: 52 },
+    'Clôturée': { key:'cloturee', prio: 55 },
+    'Encodée en caisse': { key:'encodage_caisse_confirme', prio: 56 },
+    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 57 },
   };
 
   const SOUND_COOLDOWN_MS = 6000; // anti-spam global
@@ -405,6 +407,7 @@ function detectTablesChangesAndBeep(tables) {
         'En préparation': 'rgba(245,158,11,0.16)',
         'À encoder en caisse': 'rgba(168,85,247,0.16)',
         'Encodage caisse confirmé': 'rgba(16,185,129,0.16)',
+        'Clôture avec anomalie': 'rgba(239,68,68,0.16)',
       };
       card.style.background = __bgMap[__statusLabel] || 'rgba(15,23,42,0.6)';
 

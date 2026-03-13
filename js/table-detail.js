@@ -757,12 +757,17 @@
             ? {
                 table: id,
                 closureType: 'anomaly',
+                answer: 'NON',
+                closedWithException: true,
+                posConfirmed: false,
                 reason: 'POS_NON_CONFIRME',
                 note: 'Clôture avec anomalie depuis le panneau détail staff',
               }
             : {
                 table: id,
                 closureType: 'normal',
+                answer: 'OUI',
+                posConfirmed: true,
               };
 
           const closeRes = await fetch(`${apiBase}/close-table`, {
@@ -776,6 +781,7 @@
             window.alert(closeJson.error || 'Échec clôture de table');
             return;
           }
+          await new Promise((resolve) => setTimeout(resolve, 180));
         } catch (err) {
           console.error('Erreur clôture (close-table)', err);
           window.alert('Erreur réseau pendant la clôture de table');

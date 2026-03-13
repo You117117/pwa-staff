@@ -6,7 +6,7 @@
   <title>Resto QR — Staff</title>
 
   <!-- IMPORTANT: ton CSS est dans /assets/style.css?v=20260310-1 (pas à la racine) -->
-  <link rel="stylesheet" href="./assets/style.css?v=20260310-2" />
+  <link rel="stylesheet" href="./assets/style.css?v=20260313-6" />
 </head>
 
 <body>
@@ -15,7 +15,7 @@
   <div class="topbar">
     <label>URL API</label>
     <input type="text" id="apiUrl" placeholder="https://..." />
-    <button id="btnMemorize">Mémoriser</button>
+    <button id="btnSaveApi">Mémoriser</button>
     <button id="btnHealth">Tester /health</button>
   </div>
 
@@ -37,7 +37,7 @@
             <option value="T9">T9</option>
             <option value="T10">T10</option>
           </select>
-          <button id="btnRefresh">Rafraîchir</button>
+          <button id="btnRefreshTables">Rafraîchir</button>
         </div>
       </div>
 
@@ -47,18 +47,38 @@
 
     <div class="summary-section">
       <div class="section-head">
-        <h2>Résumé du jour </h2>
+        <h2>Résumé du jour</h2>
         <button id="btnRefreshSummary">Rafraîchir</button>
       </div>
-      <div id="summaryEmpty" class="empty">Aucun ticket aujourd’hui.</div>
+      <div id="summaryStats" class="summaryStats"></div>
+      <div id="summaryEmpty" class="empty">Aucune session aujourd’hui.</div>
       <div id="summary" class="summary"></div>
+
+      <div class="subsection-head">
+        <h2>Historique des sessions</h2>
+        <button id="btnRefreshHistory">Rafraîchir</button>
+      </div>
+      <div class="historyFilters">
+        <input type="date" id="historyDate" />
+        <select id="historyTable">
+          <option value="">Toutes</option>
+        </select>
+        <select id="historyType">
+          <option value="all">Toutes</option>
+          <option value="normal">Encodées en caisse</option>
+          <option value="anomaly">Anomalies</option>
+          <option value="active">Sessions actives</option>
+        </select>
+      </div>
+      <div id="historyEmpty" class="empty">Aucune session pour ces filtres.</div>
+      <div id="historySessions" class="summary historyList"></div>
     </div>
   </div>
 
   <script src="./js/bridge-orders-staff.js"></script>
-  <script src="./js/app.js?v=20260310-2"></script>
+  <script src="./js/app.js?v=20260313-6"></script>
   <script src="./js/table-status.js"></script>
-  <script src="./js/table-detail.js?v=20260310-2"></script>
+  <script src="./js/table-detail.js?v=20260313-6"></script>
 <!-- workflow-pos-v2 -->
 </body>
 </html>

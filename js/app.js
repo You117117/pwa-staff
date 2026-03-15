@@ -22,12 +22,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const historyTypeFilter = document.querySelector('#historyTypeFilter');
   const btnRefreshHistory = document.querySelector('#btnRefreshHistory');
 
+  const managerKpis = document.querySelector('#managerKpis');
+  const managerByTable = document.querySelector('#managerByTable');
+  const managerByHour = document.querySelector('#managerByHour');
+  const managerRecentSessions = document.querySelector('#managerRecentSessions');
+  const managerEmpty = document.querySelector('#managerEmpty');
+  const managerStartDateInput = document.querySelector('#managerStartDate');
+  const managerEndDateInput = document.querySelector('#managerEndDate');
+  const managerTableFilter = document.querySelector('#managerTableFilter');
+  const btnRefreshManager = document.querySelector('#btnRefreshManager');
+
   const diagnosticKpis = document.querySelector('#diagnosticKpis');
+  const diagnosticBreakdown = document.querySelector('#diagnosticBreakdown');
+  const diagnosticErrors = document.querySelector('#diagnosticErrors');
   const diagnosticList = document.querySelector('#diagnosticList');
   const diagnosticEmpty = document.querySelector('#diagnosticEmpty');
   const diagSeverityFilter = document.querySelector('#diagSeverityFilter');
+  const diagTypeFilter = document.querySelector('#diagTypeFilter');
   const diagTableFilter = document.querySelector('#diagTableFilter');
+  const diagSessionFilter = document.querySelector('#diagSessionFilter');
+  const diagIncludeAudit = document.querySelector('#diagIncludeAudit');
   const btnRefreshDiagnostic = document.querySelector('#btnRefreshDiagnostic');
+  const btnHealth = document.querySelector('#btnHealth');
 
   const TABLES_REFRESH_MS = 2000;
   const LS_KEY_API = 'staff-api';
@@ -454,6 +470,93 @@ function detectTablesChangesAndBeep(tables) {
     });
   }
 
+  function renderManager(managerData) {
+    renderKpiGrid(managerKpis, [
+      { label: 'CA période', value: `${Number(managerData?.totals?.grossTotal || 0).toFixed(2)} €` },
+      { label: 'Sessions', value: String(managerData?.totals?.sessionsCount || 0) },
+      { label: 'Anomalies', value: String(managerData?.totals?.closedAnomalyCount || 0) },
+      { label: 'Panier moyen', value: `${Number(managerData?.totals?.averageBasket || 0).toFixed(2)} €` },
+      { label: 'Durée moyenne', value: durationMinutesLabel(managerData?.totals?.averageDurationSeconds || 0) },
+      { label: 'Période', value: managerData?.period?.days > 1 ? `${managerData.period.days} j` : '1 j' },
+    ]);
+
+    const byTable = Array.isArray(managerData?.byTable) ? managerData.byTable : [];
+    const byHour = Array.isArray(managerData?.byHour) ? managerData.byHour : [];
+    const recentSessions = Array.isArray(managerData?.recentSessions) ? managerData.recentSessions : [];
+    const hasData = byTable.length || byHour.length || recentSessions.length;
+
+    if (managerEmpty) managerEmpty.style.display = hasData ? 'none' : 'block';
+    if (!hasData) {
+      renderListState(managerByTable, 'Aucune table sur la période.');
+      renderListState(managerByHour, 'Aucun flux horaire.');
+      renderListState(managerRecentSessions, 'Aucune session récente.');
+      return;
+    }
+
+    if (managerByTable) {
+      managerByTable.innerHTML = '';
+      byTable.slice(0, 8).forEach((row) => {
+        const item = document.createElement('div');
+        item.className = 'summaryItem managerRow';
+        item.innerHTML = `
+          <div class="head">
+            <span class="chip">${row.table}</span>
+            <span class="chip">${row.sessionsCount} session(s)</span>
+            <span class="chip">${Number(row.grossTotal || 0).toFixed(2)} €</span>
+            ${row.anomaliesCount ? `<span class="chip chip-severity chip-severity--warn">${row.anomaliesCount} anomalie(s)</span>` : ''}
+          </div>
+          <div class="summaryMeta">Panier moyen ${Number(row.averageBasket || 0).toFixed(2)} € • durée ${durationMinutesLabel(row.averageDurationSeconds || 0)}</div>
+        `;
+        managerByTable.appendChild(item);
+      });
+      if (!byTable.length) renderListState(managerByTable, 'Aucune table sur la période.');
+    }
+
+    if (managerByHour) {
+      managerByHour.innerHTML = '';
+      byHour.slice(0, 12).forEach((row) => {
+        const item = document.createElement('div');
+        item.className = 'summaryItem managerRow';
+        item.innerHTML = `
+          <div class="head">
+            <span class="chip">${row.hour}h</span>
+            <span class="chip">${row.sessionsCount} session(s)</span>
+            <span class="chip">${Number(row.grossTotal || 0).toFixed(2)} €</span>
+          </div>
+          <div class="summaryMeta">${row.anomaliesCount || 0} anomalie(s) sur ce créneau</div>
+        `;
+        managerByHour.appendChild(item);
+      });
+      if (!byHour.length) renderListState(managerByHour, 'Aucun flux horaire.');
+    }
+
+    if (managerRecentSessions) {
+      managerRecentSessions.innerHTML = '';
+      recentSessions.forEach((item) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'summaryItem summaryItem--clickable';
+        row.innerHTML = `
+          <div class="head">
+            <span class="chip">${item.tableLabel || item.table || 'Table'}</span>
+            <span class="chip">Ouverte : ${item.openTime || '--:--'}</span>
+            <span class="chip">Clôturée : ${item.closedTime || '—'}</span>
+            <span class="chip">${Number(item.total || 0).toFixed(2)} €</span>
+            ${buildStatusBadge(item.displayStatus || item.status || 'Vide').outerHTML}
+          </div>
+          <div class="summaryMeta">${item.ordersCount || 0} ticket(s) • ${item.itemsCount || 0} article(s) • durée ${durationMinutesLabel(item.durationSeconds || 0)}</div>
+        `;
+        row.addEventListener('click', () => {
+          if (window.showTableDetail) {
+            window.showTableDetail(normId(item.table), item.displayStatus || item.status || 'Vide', { summaryEntry: item, historyMode: true });
+          }
+        });
+        managerRecentSessions.appendChild(row);
+      });
+      if (!recentSessions.length) renderListState(managerRecentSessions, 'Aucune session récente.');
+    }
+  }
+
   function renderDiagnostic(overviewData, eventsData) {
     renderKpiGrid(diagnosticKpis, [
       { label: 'Événements', value: String(overviewData?.totals?.total || 0) },
@@ -461,6 +564,34 @@ function detectTablesChangesAndBeep(tables) {
       { label: 'Warnings', value: String(overviewData?.totals?.warnCount || 0) },
       { label: 'Erreurs', value: String(overviewData?.totals?.errorCount || 0) },
     ]);
+
+    const byCategory = overviewData?.breakdown?.byCategory || {};
+    renderKpiGrid(diagnosticBreakdown, [
+      { label: 'Métier', value: String(byCategory.business || 0) },
+      { label: 'Technique', value: String(byCategory.technical || 0) },
+      { label: 'Audit', value: String(byCategory.audit || 0) },
+      { label: 'Système', value: String(byCategory.system || 0) },
+    ]);
+
+    if (diagnosticErrors) {
+      diagnosticErrors.innerHTML = '';
+      const errors = Array.isArray(overviewData?.recentErrors) ? overviewData.recentErrors : [];
+      if (errors.length) {
+        errors.forEach((item) => {
+          const row = document.createElement('div');
+          row.className = 'summaryItem diagnosticItem diagnostic-error';
+          row.innerHTML = `
+            <div class="head">
+              <span class="chip">${item.tableCode || 'GLOBAL'}</span>
+              <span class="chip">${item.eventCode || 'ERROR'}</span>
+              <span class="chip chip-severity chip-severity--error">ERROR</span>
+            </div>
+            <div class="summaryMeta">${item.message || 'Erreur'} • ${formatTime(item.createdAt)}</div>
+          `;
+          diagnosticErrors.appendChild(row);
+        });
+      }
+    }
 
     if (!diagnosticList) return;
     diagnosticList.innerHTML = '';
@@ -479,6 +610,9 @@ function detectTablesChangesAndBeep(tables) {
       top.innerHTML = `
         <span class="chip">${item.tableCode || 'GLOBAL'}</span>
         <span class="chip">${item.eventCode || item.eventType || 'EVENT'}</span>
+        <span class="chip">${item.category || 'system'}</span>
+        ${item.sessionId ? `<span class="chip chip-light">Session ${String(item.sessionId).slice(0, 8)}</span>` : ''}
+        ${item.ticketId ? `<span class="chip chip-light">Ticket ${String(item.ticketId).slice(0, 8)}</span>` : ''}
         <span class="chip">${item.source || 'api'}</span>
         <span class="chip chip-severity chip-severity--${(item.severity || 'info').toLowerCase()}">${(item.severity || 'info').toUpperCase()}</span>
       `;
@@ -487,6 +621,12 @@ function detectTablesChangesAndBeep(tables) {
       msg.textContent = `${item.message || 'Sans message'} • ${formatTime(item.createdAt)}`;
       row.appendChild(top);
       row.appendChild(msg);
+      if (item.payload && Object.keys(item.payload).length) {
+        const payload = document.createElement('pre');
+        payload.className = 'diagnosticPayload';
+        payload.textContent = JSON.stringify(item.payload, null, 2);
+        row.appendChild(payload);
+      }
       diagnosticList.appendChild(row);
     });
   }
@@ -915,6 +1055,18 @@ function detectTablesChangesAndBeep(tables) {
     return data || { items: [], totals: {} };
   }
 
+  async function fetchManagerSummary() {
+    const base = getApiBase();
+    if (!base) return { totals: {}, byTable: [], byHour: [], recentSessions: [] };
+    const params = new URLSearchParams();
+    params.set('startDate', managerStartDateInput?.value || historyDateInput?.value || todayKey());
+    params.set('endDate', managerEndDateInput?.value || managerStartDateInput?.value || historyDateInput?.value || todayKey());
+    if (managerTableFilter?.value) params.set('tableId', managerTableFilter.value);
+    const res = await fetch(`${base}/manager-summary?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { totals: {}, byTable: [], byHour: [], recentSessions: [] };
+  }
+
   async function fetchHistory() {
     const base = getApiBase();
     if (!base) return { items: [] };
@@ -929,12 +1081,16 @@ function detectTablesChangesAndBeep(tables) {
 
   async function fetchDiagnosticOverview() {
     const base = getApiBase();
-    if (!base) return { totals: {} };
+    if (!base) return { totals: {}, breakdown: {} };
     const params = new URLSearchParams();
     params.set('date', historyDateInput?.value || todayKey());
+    if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
+    if (diagTypeFilter?.value) params.set('eventType', diagTypeFilter.value);
+    if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
+    params.set('includeAudit', diagIncludeAudit?.checked ? 'true' : 'false');
     const res = await fetch(`${base}/diagnostic/overview?${params.toString()}`, { cache: 'no-store' });
     const data = await res.json();
-    return data || { totals: {} };
+    return data || { totals: {}, breakdown: {} };
   }
 
   async function fetchDiagnosticEvents() {
@@ -943,7 +1099,10 @@ function detectTablesChangesAndBeep(tables) {
     const params = new URLSearchParams();
     params.set('date', historyDateInput?.value || todayKey());
     if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
+    if (diagTypeFilter?.value) params.set('eventType', diagTypeFilter.value);
     if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
+    if (diagSessionFilter?.value) params.set('sessionId', diagSessionFilter.value.trim());
+    params.set('includeAudit', diagIncludeAudit?.checked ? 'true' : 'false');
     params.set('limit', '25');
     const res = await fetch(`${base}/diagnostic/events?${params.toString()}`, { cache: 'no-store' });
     const data = await res.json();
@@ -1011,6 +1170,23 @@ function detectTablesChangesAndBeep(tables) {
     }
   }
 
+  async function refreshManager() {
+    const base = getApiBase();
+    if (!base) {
+      renderListState(managerByTable, 'Aucune donnée manager disponible.');
+      renderListState(managerByHour, 'Aucune donnée manager disponible.');
+      renderListState(managerRecentSessions, 'Aucune donnée manager disponible.');
+      if (managerEmpty) managerEmpty.style.display = 'block';
+      return;
+    }
+    try {
+      const managerData = await fetchManagerSummary();
+      renderManager(managerData);
+    } catch (err) {
+      console.error('Erreur refreshManager', err);
+    }
+  }
+
   async function refreshDiagnostic() {
     const base = getApiBase();
     if (!base) {
@@ -1032,6 +1208,7 @@ function detectTablesChangesAndBeep(tables) {
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
   window.refreshHistory = refreshHistory;
+  window.refreshManager = refreshManager;
   window.refreshDiagnostic = refreshDiagnostic;
 
   if (btnSaveApi) {
@@ -1040,8 +1217,10 @@ function detectTablesChangesAndBeep(tables) {
       refreshTables();
       refreshSummary();
       refreshHistory();
+      refreshManager();
       refreshDiagnostic();
       refreshHistory();
+      refreshManager();
       refreshDiagnostic();
     });
   }
@@ -1056,6 +1235,7 @@ function detectTablesChangesAndBeep(tables) {
     btnRefreshSummary.addEventListener('click', () => {
       refreshSummary();
       refreshHistory();
+      refreshManager();
       refreshDiagnostic();
     });
   }
@@ -1063,6 +1243,12 @@ function detectTablesChangesAndBeep(tables) {
   if (btnRefreshHistory) {
     btnRefreshHistory.addEventListener('click', () => {
       refreshHistory();
+    });
+  }
+
+  if (btnRefreshManager) {
+    btnRefreshManager.addEventListener('click', () => {
+      refreshManager();
     });
   }
 
@@ -1075,7 +1261,10 @@ function detectTablesChangesAndBeep(tables) {
   [historyDateInput, historyTableFilter, historyTypeFilter].forEach((el) => {
     if (el) el.addEventListener('change', () => refreshHistory());
   });
-  [historyDateInput, diagSeverityFilter, diagTableFilter].forEach((el) => {
+  [managerStartDateInput, managerEndDateInput, managerTableFilter].forEach((el) => {
+    if (el) el.addEventListener('change', () => refreshManager());
+  });
+  [historyDateInput, diagSeverityFilter, diagTypeFilter, diagTableFilter, diagSessionFilter, diagIncludeAudit].forEach((el) => {
     if (el) el.addEventListener('change', () => refreshDiagnostic());
   });
 
@@ -1084,6 +1273,7 @@ function detectTablesChangesAndBeep(tables) {
     refreshTables();
     refreshSummary();
     refreshHistory();
+    refreshManager();
     refreshDiagnostic();
   });
 
@@ -1091,6 +1281,9 @@ function detectTablesChangesAndBeep(tables) {
     if (document.visibilityState === 'visible') {
       refreshTables();
       refreshSummary();
+      refreshHistory();
+      refreshManager();
+      refreshDiagnostic();
     }
   });
 
@@ -1103,11 +1296,32 @@ function detectTablesChangesAndBeep(tables) {
   if (historyDateInput && !historyDateInput.value) {
     historyDateInput.value = todayKey();
   }
+  if (managerStartDateInput && !managerStartDateInput.value) {
+    managerStartDateInput.value = historyDateInput?.value || todayKey();
+  }
+  if (managerEndDateInput && !managerEndDateInput.value) {
+    managerEndDateInput.value = managerStartDateInput?.value || historyDateInput?.value || todayKey();
+  }
+
+  if (btnHealth) {
+    btnHealth.addEventListener('click', async () => {
+      const base = getApiBase();
+      if (!base) return;
+      try {
+        const res = await fetch(`${base}/health`, { cache: 'no-store' });
+        const data = await res.json();
+        alert(`Health OK: ${JSON.stringify(data)}`);
+      } catch (err) {
+        alert(`Health KO: ${err.message || err}`);
+      }
+    });
+  }
 
   loadApiFromStorage();
   refreshTables();
   refreshSummary();
   refreshHistory();
+  refreshManager();
   refreshDiagnostic();
 
   setInterval(() => {

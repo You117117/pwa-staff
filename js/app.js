@@ -470,20 +470,32 @@ function detectTablesChangesAndBeep(tables) {
     });
   }
 
+  function normalizeManagerCollection(value) {
+    if (Array.isArray(value)) return value;
+    if (!value || typeof value !== 'object') return [];
+    const values = Object.values(value).filter(Boolean);
+    const looksLikeSingleRow = ['table', 'hour', 'sessionId', 'id', 'grossTotal', 'sessionsCount'].some((key) => Object.prototype.hasOwnProperty.call(value, key));
+    if (looksLikeSingleRow) return [value];
+    return values;
+  }
+
   function renderManager(managerData) {
+    const totals = managerData?.totals || {};
     renderKpiGrid(managerKpis, [
-      { label: 'CA période', value: `${Number(managerData?.totals?.grossTotal || 0).toFixed(2)} €` },
-      { label: 'Sessions', value: String(managerData?.totals?.sessionsCount || 0) },
-      { label: 'Anomalies', value: String(managerData?.totals?.closedAnomalyCount || 0) },
-      { label: 'Panier moyen', value: `${Number(managerData?.totals?.averageBasket || 0).toFixed(2)} €` },
-      { label: 'Durée moyenne', value: durationMinutesLabel(managerData?.totals?.averageDurationSeconds || 0) },
+      { label: 'CA période', value: `${Number(totals.grossTotal || 0).toFixed(2)} €` },
+      { label: 'Sessions', value: String(totals.sessionsCount || 0) },
+      { label: 'Actives', value: String(totals.activeCount || 0) },
+      { label: 'Clôtures OK', value: String(totals.closedNormalCount || 0) },
+      { label: 'Anomalies', value: String(totals.closedAnomalyCount || 0) },
+      { label: 'Panier moyen', value: `${Number(totals.averageBasket || 0).toFixed(2)} €` },
+      { label: 'Durée moyenne', value: durationMinutesLabel(totals.averageDurationSeconds || 0) },
       { label: 'Période', value: managerData?.period?.days > 1 ? `${managerData.period.days} j` : '1 j' },
     ]);
 
-    const byTable = Array.isArray(managerData?.byTable) ? managerData.byTable : [];
-    const byHour = Array.isArray(managerData?.byHour) ? managerData.byHour : [];
-    const recentSessions = Array.isArray(managerData?.recentSessions) ? managerData.recentSessions : [];
-    const hasData = byTable.length || byHour.length || recentSessions.length;
+    const byTable = normalizeManagerCollection(managerData?.byTable);
+    const byHour = normalizeManagerCollection(managerData?.byHour);
+    const recentSessions = normalizeManagerCollection(managerData?.recentSessions);
+    const hasData = Boolean((totals.sessionsCount || 0) > 0 || byTable.length || byHour.length || recentSessions.length);
 
     if (managerEmpty) managerEmpty.style.display = hasData ? 'none' : 'block';
     if (!hasData) {
@@ -1176,6 +1188,7 @@ function detectTablesChangesAndBeep(tables) {
       renderListState(managerByTable, 'Aucune donnée manager disponible.');
       renderListState(managerByHour, 'Aucune donnée manager disponible.');
       renderListState(managerRecentSessions, 'Aucune donnée manager disponible.');
+      if (managerKpis) managerKpis.innerHTML = '';
       if (managerEmpty) managerEmpty.style.display = 'block';
       return;
     }
@@ -1184,6 +1197,10 @@ function detectTablesChangesAndBeep(tables) {
       renderManager(managerData);
     } catch (err) {
       console.error('Erreur refreshManager', err);
+      renderListState(managerByTable, 'Erreur chargement manager. Voir console.');
+      renderListState(managerByHour, 'Erreur chargement manager. Voir console.');
+      renderListState(managerRecentSessions, 'Erreur chargement manager. Voir console.');
+      if (managerEmpty) managerEmpty.style.display = 'block';
     }
   }
 

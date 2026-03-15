@@ -343,3 +343,63 @@ select{
 @media (max-width: 1200px){
   .kpiGrid{grid-template-columns:1fr;}
 }
+
+.manager-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  margin-bottom:12px;
+}
+.manager-panel{
+  background:rgba(9,16,32,.45);
+  border:1px solid rgba(96,165,250,.12);
+  border-radius:14px;
+  padding:12px;
+}
+.manager-panel--full{margin-bottom:12px;}
+.manager-panel h4{
+  margin:0 0 10px;
+  font-size:15px;
+  color:#dbeafe;
+}
+.managerList{max-height:280px; overflow:auto;}
+.managerRow .head, .diagnosticItem .head{flex-wrap:wrap;}
+.chip-light{background:rgba(148,163,184,.16); color:#dbeafe;}
+.diagnosticPayload{
+  margin:10px 0 0;
+  padding:10px;
+  border-radius:10px;
+  background:rgba(2,6,23,.55);
+  border:1px solid rgba(96,165,250,.12);
+  color:#cbd5e1;
+  font-size:12px;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+.summaryItem--muted{
+  color:var(--muted);
+  background:rgba(15,23,42,.35);
+}
+.controls--stackable{
+  align-items:center;
+}
+.checkbox-inline{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:13px;
+  color:#cbd5e1;
+}
+.checkbox-inline input{accent-color:var(--accent);}
+.diagnosticErrors{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-bottom:12px;
+}
+@media (max-width: 1400px){
+  .layout{grid-template-columns:1fr 560px;}
+}
+@media (max-width: 1200px){
+  .manager-grid{grid-template-columns:1fr;}
+}

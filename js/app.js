@@ -50,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const TABLES_REFRESH_MS = 8000;
   const LS_KEY_API = 'staff-api';
   let latestTablesById = {};
+  window.__latestSummaryData = window.__latestSummaryData || { items: [], totals: {} };
   const refreshLocks = {
     tables: null,
     summary: null,
@@ -1054,16 +1055,6 @@ function detectTablesChangesAndBeep(tables) {
         if (window.showTableDetail) {
           window.showTableDetail(id, freshStatus);
         }
-
-        // Refresh en arrière-plan pour garder la carte de gauche fraîche sans bloquer l'ouverture du détail.
-        refreshTables().then(() => {
-          const latestMap = window.__latestTablesById || {};
-          const latestTable = latestMap[id] || null;
-          const latestStatus = (latestTable && latestTable.status) ? latestTable.status : freshStatus;
-          if (window.__currentDetailTableId === id && window.showTableDetail) {
-            window.showTableDetail(id, latestStatus);
-          }
-        }).catch((err) => console.error('Erreur refresh après ouverture détail', err));
       });
 
       tablesContainer.appendChild(card);
@@ -1184,6 +1175,7 @@ function detectTablesChangesAndBeep(tables) {
       }
       try {
         const summaryData = await fetchSummary();
+        window.__latestSummaryData = summaryData || { items: [], totals: {} };
         renderSummary(summaryData);
       } catch (err) {
         console.error('Erreur refreshSummary', err);

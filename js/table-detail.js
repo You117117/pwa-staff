@@ -315,10 +315,6 @@
     return await res.json();
   }
 
-  async function fetchTables(base) {
-    const res = await fetch(`${base}/tables`, { cache: 'no-store' });
-    return await res.json();
-  }
 
   function normalizeSummaryEntry(summaryEntry, fallbackTableId, fallbackStatus) {
     if (!summaryEntry) return null;
@@ -368,6 +364,14 @@
       closedWithAnomaly: !!summaryEntry.closedWithAnomaly || summaryEntry.closureType === 'anomaly',
       date: summaryEntry.date || null,
     };
+  }
+
+
+  function getCachedSummaryEntry(tableId, fallbackStatus) {
+    const data = window.__latestSummaryData || {};
+    const items = Array.isArray(data.items) ? data.items : Array.isArray(data.tickets) ? data.tickets : [];
+    const active = items.find((entry) => normId(entry.table) === normId(tableId) && entry.stateKind === 'active');
+    return normalizeSummaryEntry(active || null, tableId, fallbackStatus);
   }
 
   async function showTableDetail(tableId, statusHint, opts) {
@@ -447,13 +451,14 @@
       const shouldShow = !isHistoryView && currentStatus !== 'Vide';
     }
 
-    if (summaryEntry) {
-      currentStatus = summaryEntry.displayStatus || currentStatus;
-      allTickets = summaryEntry.tickets || [];
-      total = typeof summaryEntry.total === 'number' ? summaryEntry.total : 0;
-      cleared = !!summaryEntry.isClosed;
-      isHistoryView = summaryEntry.stateKind !== 'active' || !!options.historyMode;
-      durationSeconds = summaryEntry.durationSeconds;
+    const cachedSummaryEntry = summaryEntry || getCachedSummaryEntry(id, currentStatus);
+    if (cachedSummaryEntry) {
+      currentStatus = cachedSummaryEntry.displayStatus || currentStatus;
+      allTickets = cachedSummaryEntry.tickets || [];
+      total = typeof cachedSummaryEntry.total === 'number' ? cachedSummaryEntry.total : 0;
+      cleared = !!cachedSummaryEntry.isClosed;
+      isHistoryView = cachedSummaryEntry.stateKind !== 'active' || !!options.historyMode;
+      durationSeconds = cachedSummaryEntry.durationSeconds;
     }
 
     syncCloseTableVisibility();
@@ -622,20 +627,25 @@
     }
 
 
-    if (summaryEntry) {
+    if (cachedSummaryEntry) {
       info.textContent = isHistoryView
         ? `Historique (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`
         : `Session active (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`;
 
-      const metaParts = [`Ouverte à ${summaryEntry.openedTime || formatTime(summaryEntry.openedAt)}`];
-      if (summaryEntry.closedAt) metaParts.push(`Clôturée à ${summaryEntry.closedTime || formatTime(summaryEntry.closedAt)}`);
-      if (summaryEntry.durationSeconds) metaParts.push(`Durée : ${formatDuration(summaryEntry.durationSeconds)}`);
+      const metaParts = [`Ouverte à ${cachedSummaryEntry.openedTime || formatTime(cachedSummaryEntry.openedAt)}`];
+      if (cachedSummaryEntry.closedAt) metaParts.push(`Clôturée à ${cachedSummaryEntry.closedTime || formatTime(cachedSummaryEntry.closedAt)}`);
+      if (cachedSummaryEntry.durationSeconds) metaParts.push(`Durée : ${formatDuration(cachedSummaryEntry.durationSeconds)}`);
       contextMeta.textContent = metaParts.join(' · ');
     } else {
+      const tableMeta = (window.__latestTablesById || {})[id] || null;
+      currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
+      cleared = !!(tableMeta && tableMeta.cleared);
+      info.textContent = currentStatus === 'Vide' ? 'Aucune session active pour cette table.' : 'Synchronisation en cours...';
+      contextMeta.textContent = '';
+
       let summaryData;
-      let tablesData;
       try {
-        [summaryData, tablesData] = await Promise.all([fetchSummary(base), fetchTables(base)]);
+        summaryData = await fetchSummary(base);
       } catch (err) {
         if (isStaleRender()) return;
         console.error('Erreur fetch detail', err);
@@ -645,10 +655,7 @@
 
       if (isStaleRender()) return;
 
-      const tableMeta = (tablesData.tables || []).find((t) => normId(t.id) === id);
-      currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
-      cleared = !!(tableMeta && tableMeta.cleared);
-
+      window.__latestSummaryData = summaryData || { items: [], totals: {} };
       const sessionGroups = (summaryData.items || summaryData.tickets || []).filter((entry) => normId(entry.table) === id);
       const activeGroup = sessionGroups.find((entry) => entry.stateKind === 'active') || null;
 

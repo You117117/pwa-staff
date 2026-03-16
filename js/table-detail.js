@@ -171,16 +171,6 @@
     } catch (err) {
       console.error('Erreur refreshTables depuis détail', err);
     }
-    try {
-      if (window.refreshSummary) await window.refreshSummary();
-    } catch (err) {
-      console.error('Erreur refreshSummary depuis détail', err);
-    }
-    try {
-      if (window.refreshHistory) await window.refreshHistory();
-    } catch (err) {
-      console.error('Erreur refreshHistory depuis détail', err);
-    }
   }
 
   function closePanel() {
@@ -338,13 +328,23 @@
       ? summaryEntry.total
       : orderedTickets.reduce((acc, t) => acc + (typeof t.total === 'number' ? t.total : 0), 0);
 
+    const dedupedTickets = [];
+    const seenTicketKeys = new Set();
+    orderedTickets.forEach((ticket, index) => {
+      const rawKey = ticket && (ticket.id || ticket.ticketId || ticket.orderId || ticket.createdAt || ticket.time || index);
+      const key = String(rawKey || index);
+      if (seenTicketKeys.has(key)) return;
+      seenTicketKeys.add(key);
+      dedupedTickets.push(ticket);
+    });
+
     return {
       id: summaryEntry.id || summaryEntry.sessionId || null,
       table: normId(summaryEntry.table || fallbackTableId),
       tableLabel: summaryEntry.tableLabel || summaryEntry.table || fallbackTableId,
       status: summaryEntry.displayStatus || summaryEntry.status || fallbackStatus || 'Vide',
       displayStatus: summaryEntry.displayStatus || summaryEntry.status || fallbackStatus || 'Vide',
-      tickets: orderedTickets,
+      tickets: dedupedTickets,
       total,
       createdAt: summaryEntry.createdAt || summaryEntry.openedAt || (orderedTickets[0] && orderedTickets[0].createdAt) || null,
       sessionKey: summaryEntry.sessionKey || summaryEntry.sessionStartedAt || summaryEntry.openedAt || null,
@@ -392,13 +392,6 @@
     headActions.style.alignItems = 'center';
     headActions.style.gap = '8px';
 
-    const btnCloseInProgressHead = document.createElement('button');
-    btnCloseInProgressHead.textContent = 'Clôturer la table';
-    btnCloseInProgressHead.className = 'btn btn-primary';
-    btnCloseInProgressHead.style.padding = '8px 12px';
-    btnCloseInProgressHead.style.backgroundColor = '#ef4444';
-    btnCloseInProgressHead.style.display = 'none';
-
     const btnClose = document.createElement('button');
     btnClose.textContent = 'Fermer';
     btnClose.className = 'btn';
@@ -408,7 +401,6 @@
       closePanel();
     });
 
-    headActions.appendChild(btnCloseInProgressHead);
     headActions.appendChild(btnClose);
     head.appendChild(title);
     head.appendChild(headActions);
@@ -437,7 +429,6 @@
 
     function syncCloseTableVisibility() {
       const shouldShow = !isHistoryView && currentStatus !== 'Vide';
-      btnCloseInProgressHead.style.display = shouldShow ? 'inline-flex' : 'none';
     }
 
     if (summaryEntry) {
@@ -572,11 +563,6 @@
       }
     }
 
-    btnCloseInProgressHead.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await handleCloseTableAction();
-    });
-
     if (summaryEntry) {
       info.textContent = isHistoryView
         ? `Historique (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`
@@ -659,9 +645,10 @@
     actions.style.flexDirection = 'column';
     actions.style.gap = '8px';
 
-    const isActive = !isHistoryView && currentStatus !== 'Vide' && !cleared && allTickets.length > 0;
+    const canShowActions = !isHistoryView && currentStatus !== 'Vide' && !cleared;
+    const hasTickets = allTickets.length > 0;
 
-    if (isActive) {
+    if (canShowActions) {
       const btnPrint = document.createElement('button');
       btnPrint.className = 'btn btn-primary';
       btnPrint.style.width = '100%';
@@ -698,35 +685,40 @@
       }
 
       function syncPayButtonFromGlobal() {
+        btnCloseTable.style.display = 'block';
+
         if (currentStatus === 'En cours') {
           btnPay.style.display = 'none';
-          btnCloseTable.style.display = 'block';
-          syncCloseTableVisibility();
           return;
         }
 
-        btnPay.style.display = 'block';
+        btnPay.style.display = hasTickets ? 'block' : 'none';
+        if (!hasTickets) {
+          btnPay.textContent = 'Encoder en caisse';
+          btnPay.style.backgroundColor = '';
+          return;
+        }
+
         const timer = leftPayTimers[id];
         if (timer) {
           const remain = timer.until - Date.now();
           if (remain > 0) {
             btnPay.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
             btnPay.style.backgroundColor = '#f97316';
-            btnCloseTable.style.display = 'none';
-            syncCloseTableVisibility();
             return;
           }
         }
         if (currentStatus === 'Encodage caisse confirmé') {
           btnPay.textContent = 'Annuler paiement';
           btnPay.style.backgroundColor = '#f97316';
-          btnCloseTable.style.display = 'none';
         } else {
           btnPay.textContent = 'Encoder en caisse';
           btnPay.style.backgroundColor = '';
-          btnCloseTable.style.display = 'none';
         }
-        syncCloseTableVisibility();
+      }
+
+      if (!hasTickets) {
+        btnPrint.style.display = 'none';
       }
 
       syncPrintButtonFromGlobal();

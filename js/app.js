@@ -65,15 +65,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return refreshLocks[key];
   }
 
-  function refreshHeavyPanels(options = {}) {
-    const force = !!options.force;
-    const nowTs = Date.now();
-    if (!force && (nowTs - lastHeavyRefreshAt) < 15000) return;
-    lastHeavyRefreshAt = nowTs;
-    refreshSummary();
-    setTimeout(() => refreshHistory(), 100);
-    setTimeout(() => refreshManager(), 250);
-    setTimeout(() => refreshDiagnostic(), 400);
+  function refreshHeavyPanels() {
+    return Promise.resolve();
   }
 
   // --- Utils
@@ -1182,82 +1175,16 @@ function detectTablesChangesAndBeep(tables) {
     });
   }
   async function refreshSummary() {
-    return coalesceRefresh('summary', async () => {
-    const base = getApiBase();
-    if (!base) {
-      if (summaryContainer) summaryContainer.innerHTML = '';
-      if (summaryEmpty) summaryEmpty.style.display = 'block';
-      return;
-    }
-    try {
-      const summaryData = await fetchSummary();
-      renderSummary(summaryData);
-    } catch (err) {
-      console.error('Erreur refreshSummary', err);
-    }
-  
-    });
+    return null;
   }
   async function refreshHistory() {
-    return coalesceRefresh('history', async () => {
-    const base = getApiBase();
-    if (!base) {
-      if (historyList) historyList.innerHTML = '';
-      if (historyEmpty) historyEmpty.style.display = 'block';
-      return;
-    }
-    try {
-      const historyData = await fetchHistory();
-      renderHistory(historyData);
-    } catch (err) {
-      console.error('Erreur refreshHistory', err);
-    }
-  
-    });
+    return null;
   }
   async function refreshManager() {
-    return coalesceRefresh('manager', async () => {
-    const base = getApiBase();
-    if (!base) {
-      renderListState(managerByTable, 'Aucune donnée manager disponible.');
-      renderListState(managerByHour, 'Aucune donnée manager disponible.');
-      renderListState(managerRecentSessions, 'Aucune donnée manager disponible.');
-      if (managerKpis) managerKpis.innerHTML = '';
-      if (managerEmpty) managerEmpty.style.display = 'block';
-      return;
-    }
-    try {
-      const managerData = await fetchManagerSummary();
-      renderManager(managerData);
-    } catch (err) {
-      console.error('Erreur refreshManager', err);
-      renderListState(managerByTable, 'Erreur chargement manager. Voir console.');
-      renderListState(managerByHour, 'Erreur chargement manager. Voir console.');
-      renderListState(managerRecentSessions, 'Erreur chargement manager. Voir console.');
-      if (managerEmpty) managerEmpty.style.display = 'block';
-    }
-  
-    });
+    return null;
   }
   async function refreshDiagnostic() {
-    return coalesceRefresh('diagnostic', async () => {
-    const base = getApiBase();
-    if (!base) {
-      if (diagnosticList) diagnosticList.innerHTML = '';
-      if (diagnosticEmpty) diagnosticEmpty.style.display = 'block';
-      return;
-    }
-    try {
-      const [overviewData, eventsData] = await Promise.all([
-        fetchDiagnosticOverview(),
-        fetchDiagnosticEvents(),
-      ]);
-      renderDiagnostic(overviewData, eventsData);
-    } catch (err) {
-      console.error('Erreur refreshDiagnostic', err);
-    }
-  
-    });
+    return null;
   }
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
@@ -1269,7 +1196,7 @@ function detectTablesChangesAndBeep(tables) {
     btnSaveApi.addEventListener('click', () => {
       saveApiToStorage();
       refreshTables();
-      refreshHeavyPanels({ force: true });
+
     });
   }
 
@@ -1281,66 +1208,11 @@ function detectTablesChangesAndBeep(tables) {
 
   if (btnRefreshSummary) {
     btnRefreshSummary.addEventListener('click', () => {
-      refreshHeavyPanels({ force: true });
+
     });
   }
 
-  if (btnRefreshHistory) {
-    btnRefreshHistory.addEventListener('click', () => {
-      refreshHistory();
-    });
-  }
 
-  if (btnRefreshManager) {
-    btnRefreshManager.addEventListener('click', () => {
-      refreshManager();
-    });
-  }
-
-  if (btnRefreshDiagnostic) {
-    btnRefreshDiagnostic.addEventListener('click', () => {
-      refreshDiagnostic();
-    });
-  }
-
-  [historyDateInput, historyTableFilter, historyTypeFilter].forEach((el) => {
-    if (el) el.addEventListener('change', () => refreshHistory());
-  });
-  [managerStartDateInput, managerEndDateInput, managerTableFilter].forEach((el) => {
-    if (el) el.addEventListener('change', () => refreshManager());
-  });
-  [historyDateInput, diagSeverityFilter, diagTypeFilter, diagTableFilter, diagSessionFilter, diagIncludeAudit].forEach((el) => {
-    if (el) el.addEventListener('change', () => refreshDiagnostic());
-  });
-
-  // On garde un refresh léger des tables uniquement. Pas de spam sur /summary.
-  window.addEventListener('focus', () => {
-    refreshTables();
-    refreshHeavyPanels();
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      refreshTables();
-      refreshHeavyPanels();
-    }
-  });
-
-  if (filterSelect) {
-    filterSelect.addEventListener('change', () => {
-      refreshTables();
-    });
-  }
-
-  if (historyDateInput && !historyDateInput.value) {
-    historyDateInput.value = todayKey();
-  }
-  if (managerStartDateInput && !managerStartDateInput.value) {
-    managerStartDateInput.value = historyDateInput?.value || todayKey();
-  }
-  if (managerEndDateInput && !managerEndDateInput.value) {
-    managerEndDateInput.value = managerStartDateInput?.value || historyDateInput?.value || todayKey();
-  }
 
   if (btnHealth) {
     btnHealth.addEventListener('click', async () => {
@@ -1358,7 +1230,6 @@ function detectTablesChangesAndBeep(tables) {
 
   loadApiFromStorage();
   refreshTables();
-  refreshHeavyPanels({ force: true });
 
   setInterval(() => {
     refreshTables();

@@ -6,9 +6,8 @@
   <title>Resto QR — Staff</title>
   <link rel="manifest" href="./manifest.json" />
   <meta name="theme-color" content="#0b1220" />
-  <link rel="stylesheet" href="./assets/style.css?v=20260313-8" />
+  <link rel="stylesheet" href="./assets/style.css?v=20260316-1" />
 </head>
-
 <body>
   <h1>Resto QR — Staff</h1>
 
@@ -26,33 +25,30 @@
         <div class="controls">
           <select id="filterTables">
             <option value="Toutes">Toutes</option>
-            <option value="T1">T1</option>
-            <option value="T2">T2</option>
-            <option value="T3">T3</option>
-            <option value="T4">T4</option>
-            <option value="T5">T5</option>
-            <option value="T6">T6</option>
-            <option value="T7">T7</option>
-            <option value="T8">T8</option>
-            <option value="T9">T9</option>
-            <option value="T10">T10</option>
+            <option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option><option value="T4">T4</option><option value="T5">T5</option>
+            <option value="T6">T6</option><option value="T7">T7</option><option value="T8">T8</option><option value="T9">T9</option><option value="T10">T10</option>
           </select>
           <button id="btnRefreshTables">Rafraîchir</button>
         </div>
       </div>
-
       <div id="tablesEmpty" class="empty">Aucune table</div>
       <div id="tables" class="tables"></div>
     </div>
 
+    <div class="summary-section">
+      <div class="section-head">
+        <h2>Résumé du jour</h2>
+        <button id="btnRefreshSummary">Rafraîchir</button>
+      </div>
+      <div id="summaryKpis" class="kpiGrid"></div>
+      <div id="summaryEmpty" class="empty">Aucune session aujourd’hui.</div>
+      <div id="summary" class="summary"></div>
+    </div>
   </div>
 
-
-
   <script src="./js/bridge-orders-staff.js"></script>
-  <script src="./js/app.js?v=20260313-8"></script>
+  <script src="./js/app.js?v=20260316-1"></script>
   <script src="./js/table-status.js"></script>
-  <script src="./js/table-detail.js?v=20260313-7"></script>
-<!-- workflow-pos-v2 -->
+  <script src="./js/table-detail.js?v=20260316-1"></script>
 </body>
 </html>

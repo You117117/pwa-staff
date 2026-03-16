@@ -63,7 +63,13 @@ button{
 button:hover{filter:brightness(1.05)}
 
 .layout{
-  display:block;
+  display:grid;
+  grid-template-columns:1fr 360px;
+  gap:14px;
+  align-items:start;
+}
+@media (max-width:1100px){
+  .layout{grid-template-columns:1fr}
 }
 
 .tables-section,

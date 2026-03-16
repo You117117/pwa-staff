@@ -387,6 +387,18 @@
     title.style.fontWeight = '600';
     title.style.color = '#f9fafb';
 
+    const headActions = document.createElement('div');
+    headActions.style.display = 'flex';
+    headActions.style.alignItems = 'center';
+    headActions.style.gap = '8px';
+
+    const btnCloseInProgressHead = document.createElement('button');
+    btnCloseInProgressHead.textContent = 'Clôturer la table';
+    btnCloseInProgressHead.className = 'btn btn-primary';
+    btnCloseInProgressHead.style.padding = '8px 12px';
+    btnCloseInProgressHead.style.backgroundColor = '#ef4444';
+    btnCloseInProgressHead.style.display = 'none';
+
     const btnClose = document.createElement('button');
     btnClose.textContent = 'Fermer';
     btnClose.className = 'btn';
@@ -396,8 +408,10 @@
       closePanel();
     });
 
+    headActions.appendChild(btnCloseInProgressHead);
+    headActions.appendChild(btnClose);
     head.appendChild(title);
-    head.appendChild(btnClose);
+    head.appendChild(headActions);
     panel.appendChild(head);
 
     const contextMeta = document.createElement('div');
@@ -421,6 +435,11 @@
     let isHistoryView = !!options.historyMode;
     let durationSeconds = null;
 
+    function syncManualInProgressCloseVisibility() {
+      const shouldShow = !isHistoryView && currentStatus === 'En cours';
+      btnCloseInProgressHead.style.display = shouldShow ? 'inline-flex' : 'none';
+    }
+
     if (summaryEntry) {
       currentStatus = summaryEntry.displayStatus || currentStatus;
       allTickets = summaryEntry.tickets || [];
@@ -428,6 +447,49 @@
       cleared = !!summaryEntry.isClosed;
       isHistoryView = summaryEntry.stateKind !== 'active' || !!options.historyMode;
       durationSeconds = summaryEntry.durationSeconds;
+    }
+
+    syncManualInProgressCloseVisibility();
+
+    async function handleCloseInProgress() {
+      const apiBase = getApiBase();
+      if (!apiBase) return;
+
+      const confirmed = window.confirm('Clôturer cette table en cours et la remettre à vide ?');
+      if (!confirmed) return;
+
+      try {
+        const closeRes = await fetch(`${apiBase}/close-in-progress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: id }),
+        });
+        const closeJson = await closeRes.json().catch(() => ({}));
+        if (!closeRes.ok || closeJson.ok === false) {
+          window.alert(closeJson.error?.message || closeJson.error || 'Échec clôture de table en cours');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 180));
+      } catch (err) {
+        console.error('Erreur clôture (close-in-progress)', err);
+        window.alert('Erreur réseau pendant la clôture de table en cours');
+        return;
+      } finally {
+        await refreshStaffViews();
+        const latestMap = window.__latestTablesById || {};
+        const latestTable = latestMap[id] || null;
+        const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
+        if (latestStatus === 'Vide') closePanel();
+        else showTableDetail(id, latestStatus);
+      }
+    }
+
+    btnCloseInProgressHead.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await handleCloseInProgress();
+    });
+
+    if (summaryEntry) {
       info.textContent = isHistoryView
         ? `Historique (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`
         : `Session active (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`;
@@ -527,6 +589,7 @@
       btnCloseTable.style.width = '100%';
       btnCloseTable.style.fontSize = '14px';
       btnCloseTable.textContent = 'Clôturer la table';
+      btnCloseTable.dataset.role = 'close-in-progress-footer';
       btnCloseTable.style.backgroundColor = '#ef4444';
 
       function syncPrintButtonFromGlobal() {
@@ -550,6 +613,7 @@
         if (currentStatus === 'En cours') {
           btnPay.style.display = 'none';
           btnCloseTable.style.display = 'block';
+          syncManualInProgressCloseVisibility();
           return;
         }
 
@@ -561,6 +625,7 @@
             btnPay.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
             btnPay.style.backgroundColor = '#f97316';
             btnCloseTable.style.display = 'none';
+            syncManualInProgressCloseVisibility();
             return;
           }
         }
@@ -571,8 +636,9 @@
         } else {
           btnPay.textContent = 'Encoder en caisse';
           btnPay.style.backgroundColor = '';
-          btnCloseTable.style.display = 'block';
+          btnCloseTable.style.display = 'none';
         }
+        syncManualInProgressCloseVisibility();
       }
 
       syncPrintButtonFromGlobal();
@@ -605,33 +671,7 @@
         if (!apiBase) return;
 
         if (currentStatus === 'En cours') {
-          const confirmed = window.confirm('Clôturer cette table en cours et la remettre à vide ?');
-          if (!confirmed) return;
-
-          try {
-            const closeRes = await fetch(`${apiBase}/close-in-progress`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ table: id }),
-            });
-            const closeJson = await closeRes.json().catch(() => ({}));
-            if (!closeRes.ok || closeJson.ok === false) {
-              window.alert(closeJson.error?.message || closeJson.error || 'Échec clôture de table en cours');
-              return;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 180));
-          } catch (err) {
-            console.error('Erreur clôture (close-in-progress)', err);
-            window.alert('Erreur réseau pendant la clôture de table en cours');
-            return;
-          } finally {
-            await refreshStaffViews();
-            const latestMap = window.__latestTablesById || {};
-            const latestTable = latestMap[id] || null;
-            const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
-            if (latestStatus === 'Vide') closePanel();
-            else showTableDetail(id, latestStatus);
-          }
+          await handleCloseInProgress();
           return;
         }
 

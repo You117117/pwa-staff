@@ -435,8 +435,8 @@
     let isHistoryView = !!options.historyMode;
     let durationSeconds = null;
 
-    function syncManualInProgressCloseVisibility() {
-      const shouldShow = !isHistoryView && currentStatus === 'En cours';
+    function syncCloseTableVisibility() {
+      const shouldShow = !isHistoryView && currentStatus !== 'Vide';
       btnCloseInProgressHead.style.display = shouldShow ? 'inline-flex' : 'none';
     }
 
@@ -449,7 +449,7 @@
       durationSeconds = summaryEntry.durationSeconds;
     }
 
-    syncManualInProgressCloseVisibility();
+    syncCloseTableVisibility();
 
     async function handleCloseInProgress() {
       const apiBase = getApiBase();
@@ -484,9 +484,97 @@
       }
     }
 
+    async function handleCloseTableAction() {
+      const apiBase = getApiBase();
+      if (!apiBase) return;
+
+      if (currentStatus === 'En cours') {
+        await handleCloseInProgress();
+        return;
+      }
+
+      let closureType = 'normal';
+      if (currentStatus !== 'Encodage caisse confirmé') {
+        const answer = await showStaffChoiceModal({
+          title: 'Clôture de table',
+          message:
+            'L’encodage dans la caisse a-t-il été effectué ?\n\nOui = confirmation caisse puis clôture normale.\nNon = clôture avec anomalie.',
+          confirmLabel: 'Oui',
+          dangerLabel: 'Non',
+          cancelLabel: 'Annuler',
+        });
+        if (!answer) return;
+
+        if (answer === 'yes') {
+          try {
+            const confirmRes = await fetch(`${apiBase}/confirm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+            const confirmJson = await confirmRes.json().catch(() => ({}));
+            if (!confirmRes.ok || confirmJson.ok === false) {
+              window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
+              return;
+            }
+          } catch (err) {
+            console.error('Erreur /confirm (clôture détail)', err);
+            window.alert('Erreur réseau pendant la confirmation caisse');
+            return;
+          }
+          closureType = 'normal';
+        } else {
+          closureType = 'anomaly';
+        }
+      }
+
+      try {
+        const closePayload =
+          closureType === 'anomaly'
+            ? {
+                table: id,
+                closureType: 'anomaly',
+                answer: 'NON',
+                closedWithException: true,
+                posConfirmed: false,
+                reason: 'POS_NON_CONFIRME',
+                note: 'Clôture avec anomalie depuis le panneau détail staff',
+              }
+            : {
+                table: id,
+                closureType: 'normal',
+                answer: 'OUI',
+                posConfirmed: true,
+              };
+
+        const closeRes = await fetch(`${apiBase}/close-table`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(closePayload),
+        });
+        const closeJson = await closeRes.json().catch(() => ({}));
+        if (!closeRes.ok || closeJson.ok === false) {
+          window.alert(closeJson.error || 'Échec clôture de table');
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 180));
+      } catch (err) {
+        console.error('Erreur clôture (close-table)', err);
+        window.alert('Erreur réseau pendant la clôture de table');
+        return;
+      } finally {
+        await refreshStaffViews();
+        const latestMap = window.__latestTablesById || {};
+        const latestTable = latestMap[id] || null;
+        const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
+        if (latestStatus === 'Vide') closePanel();
+        else showTableDetail(id, latestStatus);
+      }
+    }
+
     btnCloseInProgressHead.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await handleCloseInProgress();
+      await handleCloseTableAction();
     });
 
     if (summaryEntry) {
@@ -613,7 +701,7 @@
         if (currentStatus === 'En cours') {
           btnPay.style.display = 'none';
           btnCloseTable.style.display = 'block';
-          syncManualInProgressCloseVisibility();
+          syncCloseTableVisibility();
           return;
         }
 
@@ -625,7 +713,7 @@
             btnPay.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
             btnPay.style.backgroundColor = '#f97316';
             btnCloseTable.style.display = 'none';
-            syncManualInProgressCloseVisibility();
+            syncCloseTableVisibility();
             return;
           }
         }
@@ -638,7 +726,7 @@
           btnPay.style.backgroundColor = '';
           btnCloseTable.style.display = 'none';
         }
-        syncManualInProgressCloseVisibility();
+        syncCloseTableVisibility();
       }
 
       syncPrintButtonFromGlobal();
@@ -667,91 +755,7 @@
 
       btnCloseTable.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const apiBase = getApiBase();
-        if (!apiBase) return;
-
-        if (currentStatus === 'En cours') {
-          await handleCloseInProgress();
-          return;
-        }
-
-        let closureType = 'normal';
-        if (currentStatus !== 'Encodage caisse confirmé') {
-          const answer = await showStaffChoiceModal({
-            title: 'Clôture de table',
-            message:
-              'L’encodage dans la caisse a-t-il été effectué ?\n\nOui = confirmation caisse puis clôture normale.\nNon = clôture avec anomalie.',
-            confirmLabel: 'Oui',
-            dangerLabel: 'Non',
-            cancelLabel: 'Annuler',
-          });
-          if (!answer) return;
-
-          if (answer === 'yes') {
-            try {
-              const confirmRes = await fetch(`${apiBase}/confirm`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ table: id }),
-              });
-              const confirmJson = await confirmRes.json().catch(() => ({}));
-              if (!confirmRes.ok || confirmJson.ok === false) {
-                window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
-                return;
-              }
-            } catch (err) {
-              console.error('Erreur /confirm (clôture détail)', err);
-              window.alert('Erreur réseau pendant la confirmation caisse');
-              return;
-            }
-            closureType = 'normal';
-          } else {
-            closureType = 'anomaly';
-          }
-        }
-
-        try {
-          const closePayload =
-            closureType === 'anomaly'
-              ? {
-                  table: id,
-                  closureType: 'anomaly',
-                  answer: 'NON',
-                  closedWithException: true,
-                  posConfirmed: false,
-                  reason: 'POS_NON_CONFIRME',
-                  note: 'Clôture avec anomalie depuis le panneau détail staff',
-                }
-              : {
-                  table: id,
-                  closureType: 'normal',
-                  answer: 'OUI',
-                  posConfirmed: true,
-                };
-
-          const closeRes = await fetch(`${apiBase}/close-table`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(closePayload),
-          });
-          const closeJson = await closeRes.json().catch(() => ({}));
-          if (!closeRes.ok || closeJson.ok === false) {
-            window.alert(closeJson.error || 'Échec clôture de table');
-            return;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 180));
-        } catch (err) {
-          console.error('Erreur clôture (close-table)', err);
-          window.alert('Erreur réseau pendant la clôture de table');
-          return;
-        } finally {
-          await refreshStaffViews();
-          const latestMap = window.__latestTablesById || {};
-          const latestTable = latestMap[id] || null;
-          const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
-          if (latestStatus === 'Vide') closePanel();
-          else showTableDetail(id, latestStatus);
-        }
+        await handleCloseTableAction();
       });
 
       actions.appendChild(btnPrint);

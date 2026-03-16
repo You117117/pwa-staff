@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSaveApi = document.querySelector('#btnSaveApi');
   const btnRefreshTables = document.querySelector('#btnRefreshTables');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
+  const btnToggleSummary = document.querySelector('#btnToggleSummary');
 
   const tablesContainer = document.querySelector('#tables');
   const tablesEmpty = document.querySelector('#tablesEmpty');
@@ -13,7 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const summaryContainer = document.querySelector('#summary');
   const summaryEmpty = document.querySelector('#summaryEmpty');
-  const summaryKpis = document.querySelector('#summaryKpis');
+  const summarySection = document.querySelector('#summarySection');
+  const summaryBody = document.querySelector('#summaryBody');
 
   const historyList = document.querySelector('#historyList');
   const historyEmpty = document.querySelector('#historyEmpty');
@@ -381,15 +383,6 @@ function detectTablesChangesAndBeep(tables) {
 
     const totals = summaryData?.totals || {};
     const items = Array.isArray(summaryData?.items) ? summaryData.items : Array.isArray(summaryData?.tickets) ? summaryData.tickets : [];
-
-    renderKpiGrid(summaryKpis, [
-      { label: 'CA sessions', value: `${Number(totals.grossTotal || 0).toFixed(2)} €` },
-      { label: 'Sessions', value: String(totals.sessionsCount || 0) },
-      { label: 'Actives', value: String(totals.activeCount || 0) },
-      { label: 'Anomalies', value: String(totals.closedAnomalyCount || 0) },
-      { label: 'Panier moyen', value: `${Number(totals.averageBasket || 0).toFixed(2)} €` },
-      { label: 'Durée moyenne', value: `${Math.round(Number(totals.averageDurationSeconds || 0) / 60)} min` },
-    ]);
 
     if (!items.length) {
       if (summaryEmpty) summaryEmpty.style.display = 'block';
@@ -1174,12 +1167,18 @@ function detectTablesChangesAndBeep(tables) {
   
     });
   }
+  function updateSummaryVisibility(isOpen) {
+    if (!summarySection || !summaryBody || !btnToggleSummary) return;
+    summarySection.classList.toggle('collapsed', !isOpen);
+    summaryBody.hidden = !isOpen;
+    btnToggleSummary.textContent = isOpen ? 'Masquer' : 'Afficher';
+  }
+
   async function refreshSummary() {
     return coalesceRefresh('summary', async () => {
       const base = getApiBase();
       if (!base) {
         if (summaryContainer) summaryContainer.innerHTML = '';
-        if (summaryKpis) summaryKpis.innerHTML = '';
         if (summaryEmpty) summaryEmpty.style.display = 'block';
         return;
       }
@@ -1217,6 +1216,14 @@ function detectTablesChangesAndBeep(tables) {
   if (btnRefreshSummary) {
     btnRefreshSummary.addEventListener('click', () => {
       refreshSummary();
+    });
+  }
+
+  if (btnToggleSummary) {
+    updateSummaryVisibility(false);
+    btnToggleSummary.addEventListener('click', () => {
+      const isCollapsed = summarySection ? summarySection.classList.contains('collapsed') : true;
+      updateSummaryVisibility(isCollapsed);
     });
   }
 

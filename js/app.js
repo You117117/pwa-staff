@@ -45,9 +45,36 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRefreshDiagnostic = document.querySelector('#btnRefreshDiagnostic');
   const btnHealth = document.querySelector('#btnHealth');
 
-  const TABLES_REFRESH_MS = 2000;
+  const TABLES_REFRESH_MS = 8000;
   const LS_KEY_API = 'staff-api';
   let latestTablesById = {};
+  const refreshLocks = {
+    tables: null,
+    summary: null,
+    history: null,
+    manager: null,
+    diagnostic: null,
+  };
+  let lastHeavyRefreshAt = 0;
+
+  function coalesceRefresh(key, factory) {
+    if (refreshLocks[key]) return refreshLocks[key];
+    refreshLocks[key] = Promise.resolve().then(factory).finally(() => {
+      refreshLocks[key] = null;
+    });
+    return refreshLocks[key];
+  }
+
+  function refreshHeavyPanels(options = {}) {
+    const force = !!options.force;
+    const nowTs = Date.now();
+    if (!force && (nowTs - lastHeavyRefreshAt) < 15000) return;
+    lastHeavyRefreshAt = nowTs;
+    refreshSummary();
+    setTimeout(() => refreshHistory(), 100);
+    setTimeout(() => refreshManager(), 250);
+    setTimeout(() => refreshDiagnostic(), 400);
+  }
 
   // --- Utils
 
@@ -1130,6 +1157,7 @@ function detectTablesChangesAndBeep(tables) {
   }
 
   async function refreshTables() {
+    return coalesceRefresh('tables', async () => {
     const base = getApiBase();
     if (!base) {
       if (tablesContainer) tablesContainer.innerHTML = '';
@@ -1150,9 +1178,11 @@ function detectTablesChangesAndBeep(tables) {
     } catch (err) {
       console.error('Erreur refreshTables', err);
     }
+  
+    });
   }
-
   async function refreshSummary() {
+    return coalesceRefresh('summary', async () => {
     const base = getApiBase();
     if (!base) {
       if (summaryContainer) summaryContainer.innerHTML = '';
@@ -1165,9 +1195,11 @@ function detectTablesChangesAndBeep(tables) {
     } catch (err) {
       console.error('Erreur refreshSummary', err);
     }
+  
+    });
   }
-
   async function refreshHistory() {
+    return coalesceRefresh('history', async () => {
     const base = getApiBase();
     if (!base) {
       if (historyList) historyList.innerHTML = '';
@@ -1180,9 +1212,11 @@ function detectTablesChangesAndBeep(tables) {
     } catch (err) {
       console.error('Erreur refreshHistory', err);
     }
+  
+    });
   }
-
   async function refreshManager() {
+    return coalesceRefresh('manager', async () => {
     const base = getApiBase();
     if (!base) {
       renderListState(managerByTable, 'Aucune donnée manager disponible.');
@@ -1202,9 +1236,11 @@ function detectTablesChangesAndBeep(tables) {
       renderListState(managerRecentSessions, 'Erreur chargement manager. Voir console.');
       if (managerEmpty) managerEmpty.style.display = 'block';
     }
+  
+    });
   }
-
   async function refreshDiagnostic() {
+    return coalesceRefresh('diagnostic', async () => {
     const base = getApiBase();
     if (!base) {
       if (diagnosticList) diagnosticList.innerHTML = '';
@@ -1220,8 +1256,9 @@ function detectTablesChangesAndBeep(tables) {
     } catch (err) {
       console.error('Erreur refreshDiagnostic', err);
     }
+  
+    });
   }
-
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
   window.refreshHistory = refreshHistory;
@@ -1232,13 +1269,7 @@ function detectTablesChangesAndBeep(tables) {
     btnSaveApi.addEventListener('click', () => {
       saveApiToStorage();
       refreshTables();
-      refreshSummary();
-      refreshHistory();
-      refreshManager();
-      refreshDiagnostic();
-      refreshHistory();
-      refreshManager();
-      refreshDiagnostic();
+      refreshHeavyPanels({ force: true });
     });
   }
 
@@ -1250,10 +1281,7 @@ function detectTablesChangesAndBeep(tables) {
 
   if (btnRefreshSummary) {
     btnRefreshSummary.addEventListener('click', () => {
-      refreshSummary();
-      refreshHistory();
-      refreshManager();
-      refreshDiagnostic();
+      refreshHeavyPanels({ force: true });
     });
   }
 
@@ -1288,19 +1316,13 @@ function detectTablesChangesAndBeep(tables) {
   // On garde un refresh léger des tables uniquement. Pas de spam sur /summary.
   window.addEventListener('focus', () => {
     refreshTables();
-    refreshSummary();
-    refreshHistory();
-    refreshManager();
-    refreshDiagnostic();
+    refreshHeavyPanels();
   });
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       refreshTables();
-      refreshSummary();
-      refreshHistory();
-      refreshManager();
-      refreshDiagnostic();
+      refreshHeavyPanels();
     }
   });
 
@@ -1336,10 +1358,7 @@ function detectTablesChangesAndBeep(tables) {
 
   loadApiFromStorage();
   refreshTables();
-  refreshSummary();
-  refreshHistory();
-  refreshManager();
-  refreshDiagnostic();
+  refreshHeavyPanels({ force: true });
 
   setInterval(() => {
     refreshTables();

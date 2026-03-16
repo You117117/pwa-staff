@@ -462,8 +462,14 @@
       const apiBase = getApiBase();
       if (!apiBase) return;
 
-      const confirmed = window.confirm('Clôturer cette table en cours et la remettre à vide ?');
-      if (!confirmed) return;
+      const answer = await showStaffChoiceModal({
+        title: 'Clôturer la table',
+        message: 'Clôturer cette table en cours et la remettre à vide ?',
+        confirmLabel: 'Oui',
+        dangerLabel: 'Non',
+        cancelLabel: 'Annuler',
+      });
+      if (!answer || answer === 'no') return;
 
       try {
         const closeRes = await fetch(`${apiBase}/close-in-progress`, {
@@ -816,7 +822,7 @@
         const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-print`);
         if (!leftBtn) return;
         leftBtn.click();
-        window.setTimeout(() => closePanelIfStillCurrent(id), 2000);
+        window.setTimeout(() => closePanelIfStillCurrent(id), 5000);
       });
 
       btnPay.addEventListener('click', (e) => {

@@ -180,6 +180,12 @@
     window.__currentDetailTableId = null;
   }
 
+  function closePanelIfStillCurrent(tableId) {
+    if ((window.__currentDetailTableId || null) === tableId) {
+      closePanel();
+    }
+  }
+
   function makeProductLines(ticket) {
     const src = Array.isArray(ticket.items)
       ? ticket.items
@@ -808,13 +814,19 @@
       btnPrint.addEventListener('click', (e) => {
         e.stopPropagation();
         const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-print`);
-        if (leftBtn) leftBtn.click();
+        if (!leftBtn) return;
+        leftBtn.click();
+        window.setTimeout(() => closePanelIfStillCurrent(id), 2000);
       });
 
       btnPay.addEventListener('click', (e) => {
         e.stopPropagation();
         const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
-        if (leftBtn) leftBtn.click();
+        if (!leftBtn) return;
+        leftBtn.click();
+        if (currentStatus !== 'En cours' && hasTickets) {
+          window.setTimeout(() => closePanelIfStillCurrent(id), 5000);
+        }
       });
 
       btnCloseTable.addEventListener('click', async (e) => {

@@ -547,6 +547,13 @@
       }
 
       function syncPayButtonFromGlobal() {
+        if (currentStatus === 'En cours') {
+          btnPay.style.display = 'none';
+          btnCloseTable.style.display = 'block';
+          return;
+        }
+
+        btnPay.style.display = 'block';
         const timer = leftPayTimers[id];
         if (timer) {
           const remain = timer.until - Date.now();
@@ -596,6 +603,37 @@
         e.stopPropagation();
         const apiBase = getApiBase();
         if (!apiBase) return;
+
+        if (currentStatus === 'En cours') {
+          const confirmed = window.confirm('Clôturer cette table en cours et la remettre à vide ?');
+          if (!confirmed) return;
+
+          try {
+            const closeRes = await fetch(`${apiBase}/close-in-progress`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+            const closeJson = await closeRes.json().catch(() => ({}));
+            if (!closeRes.ok || closeJson.ok === false) {
+              window.alert(closeJson.error?.message || closeJson.error || 'Échec clôture de table en cours');
+              return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 180));
+          } catch (err) {
+            console.error('Erreur clôture (close-in-progress)', err);
+            window.alert('Erreur réseau pendant la clôture de table en cours');
+            return;
+          } finally {
+            await refreshStaffViews();
+            const latestMap = window.__latestTablesById || {};
+            const latestTable = latestMap[id] || null;
+            const latestStatus = latestTable && latestTable.status ? latestTable.status : currentStatus;
+            if (latestStatus === 'Vide') closePanel();
+            else showTableDetail(id, latestStatus);
+          }
+          return;
+        }
 
         let closureType = 'normal';
         if (currentStatus !== 'Encodage caisse confirmé') {

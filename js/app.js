@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRefreshDiagnostic = document.querySelector('#btnRefreshDiagnostic');
   const btnHealth = document.querySelector('#btnHealth');
 
-  const TABLES_REFRESH_MS = 8000;
+  const SSE_FALLBACK_REFRESH_MS = 60000;
   const LS_KEY_API = 'staff-api';
   let latestTablesById = {};
   window.__latestSummaryData = window.__latestSummaryData || { items: [], totals: {} };
@@ -59,6 +59,10 @@ document.addEventListener('DOMContentLoaded', () => {
     diagnostic: null,
   };
   let lastHeavyRefreshAt = 0;
+  let staffEventSource = null;
+  let staffSseReconnectTimer = null;
+  let staffSseConnected = false;
+  let lastStaffRealtimeRefreshAt = 0;
 
   function coalesceRefresh(key, factory) {
     if (refreshLocks[key]) return refreshLocks[key];
@@ -70,6 +74,69 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function refreshHeavyPanels() {
     return Promise.resolve(refreshSummary());
+  }
+
+  async function refreshStaffSnapshot() {
+    await Promise.all([refreshTables(), refreshSummary()]);
+  }
+
+  function scheduleStaffRealtimeRefresh(reason = 'changed') {
+    const nowTs = Date.now();
+    if (nowTs - lastStaffRealtimeRefreshAt < 800) return;
+    lastStaffRealtimeRefreshAt = nowTs;
+    refreshStaffSnapshot().catch((err) => console.error('Erreur refresh temps réel staff', reason, err));
+  }
+
+  function disconnectStaffSse() {
+    if (staffEventSource) {
+      try { staffEventSource.close(); } catch {}
+      staffEventSource = null;
+    }
+    staffSseConnected = false;
+    if (staffSseReconnectTimer) {
+      clearTimeout(staffSseReconnectTimer);
+      staffSseReconnectTimer = null;
+    }
+  }
+
+  function connectStaffSse() {
+    const base = getApiBase();
+    if (!base || typeof window.EventSource !== 'function') return;
+
+    disconnectStaffSse();
+
+    const url = `${base}/events/stream`;
+    const es = new EventSource(url);
+    staffEventSource = es;
+
+    es.addEventListener('connected', () => {
+      staffSseConnected = true;
+    });
+
+    es.addEventListener('table_updated', () => {
+      scheduleStaffRealtimeRefresh('table_updated');
+    });
+
+    es.addEventListener('summary_updated', () => {
+      scheduleStaffRealtimeRefresh('summary_updated');
+    });
+
+    es.addEventListener('ping', () => {
+      staffSseConnected = true;
+    });
+
+    es.onerror = () => {
+      if (staffEventSource !== es) return;
+      disconnectStaffSse();
+      staffSseReconnectTimer = setTimeout(async () => {
+        try {
+          await refreshStaffSnapshot();
+        } catch (err) {
+          console.error('Erreur resync snapshot SSE', err);
+        }
+        connectStaffSse();
+      }, 3000);
+    };
   }
 
   // --- Utils
@@ -1196,6 +1263,7 @@ function detectTablesChangesAndBeep(tables) {
       saveApiToStorage();
       refreshTables();
       refreshSummary();
+      connectStaffSse();
     });
   }
 
@@ -1236,11 +1304,22 @@ function detectTablesChangesAndBeep(tables) {
   }
 
   loadApiFromStorage();
-  refreshTables();
-  refreshSummary();
+  refreshStaffSnapshot();
+  connectStaffSse();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshStaffSnapshot();
+      if (!staffSseConnected) connectStaffSse();
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    disconnectStaffSse();
+  });
 
   setInterval(() => {
-    refreshTables();
-    refreshSummary();
-  }, TABLES_REFRESH_MS);
+    refreshStaffSnapshot();
+    if (!staffSseConnected) connectStaffSse();
+  }, SSE_FALLBACK_REFRESH_MS);
 });

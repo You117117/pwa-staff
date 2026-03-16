@@ -35,14 +35,18 @@
       <div id="tables" class="tables"></div>
     </div>
 
-    <div class="summary-section">
+    <div class="summary-section collapsed" id="summarySection">
       <div class="section-head">
         <h2>Résumé du jour</h2>
-        <button id="btnRefreshSummary">Rafraîchir</button>
+        <div class="controls">
+          <button id="btnToggleSummary" type="button">Afficher</button>
+          <button id="btnRefreshSummary">Rafraîchir</button>
+        </div>
       </div>
-      <div id="summaryKpis" class="kpiGrid"></div>
-      <div id="summaryEmpty" class="empty">Aucune session aujourd’hui.</div>
-      <div id="summary" class="summary"></div>
+      <div class="summary-body" id="summaryBody">
+        <div id="summaryEmpty" class="empty">Aucune session aujourd’hui.</div>
+        <div id="summary" class="summary"></div>
+      </div>
     </div>
   </div>
 

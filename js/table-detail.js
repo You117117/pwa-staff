@@ -358,6 +358,9 @@
       durationSeconds: summaryEntry.durationSeconds || null,
       stateKind: summaryEntry.stateKind || (summaryEntry.closedAt ? 'closed_normal' : 'active'),
       isClosed: !!summaryEntry.closedAt,
+      closureType: summaryEntry.closureType || (summaryEntry.closedWithAnomaly ? 'anomaly' : (summaryEntry.closedAt ? 'normal' : 'active')),
+      closedWithAnomaly: !!summaryEntry.closedWithAnomaly || summaryEntry.closureType === 'anomaly',
+      date: summaryEntry.date || null,
     };
   }
 
@@ -569,6 +572,43 @@
         else showTableDetail(id, latestStatus);
       }
     }
+    async function handleResolveAnomalyAction() {
+      const apiBase = getApiBase();
+      if (!apiBase || !summaryEntry) return;
+
+      const answer = await showStaffChoiceModal({
+        title: 'Traiter l’anomalie',
+        message: 'Avez-vous bien encodé la commande dans la caisse ?',
+        confirmLabel: 'Oui',
+        dangerLabel: 'Non',
+        cancelLabel: 'Annuler',
+      });
+
+      if (!answer || answer === 'no') return;
+
+      try {
+        const resp = await fetch(`${apiBase}/resolve-anomaly`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            table: id,
+            sessionKey: summaryEntry.sessionKey || summaryEntry.sessionStartedAt || summaryEntry.openedAt,
+            date: summaryEntry.date || null,
+          }),
+        });
+        const json = await resp.json().catch(() => ({}));
+        if (!resp.ok || json.ok === false) {
+          window.alert(json.error?.message || json.error || 'Impossible de traiter l anomalie');
+          return;
+        }
+        await refreshStaffViews();
+        closePanel();
+      } catch (err) {
+        console.error('Erreur traitement anomalie', err);
+        window.alert('Erreur réseau pendant le traitement de l anomalie');
+      }
+    }
+
 
     if (summaryEntry) {
       info.textContent = isHistoryView
@@ -652,6 +692,26 @@
     statusChip.style.marginBottom = '12px';
     panel.appendChild(statusChip);
 
+    if (isHistoryView && summaryEntry && summaryEntry.closureType === 'anomaly') {
+      const anomalyActions = document.createElement('div');
+      anomalyActions.style.display = 'flex';
+      anomalyActions.style.flexDirection = 'column';
+      anomalyActions.style.gap = '8px';
+
+      const btnResolveAnomaly = document.createElement('button');
+      btnResolveAnomaly.className = 'btn btn-primary';
+      btnResolveAnomaly.style.width = '100%';
+      btnResolveAnomaly.style.fontSize = '14px';
+      btnResolveAnomaly.textContent = "Traiter l'anomalie";
+      btnResolveAnomaly.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await handleResolveAnomalyAction();
+      });
+
+      anomalyActions.appendChild(btnResolveAnomaly);
+      panel.appendChild(anomalyActions);
+    }
+
     const actions = document.createElement('div');
     actions.style.display = 'flex';
     actions.style.flexDirection = 'column';
@@ -715,13 +775,13 @@
         if (timer) {
           const remain = timer.until - Date.now();
           if (remain > 0) {
-            btnPay.textContent = `Annuler paiement (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            btnPay.textContent = `Annuler (${Math.max(1, Math.ceil(remain / 1000))}s)`;
             btnPay.style.backgroundColor = '#f97316';
             return;
           }
         }
         if (currentStatus === 'Encodage caisse confirmé') {
-          btnPay.textContent = 'Annuler paiement';
+          btnPay.textContent = 'Annuler';
           btnPay.style.backgroundColor = '#f97316';
         } else {
           btnPay.textContent = 'Encoder en caisse';

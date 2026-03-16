@@ -809,7 +809,7 @@ function detectTablesChangesAndBeep(tables) {
               return;
             }
             const sec = Math.max(1, Math.ceil(remain / 1000));
-            btnPaid.textContent = `Annuler paiement (${sec}s)`;
+            btnPaid.textContent = `Annuler (${sec}s)`;
           };
           updateLabel();
           // Petit interval local juste pour ce bouton (si la carte reste affichée)
@@ -821,7 +821,7 @@ function detectTablesChangesAndBeep(tables) {
             const currentTimer = leftPayTimers[id];
             if (!currentTimer) {
               clearInterval(localInterval);
-              btnPaid.textContent = isPaid ? 'Annuler paiement' : 'Paiement confirmé';
+              btnPaid.textContent = isPaid ? 'Annuler' : 'Paiement confirmé';
               btnPaid.style.backgroundColor = isPaid ? '#f97316' : '';
               return;
             }
@@ -833,11 +833,11 @@ function detectTablesChangesAndBeep(tables) {
               return;
             }
             const sec = Math.max(1, Math.ceil(remain / 1000));
-            btnPaid.textContent = `Annuler paiement (${sec}s)`;
+            btnPaid.textContent = `Annuler (${sec}s)`;
           }, 250);
         } else if (isPaid) {
           // Payée sans compte à rebours actif
-          btnPaid.textContent = 'Annuler paiement';
+          btnPaid.textContent = 'Annuler';
           btnPaid.style.backgroundColor = '#f97316';
         } else {
           // Pas encore payée, pas de timer
@@ -922,7 +922,7 @@ function detectTablesChangesAndBeep(tables) {
           }
         });
 
-        // --- Gestion clic Paiement confirmé / Annuler paiement (avec compte à rebours) ---
+        // --- Gestion clic Paiement confirmé / Annuler (avec compte à rebours) ---
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
@@ -982,7 +982,7 @@ function detectTablesChangesAndBeep(tables) {
               btnPaid.textContent = 'Paiement confirmé';
             } else {
               const sec = Math.max(1, Math.ceil(remain / 1000));
-              btnPaid.textContent = `Annuler paiement (${sec}s)`;
+              btnPaid.textContent = `Annuler (${sec}s)`;
             }
           };
           updateLabel();
@@ -999,7 +999,7 @@ function detectTablesChangesAndBeep(tables) {
               btnPaid.style.backgroundColor = '';
             } else {
               const sec = Math.max(1, Math.ceil(remain / 1000));
-              btnPaid.textContent = `Annuler paiement (${sec}s)`;
+              btnPaid.textContent = `Annuler (${sec}s)`;
             }
           }, 250);
 

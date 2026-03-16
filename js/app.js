@@ -859,7 +859,7 @@ function detectTablesChangesAndBeep(tables) {
           if (leftPrintTimers[id]) return;
 
           // Lance le compte à rebours UI 5s
-          const until = now() + 2000;
+          const until = now() + 5000;
           const timer = {
             until,
             timeoutId: null,
@@ -903,7 +903,7 @@ function detectTablesChangesAndBeep(tables) {
             clearInterval(timer.intervalId);
             btnPrint.textContent = 'Imprimer maintenant';
             btnPrint.style.backgroundColor = '';
-          }, 2000);
+          }, 5000);
 
           // Appel API /print (comme avant)
           try {

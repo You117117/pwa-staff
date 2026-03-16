@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function refreshHeavyPanels() {
-    return Promise.resolve();
+    return Promise.resolve(refreshSummary());
   }
 
   // --- Utils
@@ -1175,17 +1175,25 @@ function detectTablesChangesAndBeep(tables) {
     });
   }
   async function refreshSummary() {
-    return null;
+    return coalesceRefresh('summary', async () => {
+      const base = getApiBase();
+      if (!base) {
+        if (summaryContainer) summaryContainer.innerHTML = '';
+        if (summaryKpis) summaryKpis.innerHTML = '';
+        if (summaryEmpty) summaryEmpty.style.display = 'block';
+        return;
+      }
+      try {
+        const summaryData = await fetchSummary();
+        renderSummary(summaryData);
+      } catch (err) {
+        console.error('Erreur refreshSummary', err);
+      }
+    });
   }
-  async function refreshHistory() {
-    return null;
-  }
-  async function refreshManager() {
-    return null;
-  }
-  async function refreshDiagnostic() {
-    return null;
-  }
+  async function refreshHistory() { return null; }
+  async function refreshManager() { return null; }
+  async function refreshDiagnostic() { return null; }
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
   window.refreshHistory = refreshHistory;
@@ -1196,7 +1204,7 @@ function detectTablesChangesAndBeep(tables) {
     btnSaveApi.addEventListener('click', () => {
       saveApiToStorage();
       refreshTables();
-
+      refreshSummary();
     });
   }
 
@@ -1208,7 +1216,7 @@ function detectTablesChangesAndBeep(tables) {
 
   if (btnRefreshSummary) {
     btnRefreshSummary.addEventListener('click', () => {
-
+      refreshSummary();
     });
   }
 
@@ -1230,8 +1238,10 @@ function detectTablesChangesAndBeep(tables) {
 
   loadApiFromStorage();
   refreshTables();
+  refreshSummary();
 
   setInterval(() => {
     refreshTables();
+    refreshSummary();
   }, TABLES_REFRESH_MS);
 });

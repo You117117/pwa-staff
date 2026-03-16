@@ -24,6 +24,7 @@
   window.__suppressOutsideClose = false;
   const leftPrintTimers = (window.leftPrintTimers = window.leftPrintTimers || {});
   const leftPayTimers = (window.leftPayTimers = window.leftPayTimers || {});
+  let detailRenderSeq = 0;
 
   document.addEventListener('click', (e) => {
     if (panel.style.display === 'none') return;
@@ -362,6 +363,7 @@
 
   async function showTableDetail(tableId, statusHint, opts) {
     const options = opts || {};
+    const renderSeq = ++detailRenderSeq;
     const base = getApiBase();
     if (!base) return;
     const id = normId(tableId);
@@ -426,6 +428,11 @@
     let cleared = false;
     let isHistoryView = !!options.historyMode;
     let durationSeconds = null;
+
+
+    function isStaleRender() {
+      return renderSeq !== detailRenderSeq || window.__currentDetailTableId !== id;
+    }
 
     function syncCloseTableVisibility() {
       const shouldShow = !isHistoryView && currentStatus !== 'Vide';
@@ -578,10 +585,13 @@
       try {
         [summaryData, tablesData] = await Promise.all([fetchSummary(base), fetchTables(base)]);
       } catch (err) {
+        if (isStaleRender()) return;
         console.error('Erreur fetch detail', err);
         info.textContent = 'Erreur de chargement';
         return;
       }
+
+      if (isStaleRender()) return;
 
       const tableMeta = (tablesData.tables || []).find((t) => normId(t.id) === id);
       currentStatus = statusHint || (tableMeta && tableMeta.status) || 'Vide';
@@ -611,6 +621,8 @@
         contextMeta.textContent = '';
       }
     }
+
+    if (isStaleRender()) return;
 
     if (!allTickets.length) {
       info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : info.textContent;

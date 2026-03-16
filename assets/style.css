@@ -403,3 +403,9 @@ select{
 @media (max-width: 1200px){
   .manager-grid{grid-template-columns:1fr;}
 }
+
+.summary-section.collapsed .summary-body{display:none;}
+.summary-section .section-head .controls{display:flex;gap:10px;align-items:center;}
+.summary-section{height:auto;}
+.summary-body{display:block;}
+#summary{max-height:min(60vh, 560px);}

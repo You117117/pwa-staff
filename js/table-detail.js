@@ -97,10 +97,16 @@
         color: '#ffffff',
       };
     }
-    if (label === 'Encodage caisse confirmé') {
+    if (label === 'Encodage caisse confirmé' || label === 'Encodée en caisse') {
       return {
         background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
         color: '#052e16',
+      };
+    }
+    if (label === 'Anomalie pas encodé') {
+      return {
+        background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+        color: '#ffffff',
       };
     }
     if (label === 'Vide') {
@@ -923,7 +929,7 @@
       btnResolveAnomaly.style.fontWeight = '800';
       btnResolveAnomaly.style.borderRadius = '14px';
       btnResolveAnomaly.style.padding = '12px 14px';
-      btnResolveAnomaly.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
+      btnResolveAnomaly.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
       btnResolveAnomaly.style.color = '#ffffff';
       btnResolveAnomaly.textContent = 'Traiter anomalie';
       btnResolveAnomaly.addEventListener('click', async (e) => {

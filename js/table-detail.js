@@ -130,22 +130,6 @@
     return `Ticket ${tableId} • ${ticketDate} • ${ticketTime}`;
   }
 
-  function makeInfoChip(label, strong = false) {
-    const chip = document.createElement('span');
-    chip.textContent = label;
-    chip.style.display = 'inline-flex';
-    chip.style.alignItems = 'center';
-    chip.style.borderRadius = '999px';
-    chip.style.padding = strong ? '8px 13px' : '7px 12px';
-    chip.style.fontSize = strong ? '14px' : '13px';
-    chip.style.fontWeight = strong ? '800' : '700';
-    chip.style.color = '#f8fafc';
-    chip.style.background = strong ? 'rgba(79,125,243,0.22)' : 'rgba(99,102,241,0.14)';
-    chip.style.border = '1px solid rgba(255,255,255,0.10)';
-    chip.style.lineHeight = '1';
-    return chip;
-  }
-
   function showStaffChoiceModal({
     title = 'Confirmation',
     message = '',
@@ -537,9 +521,9 @@
 
     const contextMeta = document.createElement('div');
     contextMeta.style.marginBottom = '10px';
-    contextMeta.style.display = 'flex';
-    contextMeta.style.flexWrap = 'wrap';
-    contextMeta.style.gap = '8px';
+    contextMeta.style.color = '#e2e8f0';
+    contextMeta.style.fontSize = '14px';
+    contextMeta.style.lineHeight = '1.45';
     panel.appendChild(contextMeta);
 
     const info = document.createElement('div');
@@ -816,13 +800,35 @@
     statusChip.style.color = statusStyle.color;
     panel.insertBefore(statusChip, contextMeta);
 
+    const contextBits = [];
     const contextText = contextMeta.textContent.trim();
-    const contextBits = contextText
-      ? contextText.split('·').map((part) => part.trim()).filter(Boolean)
-      : [];
+    if (contextText) {
+      contextText
+        .split('·')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .forEach((part) => contextBits.push(part));
+    }
     contextMeta.innerHTML = '';
-    contextBits.forEach((bit) => contextMeta.appendChild(makeInfoChip(bit)));
-    contextMeta.appendChild(makeInfoChip(`Montant total : ${formatMoney(total)}`, true));
+    contextMeta.style.display = 'flex';
+    contextMeta.style.flexWrap = 'wrap';
+    contextMeta.style.gap = '8px';
+    contextMeta.style.marginBottom = '14px';
+
+    contextBits.forEach((bit) => {
+      const chip = document.createElement('span');
+      chip.textContent = bit;
+      chip.style.display = 'inline-flex';
+      chip.style.alignItems = 'center';
+      chip.style.padding = '7px 12px';
+      chip.style.borderRadius = '999px';
+      chip.style.background = 'rgba(99,102,241,0.12)';
+      chip.style.border = '1px solid rgba(255,255,255,0.08)';
+      chip.style.color = '#e2e8f0';
+      chip.style.fontSize = '13px';
+      chip.style.fontWeight = '600';
+      contextMeta.appendChild(chip);
+    });
 
     if (isHistoryView) {
       info.textContent = summaryEntry && summaryEntry.closureType === 'anomaly' ? 'Historique avec anomalie' : info.textContent;
@@ -847,7 +853,7 @@
       btnPrint.style.fontSize = '14px';
       btnPrint.style.fontWeight = '800';
       btnPrint.style.borderRadius = '14px';
-      btnPrint.style.padding = '11px 14px';
+      btnPrint.style.padding = '12px 14px';
       btnPrint.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
       btnPrint.style.color = '#ffffff';
 
@@ -857,7 +863,7 @@
       btnPay.style.fontSize = '14px';
       btnPay.style.fontWeight = '800';
       btnPay.style.borderRadius = '14px';
-      btnPay.style.padding = '11px 14px';
+      btnPay.style.padding = '12px 14px';
       btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
       btnPay.style.color = '#ffffff';
 
@@ -867,7 +873,7 @@
       btnCloseTable.style.fontSize = '14px';
       btnCloseTable.style.fontWeight = '800';
       btnCloseTable.style.borderRadius = '14px';
-      btnCloseTable.style.padding = '11px 14px';
+      btnCloseTable.style.padding = '12px 14px';
       btnCloseTable.textContent = 'Clôturer la table';
       btnCloseTable.dataset.role = 'close-in-progress-footer';
       btnCloseTable.style.backgroundColor = '#ef4444';
@@ -901,7 +907,6 @@
         if (!hasTickets) {
           btnPay.textContent = 'Encoder dans la caisse';
           btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
-          btnPay.style.color = '#ffffff';
           return;
         }
 
@@ -920,7 +925,6 @@
         } else {
           btnPay.textContent = 'Encoder dans la caisse';
           btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
-          btnPay.style.color = '#ffffff';
         }
       }
 
@@ -974,6 +978,39 @@
     } else {
       allTickets.forEach((ticket) => panel.appendChild(makeTicketCard(ticket, id)));
     }
+
+    const totalChipWrap = document.createElement('div');
+    totalChipWrap.style.marginTop = allTickets.length ? '4px' : '8px';
+    totalChipWrap.style.marginBottom = '18px';
+    totalChipWrap.style.display = 'flex';
+    totalChipWrap.style.justifyContent = 'flex-start';
+
+    const totalChip = document.createElement('div');
+    totalChip.style.display = 'inline-flex';
+    totalChip.style.alignItems = 'center';
+    totalChip.style.gap = '10px';
+    totalChip.style.padding = '12px 16px';
+    totalChip.style.borderRadius = '999px';
+    totalChip.style.background = 'rgba(99,102,241,0.16)';
+    totalChip.style.border = '1px solid rgba(255,255,255,0.12)';
+    totalChip.style.color = '#f8fafc';
+
+    const totalChipLabel = document.createElement('span');
+    totalChipLabel.textContent = 'Montant total';
+    totalChipLabel.style.fontSize = '13px';
+    totalChipLabel.style.fontWeight = '700';
+    totalChipLabel.style.opacity = '0.92';
+
+    const totalChipValue = document.createElement('span');
+    totalChipValue.textContent = formatMoney(total);
+    totalChipValue.style.fontSize = '22px';
+    totalChipValue.style.fontWeight = '800';
+    totalChipValue.style.letterSpacing = '0.01em';
+
+    totalChip.appendChild(totalChipLabel);
+    totalChip.appendChild(totalChipValue);
+    totalChipWrap.appendChild(totalChip);
+    panel.appendChild(totalChipWrap);
   }
 
   window.showTableDetail = showTableDetail;

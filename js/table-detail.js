@@ -136,6 +136,7 @@
     confirmLabel = 'Oui',
     dangerLabel = 'Non',
     cancelLabel = 'Annuler',
+    centered = false,
   } = {}) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
@@ -167,12 +168,18 @@
       titleEl.style.fontSize = '18px';
       titleEl.style.fontWeight = '800';
       titleEl.style.color = '#f8fafc';
+      if (centered) titleEl.style.textAlign = 'center';
 
       const messageEl = document.createElement('div');
       messageEl.textContent = message;
       messageEl.style.fontSize = '14px';
       messageEl.style.lineHeight = '1.5';
       messageEl.style.color = '#cbd5e1';
+      if (centered) {
+        messageEl.style.textAlign = 'center';
+        messageEl.style.fontWeight = '800';
+        messageEl.style.color = '#f8fafc';
+      }
 
       const actions = document.createElement('div');
       actions.style.display = 'grid';
@@ -612,11 +619,11 @@
       if (currentStatus !== 'Encodage caisse confirmé') {
         const answer = await showStaffChoiceModal({
           title: 'Clôture de table',
-          message:
-            'L’encodage dans la caisse a-t-il été effectué ?\n\nOui = confirmation caisse puis clôture normale.\nNon = clôture avec anomalie.',
+          message: 'L’encodage dans la caisse a-t-il été effectué ?',
           confirmLabel: 'Oui',
           dangerLabel: 'Non',
           cancelLabel: 'Annuler',
+          centered: true,
         });
         if (!answer) return;
 

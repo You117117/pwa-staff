@@ -996,9 +996,9 @@
     totalChip.style.color = '#f8fafc';
 
     const totalChipLabel = document.createElement('span');
-    totalChipLabel.textContent = 'Montant total';
-    totalChipLabel.style.fontSize = '13px';
-    totalChipLabel.style.fontWeight = '700';
+    totalChipLabel.textContent = 'Montant total :';
+    totalChipLabel.style.fontSize = '15px';
+    totalChipLabel.style.fontWeight = '800';
     totalChipLabel.style.opacity = '0.92';
 
     const totalChipValue = document.createElement('span');

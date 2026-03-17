@@ -814,7 +814,9 @@ function detectTablesChangesAndBeep(tables) {
       const displayStatus = displayStatusLabel(status);
       const ticketTimeSource = status === 'En préparation'
         ? (tb?.lastTicket?.printedAt || tb?.lastTicket?.at || tb?.lastTicketAt || null)
-        : (tb?.lastTicket?.at || tb?.lastTicketAt || null);
+        : status === 'À encoder en caisse'
+          ? (tb?.sessionStartAt || tb?.lastTicket?.at || tb?.lastTicketAt || null)
+          : (tb?.lastTicket?.at || tb?.lastTicketAt || null);
       const hasLastTicket = !!ticketTimeSource;
       const lastTime = hasLastTicket ? formatTime(ticketTimeSource) : '—';
 

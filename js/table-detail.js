@@ -338,14 +338,11 @@
         extrasWrap.style.marginTop = '2px';
 
         const extrasLabel = document.createElement('span');
-        extrasLabel.textContent = 'Suppléments';
+        extrasLabel.textContent = 'Suppléments :';
         extrasLabel.style.fontSize = '12px';
         extrasLabel.style.fontWeight = '700';
         extrasLabel.style.color = '#e2e8f0';
-        extrasLabel.style.background = 'rgba(99,102,241,0.16)';
-        extrasLabel.style.border = '1px solid rgba(255,255,255,0.08)';
-        extrasLabel.style.borderRadius = '999px';
-        extrasLabel.style.padding = '4px 10px';
+        extrasLabel.style.padding = '4px 0';
         extrasWrap.appendChild(extrasLabel);
 
         extras.forEach((extra) => {

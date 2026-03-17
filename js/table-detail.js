@@ -615,38 +615,34 @@
         return;
       }
 
-      let closureType = 'normal';
-      if (currentStatus !== 'Encodage caisse confirmé') {
-        const answer = await showStaffChoiceModal({
-          title: 'Clôture de table',
-          message: 'L’encodage dans la caisse a-t-il été effectué ?',
-          confirmLabel: 'Oui',
-          dangerLabel: 'Non',
-          cancelLabel: 'Annuler',
-          centered: true,
-        });
-        if (!answer) return;
+      const answer = await showStaffChoiceModal({
+        title: 'Clôture de table',
+        message: 'L’encodage dans la caisse a-t-il été effectué ?',
+        confirmLabel: 'Oui',
+        dangerLabel: 'Non',
+        cancelLabel: 'Annuler',
+        centered: true,
+      });
+      if (!answer) return;
 
-        if (answer === 'yes') {
-          try {
-            const confirmRes = await fetch(`${apiBase}/confirm`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ table: id }),
-            });
-            const confirmJson = await confirmRes.json().catch(() => ({}));
-            if (!confirmRes.ok || confirmJson.ok === false) {
-              window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
-              return;
-            }
-          } catch (err) {
-            console.error('Erreur /confirm (clôture détail)', err);
-            window.alert('Erreur réseau pendant la confirmation caisse');
+      const closureType = answer === 'yes' ? 'normal' : 'anomaly';
+
+      if (closureType === 'normal') {
+        try {
+          const confirmRes = await fetch(`${apiBase}/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ table: id }),
+          });
+          const confirmJson = await confirmRes.json().catch(() => ({}));
+          if (!confirmRes.ok || confirmJson.ok === false) {
+            window.alert(confirmJson.error || 'Échec confirmation encodage caisse');
             return;
           }
-          closureType = 'normal';
-        } else {
-          closureType = 'anomaly';
+        } catch (err) {
+          console.error('Erreur /confirm (clôture détail)', err);
+          window.alert('Erreur réseau pendant la confirmation caisse');
+          return;
         }
       }
 
@@ -861,16 +857,6 @@
       btnPrint.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
       btnPrint.style.color = '#ffffff';
 
-      const btnPay = document.createElement('button');
-      btnPay.className = 'btn btn-primary';
-      btnPay.style.width = '100%';
-      btnPay.style.fontSize = '14px';
-      btnPay.style.fontWeight = '800';
-      btnPay.style.borderRadius = '14px';
-      btnPay.style.padding = '12px 14px';
-      btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
-      btnPay.style.color = '#ffffff';
-
       const btnCloseTable = document.createElement('button');
       btnCloseTable.className = 'btn btn-primary';
       btnCloseTable.style.width = '100%';
@@ -878,7 +864,7 @@
       btnCloseTable.style.fontWeight = '800';
       btnCloseTable.style.borderRadius = '14px';
       btnCloseTable.style.padding = '12px 14px';
-      btnCloseTable.textContent = 'Clôturer la table';
+      btnCloseTable.textContent = 'Finaliser la table';
       btnCloseTable.dataset.role = 'close-in-progress-footer';
       btnCloseTable.style.backgroundColor = '#ef4444';
 
@@ -899,53 +885,18 @@
         }
       }
 
-      function syncPayButtonFromGlobal() {
-        btnCloseTable.style.display = 'block';
-
-        if (currentStatus === 'En cours') {
-          btnPay.style.display = 'none';
-          return;
-        }
-
-        btnPay.style.display = hasTickets ? 'block' : 'none';
-        if (!hasTickets) {
-          btnPay.textContent = 'Encoder dans la caisse';
-          btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
-          return;
-        }
-
-        const timer = leftPayTimers[id];
-        if (timer) {
-          const remain = timer.until - Date.now();
-          if (remain > 0) {
-            btnPay.textContent = `Annuler (${Math.max(1, Math.ceil(remain / 1000))}s)`;
-            btnPay.style.background = '#f97316';
-            return;
-          }
-        }
-        if (currentStatus === 'Encodage caisse confirmé') {
-          btnPay.textContent = 'Annuler';
-          btnPay.style.backgroundColor = '#f97316';
-        } else {
-          btnPay.textContent = 'Encoder dans la caisse';
-          btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
-        }
-      }
-
       if (!hasTickets) {
         btnPrint.style.display = 'none';
       }
 
       syncPrintButtonFromGlobal();
-      syncPayButtonFromGlobal();
 
       const syncIntervalId = setInterval(() => {
-        if (!document.body.contains(btnPrint) && !document.body.contains(btnPay)) {
+        if (!document.body.contains(btnPrint) && !document.body.contains(btnCloseTable)) {
           clearInterval(syncIntervalId);
           return;
         }
         syncPrintButtonFromGlobal();
-        syncPayButtonFromGlobal();
       }, 250);
 
       btnPrint.addEventListener('click', (e) => {
@@ -956,23 +907,12 @@
         window.setTimeout(() => closePanelIfStillCurrent(id), 5000);
       });
 
-      btnPay.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const leftBtn = document.querySelector(`.table[data-table="${id}"] .btn-paid`);
-        if (!leftBtn) return;
-        leftBtn.click();
-        if (currentStatus !== 'En cours' && hasTickets) {
-          window.setTimeout(() => closePanelIfStillCurrent(id), 5000);
-        }
-      });
-
       btnCloseTable.addEventListener('click', async (e) => {
         e.stopPropagation();
         await handleCloseTableAction();
       });
 
       actions.appendChild(btnPrint);
-      actions.appendChild(btnPay);
       actions.appendChild(btnCloseTable);
       panel.appendChild(actions);
     }

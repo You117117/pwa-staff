@@ -14,7 +14,8 @@
     const str = (inp?.value || '').trim().replace(/\/+$/,'');
     if (str) return str;
     try {
-      const ls = localStorage.getItem('orders_api_url_v11')
+      const ls = localStorage.getItem('staff-api')
+        || localStorage.getItem('orders_api_url_v11')
         || localStorage.getItem('api_url')
         || localStorage.getItem('API_URL') || '';
       return (ls||'').trim().replace(/\/+$/,'');

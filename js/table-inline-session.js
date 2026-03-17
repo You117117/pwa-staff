@@ -8,7 +8,8 @@
     const str = (inp?.value || '').trim().replace(/\/+$/,'');
     if (str) return str;
     try {
-      const ls = localStorage.getItem('orders_api_url_v11')
+      const ls = localStorage.getItem('staff-api')
+        || localStorage.getItem('orders_api_url_v11')
         || localStorage.getItem('api_url')
         || localStorage.getItem('API_URL') || '';
       return (ls||'').trim().replace(/\/+$/,'');
@@ -71,7 +72,7 @@
           <div class="tis-orders">${renderOrders(orders)}</div>
           <div class="tis-actions">
             <button data-act="print" data-table="${id}">🖨 Imprimer</button>
-            <button data-act="confirm" data-table="${id}">✔ Encode dans la caisse !</button>
+            <button data-act="confirm" data-table="${id}">✔ Encoder en caisse</button>
             <button data-act="refresh" data-table="${id}">🔄 Rafraîchir</button>
           </div>
         </div>`;

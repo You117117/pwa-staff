@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRefreshTables = document.querySelector('#btnRefreshTables');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
   const btnToggleSummary = document.querySelector('#btnToggleSummary');
+  const supportTrigger = document.querySelector('#supportTrigger');
+  const supportPanel = document.querySelector('#supportPanel');
+  const supportBackdrop = document.querySelector('#supportBackdrop');
+  const btnCloseSupport = document.querySelector('#btnCloseSupport');
 
   const tablesContainer = document.querySelector('#tables');
   const tablesEmpty = document.querySelector('#tablesEmpty');
@@ -266,8 +270,17 @@ function detectTablesChangesAndBeep(tables) {
 
   function getApiBase() {
     const raw = apiInput ? apiInput.value.trim() : '';
-    if (!raw) return '';
-    return raw.replace(/\/+$/, '');
+    if (raw) return raw.replace(/\/+$/, '');
+    try {
+      const stored = localStorage.getItem(LS_KEY_API)
+        || localStorage.getItem('orders_api_url_v11')
+        || localStorage.getItem('api_url')
+        || localStorage.getItem('API_URL')
+        || '';
+      return stored.trim().replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
   }
 
   function formatTime(dateString) {
@@ -290,8 +303,24 @@ function detectTablesChangesAndBeep(tables) {
     if (!apiInput) return;
     const v = apiInput.value.trim();
     try {
-      if (v) localStorage.setItem(LS_KEY_API, v);
+      if (v) {
+        localStorage.setItem(LS_KEY_API, v);
+        localStorage.setItem('API_URL', v);
+      }
     } catch {}
+  }
+
+  function openSupportPanel() {
+    if (!supportPanel) return;
+    loadApiFromStorage();
+    supportPanel.hidden = false;
+    document.body.classList.add('support-open');
+  }
+
+  function closeSupportPanel() {
+    if (!supportPanel) return;
+    supportPanel.hidden = true;
+    document.body.classList.remove('support-open');
   }
 
   // --- Compteurs de paiement côté tableau de gauche
@@ -1289,12 +1318,47 @@ function detectTablesChangesAndBeep(tables) {
   window.refreshManager = refreshManager;
   window.refreshDiagnostic = refreshDiagnostic;
 
+
+  if (supportTrigger) {
+    let clickCount = 0;
+    let clickTimer = null;
+    supportTrigger.addEventListener('click', () => {
+      clickCount += 1;
+      if (clickTimer) clearTimeout(clickTimer);
+      if (clickCount >= 3) {
+        clickCount = 0;
+        clickTimer = null;
+        openSupportPanel();
+        return;
+      }
+      clickTimer = setTimeout(() => {
+        clickCount = 0;
+        clickTimer = null;
+      }, 900);
+    });
+  }
+
+  if (supportBackdrop) {
+    supportBackdrop.addEventListener('click', closeSupportPanel);
+  }
+
+  if (btnCloseSupport) {
+    btnCloseSupport.addEventListener('click', closeSupportPanel);
+  }
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && supportPanel && !supportPanel.hidden) {
+      closeSupportPanel();
+    }
+  });
+
   if (btnSaveApi) {
     btnSaveApi.addEventListener('click', () => {
       saveApiToStorage();
       refreshTables();
       refreshSummary();
       connectStaffSse();
+      closeSupportPanel();
     });
   }
 

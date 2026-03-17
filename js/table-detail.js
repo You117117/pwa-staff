@@ -36,7 +36,18 @@
   const normId = (id) => (id || '').toString().trim().toUpperCase();
   const getApiBase = () => {
     const input = document.querySelector('#apiUrl');
-    return input ? input.value.trim().replace(/\/+$/, '') : '';
+    const direct = input ? input.value.trim().replace(/\/+$/, '') : '';
+    if (direct) return direct;
+    try {
+      const stored = localStorage.getItem('staff-api')
+        || localStorage.getItem('orders_api_url_v11')
+        || localStorage.getItem('api_url')
+        || localStorage.getItem('API_URL')
+        || '';
+      return stored.trim().replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
   };
 
   function formatTime(dateValue) {

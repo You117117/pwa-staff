@@ -411,176 +411,118 @@ select{
 #summary{max-height:min(60vh, 560px);}
 
 
-/* === Staff board refresh 2026-03-17 === */
+/* === Staff UI refresh 2026-03-17 === */
 #tables{
   display:flex;
   flex-direction:column;
-  gap:18px;
-  padding:14px;
+  gap:16px;
+  padding:12px;
 }
-
-.tables-group{
+.tables-subsection{
   display:flex;
   flex-direction:column;
-  gap:10px;
+  gap:12px;
 }
-
-.tables-group + .tables-group{
-  padding-top:14px;
-  border-top:1px solid rgba(137,160,198,0.16);
-}
-
-.tables-group-title{
+.tables-subsection-head h3{
   margin:0;
-  font-size:15px;
-  font-weight:800;
-  color:#d9e6ff;
+  font-size:16px;
+  color:#e8eefc;
 }
-
 .tables-grid{
   display:grid;
-  grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns:repeat(auto-fill,minmax(320px,1fr));
   gap:12px;
 }
-
 .tables-grid--empty{
-  grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
 }
-
 .table{
-  min-height:118px;
-  padding:14px;
-  gap:12px;
+  min-height:112px;
+  padding:14px 16px;
   border-left-width:6px;
-  box-shadow:0 10px 24px rgba(2,6,23,0.18);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
 }
-
-.table--compact{
-  min-height:82px;
-  padding:12px 14px;
-  gap:8px;
-  box-shadow:none;
-}
-
-.table--print{
-  background:rgba(245,158,11,0.14) !important;
-  border-color:rgba(245,158,11,0.20);
-}
-
-.table--prep{
-  background:rgba(37,99,235,0.16) !important;
-  border-color:rgba(96,165,250,0.22);
-}
-
-.table--cash{
-  background:rgba(139,92,246,0.14) !important;
-  border-color:rgba(167,139,250,0.22);
-}
-
 .table--empty{
-  background:rgba(148,163,184,0.05) !important;
-  border-color:rgba(71,85,105,0.45);
+  min-height:84px;
+  padding:12px 14px;
+  opacity:.92;
 }
-
-.card-head,
-.card-meta{
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  gap:8px;
-}
-
 .chip-table-id{
-  font-size:17px !important;
-  font-weight:900 !important;
-  padding:9px 14px !important;
-  background:#243b69;
-  min-width:58px;
+  font-size:18px;
+  padding:9px 14px;
+  font-weight:900;
+  background:#233762;
+}
+.chip-status-text{
+  font-size:15px;
+  padding:9px 16px;
+  font-weight:900;
+}
+.card-meta-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.chip-time{
+  margin-left:auto;
+  background:#223155;
+  color:#e8eefc;
+  font-weight:800;
+}
+.chip-info{
+  background:#28456d;
+  color:#f8fbff;
+  font-weight:800;
+  font-size:14px;
+  padding:9px 14px;
+}
+.chip-muted-line{
+  background:rgba(148,163,184,.12);
+  color:#94a3b8;
+  font-weight:800;
+  min-width:52px;
   justify-content:center;
 }
-
-.chip-status-label{
-  font-size:13px !important;
-  font-weight:800 !important;
-  padding:9px 16px !important;
-}
-
-.chip-time,
-.chip-empty-dash,
-.chip-info{
-  background:rgba(34,49,85,0.9);
-  color:#e8eefc;
-  font-size:13px;
-  font-weight:800;
-  padding:8px 12px;
-}
-
-.chip-info--prep{
-  background:rgba(19,39,79,0.95);
-  color:#f8fbff;
-}
-
-.chip-action--urgent{
-  background:var(--danger) !important;
-  color:#fff !important;
-  font-size:13px;
+.chip-action{
+  font-size:15px;
+  padding:10px 16px;
   font-weight:900;
-  padding:8px 14px;
-  box-shadow:0 8px 18px rgba(240,62,62,0.28);
 }
-
-.table--compact .chip-status-label{
-  font-size:12px !important;
-  padding:8px 14px !important;
-}
-
-.table--compact .chip-table-id{
-  font-size:15px !important;
-  min-width:52px;
-}
-
-.table--compact .card-meta{
-  margin-top:-2px;
-}
-
-.table--compact .chip-empty-dash{
-  color:#9db1d7;
-}
-
-.status-commandee,
-.status-nouvelle_commande{
-  border-left-color:var(--warn);
-}
-
-.chip.status-commandee,
-.chip.status-nouvelle_commande{
-  background:var(--warn);
-  color:#2b2100;
-}
-
-.status-en_preparation{
-  border-left-color:#38bdf8;
-}
-
-.chip.status-en_preparation{
-  background:#1d4ed8;
-  color:#eff6ff;
-}
-
-.status-a_encoder_caisse{
-  border-left-color:var(--violet);
-}
-
-.chip.status-a_encoder_caisse{
-  background:var(--violet);
+.chip-action--danger{
+  background:#ef4444;
   color:#fff;
 }
-
-.status-vide{
-  border-left-color:#64748b;
+.table.status-commandee,
+.table.status-nouvelle_commande{
+  background:rgba(245,158,11,0.16) !important;
 }
-
+.table.status-en_preparation,
+.table.status-en_cours{
+  background:rgba(59,130,246,0.16) !important;
+}
+.table.status-a_encoder_caisse{
+  background:rgba(132,94,247,0.18) !important;
+}
+.table.status-vide{
+  background:rgba(148,163,184,0.05) !important;
+}
+.chip.status-commandee,
+.chip.status-nouvelle_commande{
+  background:#fbbf24;
+  color:#281a00;
+}
+.chip.status-en_preparation,
+.chip.status-en_cours{
+  background:#2f5f9f;
+  color:#f8fbff;
+}
+.chip.status-a_encoder_caisse{
+  background:#8b5cf6;
+  color:#fff;
+}
 .chip.status-vide{
-  background:#374151;
-  color:#f8fafc;
+  background:rgba(148,163,184,0.12);
+  color:#f1f5f9;
 }

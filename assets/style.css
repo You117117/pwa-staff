@@ -250,7 +250,7 @@ select{
 .status-en_cours{border-left-color:var(--blue)}
 .status-commandee{border-left-color:var(--warn)}
 .status-en_preparation{border-left-color:var(--blue)}
-.status-nouvelle_commande{border-left-color:var(--danger)}
+.status-nouvelle_commande{border-left-color:var(--warn)}
 .status-a_encoder_caisse{border-left-color:var(--violet)}
 .status-encodage_caisse_confirme{border-left-color:var(--ok)}
 .status-cloture_anomalie{border-left-color:var(--danger)}
@@ -260,7 +260,7 @@ select{
 .chip.status-en_cours{background:var(--blue); color:#061827}
 .chip.status-commandee{background:var(--warn); color:#2b2100}
 .chip.status-en_preparation{background:#3b82f6; color:#eff6ff}
-.chip.status-nouvelle_commande{background:var(--danger)}
+.chip.status-nouvelle_commande{background:var(--warn); color:#2b2100}
 .chip.status-a_encoder_caisse{background:var(--violet)}
 .chip.status-encodage_caisse_confirme{background:var(--ok); color:#062114}
 .chip.status-cloture_anomalie{background:var(--danger)}
@@ -340,8 +340,9 @@ select{
   font-size:12px;
 }
 
-.chip-action{background:#ef4444;color:white;font-weight:800;font-size:14px;padding:10px 16px;}
+.chip-action{color:white;font-weight:800;font-size:14px;padding:10px 16px;}
 .chip-action--danger{background:#ff5a52;color:white;}
+.chip-action--cash{background:#a78bfa;color:#f8f5ff;}
 
 .subsection-head{
   display:flex;

@@ -59,6 +59,77 @@
     return `${hours} h ${String(minutes).padStart(2, '0')}`;
   }
 
+
+  function mapDisplayStatus(status) {
+    switch ((status || '').trim()) {
+      case 'Nouvelle commande':
+        return 'Commande additionnel';
+      case 'À encoder en caisse':
+        return 'En attente caisse';
+      default:
+        return status || 'Vide';
+    }
+  }
+
+  function getStatusBadgeStyle(status) {
+    const label = mapDisplayStatus(status);
+    if (label === 'En attente caisse') {
+      return {
+        background: 'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
+        color: '#ffffff',
+      };
+    }
+    if (label === 'Commande additionnel') {
+      return {
+        background: 'linear-gradient(135deg, #facc15 0%, #f59e0b 100%)',
+        color: '#111827',
+      };
+    }
+    if (label === 'Commandée') {
+      return {
+        background: 'linear-gradient(135deg, #facc15 0%, #f59e0b 100%)',
+        color: '#111827',
+      };
+    }
+    if (label === 'En préparation') {
+      return {
+        background: 'linear-gradient(135deg, #38bdf8 0%, #2563eb 100%)',
+        color: '#ffffff',
+      };
+    }
+    if (label === 'Encodage caisse confirmé') {
+      return {
+        background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+        color: '#052e16',
+      };
+    }
+    if (label === 'Vide') {
+      return {
+        background: 'rgba(148,163,184,0.18)',
+        color: '#e2e8f0',
+      };
+    }
+    return {
+      background: 'rgba(59,130,246,0.22)',
+      color: '#dbeafe',
+    };
+  }
+
+  function formatTicketDate(dateValue) {
+    if (!dateValue) return '--/--';
+    const d = new Date(dateValue);
+    if (Number.isNaN(d.getTime())) return '--/--';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${day}/${month}`;
+  }
+
+  function makeTicketDisplayLabel(tableId, ticket) {
+    const ticketDate = formatTicketDate(ticket && ticket.createdAt);
+    const ticketTime = ticket && (ticket.time || formatTime(ticket.createdAt));
+    return `Ticket ${tableId} • ${ticketDate} • ${ticketTime}`;
+  }
+
   function showStaffChoiceModal({
     title = 'Confirmation',
     message = '',
@@ -200,7 +271,7 @@
         div.textContent = ticket.label;
         div.style.fontSize = '14px';
         div.style.color = '#f9fafb';
-        div.style.fontWeight = '500';
+        div.style.fontWeight = '600';
         lines.push(div);
       }
       return lines;
@@ -227,20 +298,25 @@
         : [];
 
       const wrapper = document.createElement('div');
-      wrapper.style.marginBottom = '6px';
+      wrapper.style.display = 'flex';
+      wrapper.style.flexDirection = 'column';
+      wrapper.style.gap = '6px';
 
       const line = document.createElement('div');
       line.style.display = 'flex';
       line.style.justifyContent = 'space-between';
-      line.style.alignItems = 'center';
-      line.style.fontSize = '15px';
-      line.style.color = '#f9fafb';
-      line.style.fontWeight = '700';
+      line.style.alignItems = 'flex-start';
+      line.style.gap = '10px';
+      line.style.fontSize = '17px';
+      line.style.color = '#f8fafc';
+      line.style.fontWeight = '800';
 
       const left = document.createElement('span');
       left.textContent = `${qty}× ${name}`;
+      left.style.flex = '1';
       const right = document.createElement('span');
       right.textContent = typeof price === 'number' ? formatMoney(price) : '';
+      right.style.whiteSpace = 'nowrap';
       line.appendChild(left);
       line.appendChild(right);
       wrapper.appendChild(line);
@@ -250,61 +326,83 @@
         clientLine.textContent = `Client : ${lineClientName}`;
         clientLine.style.fontSize = '13px';
         clientLine.style.color = '#e5e7eb';
-        clientLine.style.opacity = '0.9';
-        clientLine.style.marginLeft = '4px';
+        clientLine.style.opacity = '0.95';
         wrapper.appendChild(clientLine);
       }
 
       if (extras.length) {
-        const extrasLine = document.createElement('div');
-        extrasLine.textContent = `Suppléments : ${extras.join(', ')}`;
-        extrasLine.style.fontSize = '13px';
-        extrasLine.style.color = '#cbd5f5';
-        extrasLine.style.opacity = '0.9';
-        extrasLine.style.marginLeft = '4px';
-        wrapper.appendChild(extrasLine);
+        const extrasWrap = document.createElement('div');
+        extrasWrap.style.display = 'flex';
+        extrasWrap.style.flexWrap = 'wrap';
+        extrasWrap.style.gap = '8px';
+        extrasWrap.style.marginTop = '2px';
+
+        const extrasLabel = document.createElement('span');
+        extrasLabel.textContent = 'Suppléments';
+        extrasLabel.style.fontSize = '12px';
+        extrasLabel.style.fontWeight = '700';
+        extrasLabel.style.color = '#e2e8f0';
+        extrasLabel.style.background = 'rgba(99,102,241,0.16)';
+        extrasLabel.style.border = '1px solid rgba(255,255,255,0.08)';
+        extrasLabel.style.borderRadius = '999px';
+        extrasLabel.style.padding = '4px 10px';
+        extrasWrap.appendChild(extrasLabel);
+
+        extras.forEach((extra) => {
+          const chip = document.createElement('span');
+          chip.textContent = extra;
+          chip.style.fontSize = '12px';
+          chip.style.fontWeight = '600';
+          chip.style.color = '#f8fafc';
+          chip.style.background = 'rgba(99,102,241,0.12)';
+          chip.style.border = '1px solid rgba(255,255,255,0.08)';
+          chip.style.borderRadius = '999px';
+          chip.style.padding = '4px 10px';
+          extrasWrap.appendChild(chip);
+        });
+
+        wrapper.appendChild(extrasWrap);
       }
 
       return wrapper;
     });
   }
 
-  function makeTicketCard(ticket) {
+  function makeTicketCard(ticket, tableId) {
     const card = document.createElement('div');
-    card.style.background = 'rgba(15,23,42,0.6)';
-    card.style.border = '1px solid rgba(148,163,184,0.3)';
-    card.style.borderRadius = '12px';
-    card.style.padding = '12px 14px';
-    card.style.marginBottom = '10px';
+    card.style.background = 'rgba(15,23,42,0.45)';
+    card.style.border = '1px solid rgba(255,255,255,0.78)';
+    card.style.borderRadius = '18px';
+    card.style.padding = '14px 14px 16px';
+    card.style.marginBottom = '14px';
     card.style.display = 'flex';
     card.style.flexDirection = 'column';
-    card.style.gap = '8px';
+    card.style.gap = '10px';
     card.style.color = '#e5e7eb';
-    card.style.boxShadow = '0 8px 20px rgba(15,23,42,0.45)';
+    card.style.boxShadow = '0 8px 20px rgba(15,23,42,0.32)';
 
     const head = document.createElement('div');
     head.style.display = 'flex';
-    head.style.gap = '8px';
+    head.style.justifyContent = 'space-between';
     head.style.alignItems = 'center';
-    head.style.flexWrap = 'wrap';
+    head.style.gap = '12px';
 
-    const chipId = document.createElement('span');
-    chipId.className = 'chip';
-    chipId.textContent = ticket.id ? `Ticket #${ticket.id}` : 'Ticket';
-    head.appendChild(chipId);
+    const ticketLabel = document.createElement('div');
+    ticketLabel.textContent = makeTicketDisplayLabel(tableId, ticket);
+    ticketLabel.style.fontSize = '15px';
+    ticketLabel.style.fontWeight = '800';
+    ticketLabel.style.color = '#e2e8f0';
+    ticketLabel.style.lineHeight = '1.2';
 
-    const chipTime = document.createElement('span');
-    chipTime.className = 'chip';
-    chipTime.textContent = `Commandé à : ${ticket.time || formatTime(ticket.createdAt)}`;
-    head.appendChild(chipTime);
+    const totalLabel = document.createElement('div');
+    totalLabel.textContent = formatMoney(ticket.total);
+    totalLabel.style.fontSize = '17px';
+    totalLabel.style.fontWeight = '800';
+    totalLabel.style.color = '#f8fafc';
+    totalLabel.style.whiteSpace = 'nowrap';
 
-    const chipTotal = document.createElement('span');
-    chipTotal.className = 'chip';
-    chipTotal.textContent = formatMoney(ticket.total);
-    chipTotal.style.fontSize = '15px';
-    chipTotal.style.fontWeight = '700';
-    head.appendChild(chipTotal);
-
+    head.appendChild(ticketLabel);
+    head.appendChild(totalLabel);
     card.appendChild(head);
     makeProductLines(ticket).forEach((line) => card.appendChild(line));
     return card;
@@ -398,8 +496,8 @@
 
     const title = document.createElement('h2');
     title.textContent = `Table ${id}`;
-    title.style.fontSize = '18px';
-    title.style.fontWeight = '600';
+    title.style.fontSize = '22px';
+    title.style.fontWeight = '800';
     title.style.color = '#f9fafb';
 
     const headActions = document.createElement('div');
@@ -423,14 +521,16 @@
 
     const contextMeta = document.createElement('div');
     contextMeta.style.marginBottom = '10px';
-    contextMeta.style.color = '#cbd5e1';
-    contextMeta.style.fontSize = '13px';
+    contextMeta.style.color = '#e2e8f0';
+    contextMeta.style.fontSize = '14px';
+    contextMeta.style.lineHeight = '1.45';
     panel.appendChild(contextMeta);
 
     const info = document.createElement('div');
-    info.style.marginBottom = '10px';
+    info.style.marginBottom = '14px';
     info.style.color = '#e5e7eb';
     info.style.fontSize = '14px';
+    info.style.opacity = '0.92';
     info.textContent = 'Chargement...';
     panel.appendChild(info);
 
@@ -683,52 +783,38 @@
 
     if (isStaleRender()) return;
 
-    if (!allTickets.length) {
-      info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : info.textContent;
-      const totalBoxEmpty = document.createElement('div');
-      totalBoxEmpty.style.marginTop = '10px';
-      totalBoxEmpty.style.marginBottom = '16px';
-      totalBoxEmpty.innerHTML = `
-        <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total</div>
-        <div style="font-size:28px;font-weight:600;color:#f9fafb;">0.00 €</div>
-      `;
-      panel.appendChild(totalBoxEmpty);
-    } else {
-      allTickets.forEach((ticket) => panel.appendChild(makeTicketCard(ticket)));
-      const totalBox = document.createElement('div');
-      totalBox.style.marginTop = '10px';
-      totalBox.style.marginBottom = '18px';
-      totalBox.innerHTML = `
-        <div style="font-size:13px;opacity:.8;margin-bottom:4px;color:#e5e7eb;">Montant total ${isHistoryView ? '(historique)' : '(session)'}</div>
-        <div style="font-size:30px;font-weight:650;color:#f9fafb;">${formatMoney(total)}</div>
-      `;
-      panel.appendChild(totalBox);
-    }
+    const displayStatus = mapDisplayStatus(currentStatus);
 
     const statusChip = document.createElement('div');
-    statusChip.className = 'chip';
-    statusChip.textContent = `Statut : ${currentStatus}`;
-    statusChip.style.marginBottom = '12px';
-    panel.appendChild(statusChip);
+    statusChip.textContent = displayStatus;
+    statusChip.style.display = 'inline-flex';
+    statusChip.style.alignItems = 'center';
+    statusChip.style.alignSelf = 'flex-start';
+    statusChip.style.marginBottom = '14px';
+    statusChip.style.borderRadius = '999px';
+    statusChip.style.padding = '10px 16px';
+    statusChip.style.fontSize = '15px';
+    statusChip.style.fontWeight = '800';
+    const statusStyle = getStatusBadgeStyle(displayStatus);
+    statusChip.style.background = statusStyle.background;
+    statusChip.style.color = statusStyle.color;
+    panel.insertBefore(statusChip, contextMeta);
 
-    if (isHistoryView && summaryEntry && summaryEntry.closureType === 'anomaly') {
-      const anomalyActions = document.createElement('div');
-      anomalyActions.style.display = 'flex';
-      anomalyActions.style.flexDirection = 'column';
-      anomalyActions.style.gap = '8px';
+    const contextBits = [];
+    const contextText = contextMeta.textContent.trim();
+    if (contextText) contextBits.push(contextText);
+    if (!isHistoryView) {
+      contextBits.push(`${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''}`);
+    }
+    contextBits.push(`Total : ${formatMoney(total)}`);
+    contextMeta.textContent = contextBits.filter(Boolean).join(' • ');
 
-      const btnResolveAnomaly = document.createElement('button');
-      btnResolveAnomaly.className = 'btn btn-primary';
-      btnResolveAnomaly.style.width = '100%';
-      btnResolveAnomaly.style.fontSize = '14px';
-      btnResolveAnomaly.textContent = "Traiter l'anomalie";
-      btnResolveAnomaly.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await handleResolveAnomalyAction();
-      });
-
-      anomalyActions.appendChild(btnResolveAnomaly);
-      panel.appendChild(anomalyActions);
+    if (isHistoryView) {
+      info.textContent = summaryEntry && summaryEntry.closureType === 'anomaly' ? 'Historique avec anomalie' : info.textContent;
+    } else {
+      info.textContent = allTickets.length
+        ? `Session active (${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''})`
+        : info.textContent;
     }
 
     const actions = document.createElement('div');
@@ -743,17 +829,30 @@
       const btnPrint = document.createElement('button');
       btnPrint.className = 'btn btn-primary';
       btnPrint.style.width = '100%';
-      btnPrint.style.fontSize = '14px';
+      btnPrint.style.fontSize = '15px';
+      btnPrint.style.fontWeight = '800';
+      btnPrint.style.borderRadius = '16px';
+      btnPrint.style.padding = '14px 16px';
+      btnPrint.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
+      btnPrint.style.color = '#ffffff';
 
       const btnPay = document.createElement('button');
       btnPay.className = 'btn btn-primary';
       btnPay.style.width = '100%';
-      btnPay.style.fontSize = '14px';
+      btnPay.style.fontSize = '15px';
+      btnPay.style.fontWeight = '800';
+      btnPay.style.borderRadius = '16px';
+      btnPay.style.padding = '14px 16px';
+      btnPay.style.background = 'linear-gradient(135deg, #f6c44a 0%, #f0ac20 100%)';
+      btnPay.style.color = '#111827';
 
       const btnCloseTable = document.createElement('button');
       btnCloseTable.className = 'btn btn-primary';
       btnCloseTable.style.width = '100%';
-      btnCloseTable.style.fontSize = '14px';
+      btnCloseTable.style.fontSize = '15px';
+      btnCloseTable.style.fontWeight = '800';
+      btnCloseTable.style.borderRadius = '16px';
+      btnCloseTable.style.padding = '14px 16px';
       btnCloseTable.textContent = 'Clôturer la table';
       btnCloseTable.dataset.role = 'close-in-progress-footer';
       btnCloseTable.style.backgroundColor = '#ef4444';
@@ -762,16 +861,16 @@
         const timer = leftPrintTimers[id];
         if (!timer) {
           btnPrint.textContent = 'Imprimer maintenant';
-          btnPrint.style.backgroundColor = '';
+          btnPrint.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
           return;
         }
         const remain = timer.until - Date.now();
         if (remain <= 0) {
           btnPrint.textContent = 'Imprimer maintenant';
-          btnPrint.style.backgroundColor = '';
+          btnPrint.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
         } else {
           btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
-          btnPrint.style.backgroundColor = '#f97316';
+          btnPrint.style.background = '#f97316';
         }
       }
 
@@ -785,8 +884,8 @@
 
         btnPay.style.display = hasTickets ? 'block' : 'none';
         if (!hasTickets) {
-          btnPay.textContent = 'Encode dans la caisse !';
-          btnPay.style.backgroundColor = '';
+          btnPay.textContent = 'Encoder dans la caisse';
+          btnPay.style.background = 'linear-gradient(135deg, #f6c44a 0%, #f0ac20 100%)';
           return;
         }
 
@@ -795,7 +894,7 @@
           const remain = timer.until - Date.now();
           if (remain > 0) {
             btnPay.textContent = `Annuler (${Math.max(1, Math.ceil(remain / 1000))}s)`;
-            btnPay.style.backgroundColor = '#f97316';
+            btnPay.style.background = '#f97316';
             return;
           }
         }
@@ -803,8 +902,8 @@
           btnPay.textContent = 'Annuler';
           btnPay.style.backgroundColor = '#f97316';
         } else {
-          btnPay.textContent = 'Encode dans la caisse !';
-          btnPay.style.backgroundColor = '';
+          btnPay.textContent = 'Encoder dans la caisse';
+          btnPay.style.background = 'linear-gradient(135deg, #f6c44a 0%, #f0ac20 100%)';
         }
       }
 
@@ -851,6 +950,32 @@
       actions.appendChild(btnPay);
       actions.appendChild(btnCloseTable);
       panel.appendChild(actions);
+    }
+
+    if (!allTickets.length) {
+      info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : info.textContent;
+      const totalBoxEmpty = document.createElement('div');
+      totalBoxEmpty.style.marginTop = '6px';
+      totalBoxEmpty.style.marginBottom = '18px';
+      totalBoxEmpty.innerHTML = `
+        <div style="font-size:13px;opacity:.82;margin-bottom:4px;color:#e5e7eb;">Total ${isHistoryView ? '(historique)' : 'session'}</div>
+        <div style="font-size:28px;font-weight:700;color:#f8fafc;">0.00 €</div>
+      `;
+      panel.appendChild(totalBoxEmpty);
+    } else {
+      allTickets.forEach((ticket) => panel.appendChild(makeTicketCard(ticket, id)));
+      const totalBox = document.createElement('div');
+      totalBox.style.marginTop = '8px';
+      totalBox.style.marginBottom = '18px';
+      totalBox.style.display = 'flex';
+      totalBox.style.justifyContent = 'space-between';
+      totalBox.style.alignItems = 'flex-end';
+      totalBox.style.padding = '4px 2px 0';
+      totalBox.innerHTML = `
+        <div style="font-size:16px;opacity:.9;color:#e5e7eb;">Total ${isHistoryView ? 'historique' : 'session'}</div>
+        <div style="font-size:32px;font-weight:800;color:#f8fafc;">${formatMoney(total)}</div>
+      `;
+      panel.appendChild(totalBox);
     }
   }
 

@@ -329,6 +329,17 @@ select{
   align-items:center;
   margin-bottom:8px;
 }
+#summary .summaryItem .summaryHeadTop{
+  align-items:center;
+}
+#summary .summaryItem .summaryHeadBottom{
+  margin-top:2px;
+}
+#summary .summaryItem .chip-total{
+  padding:9px 16px;
+  font-size:13px;
+  font-weight:800;
+}
 #summary .summaryItem .body{
   color:var(--fg);
   font-size:13px;

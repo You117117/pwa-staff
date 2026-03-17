@@ -27,28 +27,109 @@ body{
   padding:16px;
 }
 
-h1{margin:0 0 12px 0;font-size:22px;font-weight:700}
+h1{margin:0;font-size:22px;font-weight:700}
 h2{margin:0;font-size:18px}
 
-.topbar{
+.page-header{
   display:flex;
-  gap:10px;
   align-items:center;
-  padding:12px;
-  border:1px solid var(--border);
-  background:var(--panel);
-  border-radius:14px;
-  margin-bottom:14px;
-  flex-wrap:wrap;
+  justify-content:space-between;
+  gap:12px;
+  margin:0 0 12px 0;
 }
-.topbar label{color:var(--muted); font-size:13px}
-.topbar input{
-  width:min(520px, 100%);
+
+.support-trigger{
+  width:34px;
+  height:34px;
+  min-width:34px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:999px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.10);
+  color:#dbe7ff;
+  font-size:14px;
+  box-shadow:none;
+}
+.support-trigger:hover{filter:none;background:rgba(255,255,255,0.10)}
+
+.support-panel[hidden]{display:none !important}
+.support-panel{
+  position:fixed;
+  inset:0;
+  z-index:1200;
+}
+.support-backdrop{
+  position:absolute;
+  inset:0;
+  background:rgba(2,6,23,0.68);
+}
+.support-modal{
+  position:relative;
+  width:min(520px, calc(100vw - 32px));
+  margin:72px auto 0;
+  background:#0f172a;
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:18px;
+  padding:18px;
+  box-shadow:0 18px 48px rgba(2,6,23,0.45);
+}
+.support-modal-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+.support-kicker{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:0.3px;
+  text-transform:uppercase;
+  margin-bottom:2px;
+}
+.support-copy{
+  margin:10px 0 14px;
+  color:var(--muted);
+  font-size:14px;
+}
+.support-fields{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.support-fields label{color:var(--muted); font-size:13px}
+.support-fields input{
+  width:100%;
   padding:10px 12px;
   background:var(--card);
   border:1px solid #223155;
   border-radius:10px;
   color:var(--fg);
+}
+.support-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:14px;
+}
+.btn-secondary{
+  background:#223155;
+  color:#dbe7ff;
+}
+.support-close{
+  width:34px;
+  height:34px;
+  min-width:34px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:999px;
+  background:#17233d;
+  color:#e8eefc;
 }
 
 button{

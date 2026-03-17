@@ -435,6 +435,7 @@
     panel.appendChild(info);
 
     const summaryEntry = normalizeSummaryEntry(options.summaryEntry, id, statusHint);
+    const mapDetailStatusLabel = (label) => label === 'Nouvelle commande' ? 'Commande additionnel' : (label === 'À encoder en caisse' ? 'En attente caisse' : (label || 'Vide'));
     let currentStatus = statusHint || 'Vide';
     let allTickets = [];
     let total = 0;
@@ -707,7 +708,7 @@
 
     const statusChip = document.createElement('div');
     statusChip.className = 'chip';
-    statusChip.textContent = `Statut : ${currentStatus}`;
+    statusChip.textContent = `Statut : ${mapDetailStatusLabel(currentStatus)}`;
     statusChip.style.marginBottom = '12px';
     panel.appendChild(statusChip);
 

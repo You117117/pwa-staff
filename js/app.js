@@ -305,17 +305,17 @@ function detectTablesChangesAndBeep(tables) {
   
   // === UI Status (couleurs / pulse / sons) ===
   const STATUS_UI = {
-    'Vide': { key:'vide', prio: 90 },
-    'En cours': { key:'en_preparation', prio: 30 },
+    'Vide': { key:'vide', prio: 60 },
+    'En cours': { key:'en_cours', prio: 40 },
     'Commandée': { key:'commandee', prio: 10 },
-    'Nouvelle commande': { key:'nouvelle_commande', prio: 20 },
-    'En préparation': { key:'en_preparation', prio: 30 },
-    'À encoder en caisse': { key:'a_encoder_caisse', prio: 40 },
+    'Nouvelle commande': { key:'nouvelle_commande', prio: 0 },
+    'En préparation': { key:'en_preparation', prio: 15 },
+    'À encoder en caisse': { key:'a_encoder_caisse', prio: 20 },
     'Encodage caisse confirmé': { key:'encodage_caisse_confirme', prio: 50 },
-    'Encodée en caisse': { key:'encodage_caisse_confirme', prio: 50 },
-    'Clôture avec anomalie': { key:'cloture_anomalie', prio: 55 },
-    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 55 },
-    'Clôturée': { key:'cloturee', prio: 60 },
+    'Encodée en caisse': { key:'encodage_caisse_confirme', prio: 55 },
+    'Clôture avec anomalie': { key:'cloture_anomalie', prio: 52 },
+    'Anomalie pas encodé': { key:'cloture_anomalie', prio: 56 },
+    'Clôturée': { key:'cloturee', prio: 55 },
   };
 
   const SOUND_COOLDOWN_MS = 6000; // anti-spam global
@@ -323,23 +323,34 @@ function detectTablesChangesAndBeep(tables) {
   const lastStatusByTable = {};   // per table transition tracking
   const pulseTimers = {};         // per table pulse stop timeout
 
-  function normalizeStatusLabel(label){
-    return (label || 'Vide').toString().trim() || 'Vide';
+  function statusKey(label){
+    return (STATUS_UI[label] && STATUS_UI[label].key) ? STATUS_UI[label].key : 'vide';
+  }
+  function statusPrio(label){
+    return (STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number') ? STATUS_UI[label].prio : 999;
   }
 
-  function displayStatusLabel(label){
-    const raw = normalizeStatusLabel(label);
-    switch(raw){
+  function statusClassName(label){
+    return `status-${statusKey(label)}`;
+  }
+
+  function buildStatusBadge(label){
+    const badge = document.createElement('span');
+    badge.className = `chip ${statusClassName(label)}`;
+    badge.textContent = label || 'Vide';
+    return badge;
+  }
+
+  function getDisplayStatusLabel(label){
+    switch(label){
       case 'Nouvelle commande': return 'Commande additionnel';
       case 'À encoder en caisse': return 'En attente caisse';
-      case 'En cours': return 'En préparation';
-      default: return raw;
+      default: return label || 'Vide';
     }
   }
 
   function actionLabelForStatus(label){
-    const raw = normalizeStatusLabel(label);
-    switch(raw){
+    switch(label){
       case 'Commandée':
       case 'Nouvelle commande':
         return 'Imprime le ticket !';
@@ -350,73 +361,99 @@ function detectTablesChangesAndBeep(tables) {
     }
   }
 
-  function statusKey(label){
-    const raw = normalizeStatusLabel(label);
-    return (STATUS_UI[raw] && STATUS_UI[raw].key) ? STATUS_UI[raw].key : 'vide';
-  }
-  function statusPrio(label){
-    const raw = normalizeStatusLabel(label);
-    return (STATUS_UI[raw] && typeof STATUS_UI[raw].prio === 'number') ? STATUS_UI[raw].prio : 999;
-  }
-
-  function statusClassName(label){
-    return `status-${statusKey(label)}`;
-  }
-
-  function buildStatusBadge(label){
-    const badge = document.createElement('span');
-    badge.className = `chip ${statusClassName(label)}`;
-    badge.textContent = displayStatusLabel(label);
-    return badge;
-  }
-
   function buildActionBadge(label){
     const action = actionLabelForStatus(label);
     if (!action) return null;
     const badge = document.createElement('span');
-    badge.className = 'chip chip-action chip-action--danger';
+    badge.className = 'chip chip-action';
     badge.textContent = action;
     return badge;
   }
 
-  function getInfoTextForStatus(label, tb){
-    const raw = normalizeStatusLabel(label);
-    const at = tb && tb.lastTicket && tb.lastTicket.at ? formatTime(tb.lastTicket.at) : '—';
-    if (raw === 'En préparation' || raw === 'En cours') return `En cuisine… ${at}`;
-    return '';
-  }
-
-  function getSortTimestamp(tb){
-    const candidates = [
-      tb?.lastTicket?.at,
-      tb?.openedAt,
-      tb?.createdAt,
-      tb?.updatedAt,
-      tb?.sessionStartedAt,
-    ];
-    for (const value of candidates){
-      if (!value) continue;
-      const ts = new Date(value).getTime();
-      if (!Number.isNaN(ts)) return ts;
+  function tablePriority(label){
+    switch(label){
+      case 'Commandée': return 1;
+      case 'Nouvelle commande': return 2;
+      case 'En préparation': return 3;
+      case 'À encoder en caisse': return 4;
+      case 'Vide': return 5;
+      default: return 9;
     }
-    return Number.MAX_SAFE_INTEGER;
   }
 
-  function isEmptyStatus(label){
-    return statusKey(label) === 'vide';
+  function tableSortTimestamp(tb){
+    const raw = tb?.lastTicketAt || tb?.lastTicket?.at || tb?.sessionStartAt || null;
+    const ts = raw ? Date.parse(raw) : NaN;
+    return Number.isFinite(ts) ? ts : Number.MAX_SAFE_INTEGER;
+  }
+
+  function preparationInfoLabel(tb){
+    const raw = tb?.lastTicketAt || tb?.lastTicket?.at || null;
+    if (!raw) return 'En cuisine…';
+    return `En cuisine… ${formatTime(raw)}`;
+  }
+
+  function cardVariant(label){
+    switch(label){
+      case 'Commandée': return 'card-print';
+      case 'Nouvelle commande': return 'card-addition';
+      case 'En préparation': return 'card-prep';
+      case 'À encoder en caisse': return 'card-cash';
+      default: return 'card-empty';
+    }
+  }
+
+  function playToneSequence(freqs, durationMs=130){
+    try{
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      let t = ctx.currentTime;
+      freqs.forEach((f)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        gain.gain.value = 0.14;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + (durationMs/1000));
+        t += (durationMs/1000);
+      });
+    }catch(e){
+      // audio can fail on some devices if not user-initiated; ignore safely
+    }
+  }
+
+  function maybePlayStatusSound(tableId, newStatusLabel){
+    const now = Date.now();
+    if (now - soundGate.lastAt < SOUND_COOLDOWN_MS) return;
+
+    // Only these two statuses
+    if (newStatusLabel === 'Commandée'){
+      soundGate.lastAt = now;
+      playToneSequence([523, 659, 784]); // 3 notes (C5 E5 G5)
+    } else if (newStatusLabel === 'Nouvelle commande'){
+      soundGate.lastAt = now;
+      playToneSequence([784, 659, 523, 988]); // 4 notes (G5 E5 C5 B5-ish)
+    }
   }
 
   function applyStatusClasses(cardEl, chipStatusEl, statusLabel){
-    const cls = statusClassName(statusLabel);
-    const classes = [
-      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
-    ];
+    const key = statusKey(statusLabel);
+    const cls = `status-${key}`;
 
-    cardEl.classList.remove(...classes);
+    // Card status classes
+    cardEl.classList.remove(
+      'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
+    );
     cardEl.classList.add(cls);
 
+    // Chip status classes
     if (chipStatusEl){
-      chipStatusEl.classList.remove(...classes);
+      chipStatusEl.classList.remove(
+        'status-vide','status-en_cours','status-commandee','status-en_preparation','status-nouvelle_commande','status-a_encoder_caisse','status-encodage_caisse_confirme','status-cloturee','status-cloture_anomalie'
+      );
       chipStatusEl.classList.add(cls);
     }
   }
@@ -736,15 +773,10 @@ function detectTablesChangesAndBeep(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
 
-    if (!tables || tables.length === 0) {
-      if (tablesEmpty) tablesEmpty.style.display = 'block';
-      return;
-    }
-    if (tablesEmpty) tablesEmpty.style.display = 'none';
-
+    const sourceTables = Array.isArray(tables) ? tables.slice() : [];
     const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
-    const filtered = tables.filter((tb) => {
-      const id = normId(tb.id);
+    const filtered = sourceTables.filter((tb) => {
+      const id = normId(tb?.id);
       if (!id) return false;
       if (filterValue !== 'TOUTES' && filterValue !== id) return false;
       return true;
@@ -754,102 +786,394 @@ function detectTablesChangesAndBeep(tables) {
       if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
+    if (tablesEmpty) tablesEmpty.style.display = 'none';
 
-    const sorted = [...filtered].sort((a, b) => {
-      const prioDiff = statusPrio(a.status) - statusPrio(b.status);
+    filtered.sort((a, b) => {
+      const prioDiff = tablePriority(a?.status || 'Vide') - tablePriority(b?.status || 'Vide');
       if (prioDiff !== 0) return prioDiff;
-      const timeDiff = getSortTimestamp(a) - getSortTimestamp(b);
+      const timeDiff = tableSortTimestamp(a) - tableSortTimestamp(b);
       if (timeDiff !== 0) return timeDiff;
-      return normId(a.id).localeCompare(normId(b.id), 'fr', { numeric: true });
+      return normId(a?.id).localeCompare(normId(b?.id));
     });
 
-    const activeTables = sorted.filter((tb) => !isEmptyStatus(tb.status));
-    const emptyTables = sorted.filter((tb) => isEmptyStatus(tb.status));
+    const activeTables = filtered.filter((tb) => (tb?.status || 'Vide') !== 'Vide');
+    const emptyTables = filtered.filter((tb) => (tb?.status || 'Vide') === 'Vide');
 
-    const buildSection = (title, items, isEmptySection = false) => {
-      const section = document.createElement('div');
-      section.className = `tables-subsection${isEmptySection ? ' tables-subsection--empty' : ''}`;
+    const activeSection = document.createElement('div');
+    activeSection.className = 'tables-split';
+    const activeGrid = document.createElement('div');
+    activeGrid.className = 'tables-grid tables-grid--active';
+    activeSection.appendChild(activeGrid);
+
+    const emptySection = document.createElement('div');
+    emptySection.className = 'tables-split tables-split--empty';
+    if (emptyTables.length) {
+      const emptyTitle = document.createElement('div');
+      emptyTitle.className = 'tables-subtitle';
+      emptyTitle.textContent = 'Tables vides';
+      emptySection.appendChild(emptyTitle);
+      const emptyGrid = document.createElement('div');
+      emptyGrid.className = 'tables-grid tables-grid--empty';
+      emptySection.appendChild(emptyGrid);
+    }
+
+    function buildTableCard(tb, { empty = false } = {}) {
+      const id = normId(tb.id);
+      const status = tb.status || 'Vide';
+      const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
+      const displayStatus = getDisplayStatusLabel(status);
+      const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
+
+      const card = document.createElement('div');
+      card.className = `table ${cardVariant(status)} ${empty ? 'table--empty' : 'table--active'}`;
+      card.setAttribute('data-table', id);
 
       const head = document.createElement('div');
-      head.className = 'tables-subsection-head';
-      head.innerHTML = `<h3>${title}</h3>`;
-      section.appendChild(head);
+      head.className = 'card-head';
 
-      const grid = document.createElement('div');
-      grid.className = `tables-grid${isEmptySection ? ' tables-grid--empty' : ''}`;
+      const chipId = document.createElement('span');
+      chipId.className = 'chip chip-id';
+      chipId.textContent = id;
+      head.appendChild(chipId);
 
-      items.forEach((tb) => {
-        const id = normId(tb.id);
-        const rawStatus = normalizeStatusLabel(tb.status);
-        const displayStatus = displayStatusLabel(rawStatus);
-        const actionLabel = actionLabelForStatus(rawStatus);
-        const infoText = getInfoTextForStatus(rawStatus, tb);
-        const timeText = tb && tb.lastTicket && tb.lastTicket.at ? formatTime(tb.lastTicket.at) : '—';
+      const chipStatus = document.createElement('span');
+      chipStatus.className = 'chip chip-status';
+      chipStatus.textContent = displayStatus;
+      if (status === 'Nouvelle commande') {
+        chipStatus.classList.add('chip-status-addition');
+      }
+      head.appendChild(chipStatus);
+      card.appendChild(head);
 
-        const card = document.createElement('div');
-        card.className = `table${isEmptySection ? ' table--empty' : ''}`;
-        card.setAttribute('data-table', id);
+      const body = document.createElement('div');
+      body.className = 'card-body';
 
-        const headRow = document.createElement('div');
-        headRow.className = 'card-head';
+      if (status === 'En préparation') {
+        const prepInfo = document.createElement('div');
+        prepInfo.className = 'prep-info';
+        prepInfo.textContent = preparationInfoLabel(tb);
+        body.appendChild(prepInfo);
 
-        const chipId = document.createElement('span');
-        chipId.className = 'chip chip-table-id';
-        chipId.textContent = id;
-        headRow.appendChild(chipId);
-
-        const chipStatus = document.createElement('span');
-        chipStatus.className = 'chip chip-status-text';
-        chipStatus.textContent = displayStatus;
-        headRow.appendChild(chipStatus);
-        card.appendChild(headRow);
-
-        applyStatusClasses(card, chipStatus, rawStatus);
-        if (rawStatus === 'Nouvelle commande') startPulseForNewOrder(card, id);
-
-        const metaRow = document.createElement('div');
-        metaRow.className = 'card-meta-row';
-
-        if (actionLabel) {
-          const actionBadge = buildActionBadge(rawStatus);
-          if (actionBadge) metaRow.appendChild(actionBadge);
-        } else if (infoText) {
-          const infoBadge = document.createElement('span');
-          infoBadge.className = 'chip chip-info';
-          infoBadge.textContent = infoText;
-          metaRow.appendChild(infoBadge);
-        } else {
-          const dash = document.createElement('span');
-          dash.className = 'chip chip-muted-line';
-          dash.textContent = '—';
-          metaRow.appendChild(dash);
-        }
+        const prepTime = document.createElement('span');
+        prepTime.className = 'chip chip-time';
+        prepTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
+        body.appendChild(prepTime);
+      } else {
+        const actionBadge = buildActionBadge(status);
+        if (actionBadge) body.appendChild(actionBadge);
 
         const chipTime = document.createElement('span');
         chipTime.className = 'chip chip-time';
-        chipTime.textContent = `🕒 ${timeText}`;
-        metaRow.appendChild(chipTime);
-        card.appendChild(metaRow);
+        chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
+        body.appendChild(chipTime);
+      }
 
-        const prev = lastStatusByTable[id];
-        if (prev !== rawStatus) {
-          maybePlayStatusSound(id, rawStatus);
-          lastStatusByTable[id] = rawStatus;
+      if (empty) {
+        const emptyDot = document.createElement('div');
+        emptyDot.className = 'empty-dash';
+        emptyDot.textContent = '—';
+        body.appendChild(emptyDot);
+      }
+
+      card.appendChild(body);
+
+      applyStatusClasses(card, chipStatus, status);
+      if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
+
+      const prev = lastStatusByTable[id];
+      if (prev !== status) {
+        maybePlayStatusSound(id, status);
+        lastStatusByTable[id] = status;
+      }
+
+      if (status !== 'Vide') {
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
+        actions.style.display = 'none';
+
+        const btnPrint = document.createElement('button');
+        btnPrint.className = 'btn btn-primary btn-print';
+        btnPrint.textContent = 'Imprimer maintenant';
+
+        const btnPaid = document.createElement('button');
+        btnPaid.className = 'btn btn-primary btn-paid';
+
+        const isPaid = status === 'Encodage caisse confirmé';
+        const payTimer = leftPayTimers[id];
+        const printTimer = leftPrintTimers[id];
+
+        if (printTimer) {
+          btnPrint.style.backgroundColor = '#f97316';
+          const updatePrintLabel = () => {
+            const remain = printTimer.until - now();
+            if (remain <= 0) {
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
+          };
+          updatePrintLabel();
+          const localPrintInterval = setInterval(() => {
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(localPrintInterval);
+              return;
+            }
+            const cur = leftPrintTimers[id];
+            if (!cur) {
+              clearInterval(localPrintInterval);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const remain = cur.until - now();
+            if (remain <= 0) {
+              clearInterval(localPrintInterval);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
+          }, 250);
+        } else {
+          btnPrint.textContent = 'Imprimer maintenant';
+          btnPrint.style.backgroundColor = '';
         }
 
-        grid.appendChild(card);
+        if (payTimer) {
+          btnPaid.style.backgroundColor = '#f97316';
+          const updateLabel = () => {
+            const remain = payTimer.until - now();
+            if (remain <= 0) {
+              btnPaid.textContent = 'Paiement confirmé';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler (${sec}s)`;
+          };
+          updateLabel();
+          const localInterval = setInterval(() => {
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(localInterval);
+              return;
+            }
+            const currentTimer = leftPayTimers[id];
+            if (!currentTimer) {
+              clearInterval(localInterval);
+              btnPaid.textContent = isPaid ? 'Annuler' : 'Paiement confirmé';
+              btnPaid.style.backgroundColor = isPaid ? '#f97316' : '';
+              return;
+            }
+            const remain = currentTimer.until - now();
+            if (remain <= 0) {
+              clearInterval(localInterval);
+              btnPaid.textContent = 'Paiement confirmé';
+              btnPaid.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler (${sec}s)`;
+          }, 250);
+        } else if (isPaid) {
+          btnPaid.textContent = 'Annuler';
+          btnPaid.style.backgroundColor = '#f97316';
+        } else {
+          btnPaid.textContent = 'Paiement confirmé';
+          btnPaid.style.backgroundColor = '';
+        }
+
+        actions.appendChild(btnPrint);
+        actions.appendChild(btnPaid);
+        card.appendChild(actions);
+
+        btnPrint.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const base = getApiBase();
+          if (!base) return;
+          if (leftPrintTimers[id]) return;
+          const until = now() + 5000;
+          const timer = { until, timeoutId: null, intervalId: null };
+          leftPrintTimers[id] = timer;
+          btnPrint.style.backgroundColor = '#f97316';
+          const updatePrintLabel = () => {
+            const remain = timer.until - now();
+            if (remain <= 0) btnPrint.textContent = 'Imprimer maintenant';
+            else btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+          };
+          updatePrintLabel();
+          timer.intervalId = setInterval(() => {
+            if (!document.body.contains(btnPrint)) { clearInterval(timer.intervalId); return; }
+            const remain = timer.until - now();
+            if (remain <= 0) {
+              clearInterval(timer.intervalId);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+            } else {
+              btnPrint.textContent = `Impression en cours (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            }
+          }, 250);
+          timer.timeoutId = setTimeout(() => {
+            if (leftPrintTimers[id] === timer) delete leftPrintTimers[id];
+            clearInterval(timer.intervalId);
+            btnPrint.textContent = 'Imprimer maintenant';
+            btnPrint.style.backgroundColor = '';
+          }, 5000);
+          try {
+            await fetch(`${base}/print`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /print', err);
+          } finally {
+            await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id);
+          }
+        });
+
+        btnPaid.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const base = getApiBase();
+          if (!base) return;
+          const currentTimer = leftPayTimers[id];
+          if (isPaid || currentTimer) {
+            if (currentTimer) {
+              clearTimeout(currentTimer.timeoutId);
+              clearInterval(currentTimer.intervalId);
+              delete leftPayTimers[id];
+            }
+            try {
+              await fetch(`${base}/cancel-confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {
+              console.error('Erreur /cancel-confirm', err);
+            } finally {
+              await refreshTables();
+              if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id);
+            }
+            return;
+          }
+          try {
+            await fetch(`${base}/confirm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /confirm', err);
+          }
+          const until = now() + 5000;
+          const countdown = { until, timeoutId: null, intervalId: null };
+          leftPayTimers[id] = countdown;
+          btnPaid.style.backgroundColor = '#f97316';
+          const updateLabel = () => {
+            const remain = countdown.until - now();
+            if (remain <= 0) btnPaid.textContent = 'Paiement confirmé';
+            else btnPaid.textContent = `Annuler (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+          };
+          updateLabel();
+          countdown.intervalId = setInterval(() => {
+            if (!document.body.contains(btnPaid)) { clearInterval(countdown.intervalId); return; }
+            const remain = countdown.until - now();
+            if (remain <= 0) {
+              clearInterval(countdown.intervalId);
+              btnPaid.textContent = 'Paiement confirmé';
+              btnPaid.style.backgroundColor = '';
+            } else {
+              btnPaid.textContent = `Annuler (${Math.max(1, Math.ceil(remain / 1000))}s)`;
+            }
+          }, 250);
+          countdown.timeoutId = setTimeout(async () => {
+            if (leftPayTimers[id] !== countdown) return;
+            delete leftPayTimers[id];
+            try {
+              const closeResp = await fetch(`${base}/close-table`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id, closureType: 'normal' }),
+              });
+              const closeJson = await closeResp.json().catch(() => ({}));
+              if (!closeResp.ok || closeJson?.ok === false) throw new Error(closeJson?.error || `http_${closeResp.status}`);
+            } catch (err) {
+              console.error('Erreur /close-table', err);
+              alert(`Impossible de clôturer la table : ${err.message || err}`);
+            } finally {
+              await refreshTables();
+              if (window.__currentDetailTableId === id && window.showTableDetail) window.showTableDetail(id);
+            }
+          }, 5000);
+        });
+      }
+
+      card.addEventListener('click', async (e) => {
+        if (e.target.closest('button')) return;
+        const currentId = window.__currentDetailTableId || null;
+        if (currentId && normId(currentId) === id) {
+          const panel = document.querySelector('#tableDetailPanel');
+          if (panel) {
+            panel.style.display = 'none';
+            panel.innerHTML = '';
+          }
+          window.__currentDetailTableId = null;
+          return;
+        }
+        const freshMap = window.__latestTablesById || {};
+        const freshTable = freshMap[id] || null;
+        const freshStatus = (freshTable && freshTable.status) ? freshTable.status : status;
+        if (window.showTableDetail) window.showTableDetail(id, freshStatus);
       });
 
-      section.appendChild(grid);
-      return section;
-    };
+      return card;
+    }
 
-    if (activeTables.length) {
-      tablesContainer.appendChild(buildSection('Tables actives', activeTables, false));
-    }
+    activeTables.forEach((tb) => activeGrid.appendChild(buildTableCard(tb)));
+    tablesContainer.appendChild(activeSection);
+
     if (emptyTables.length) {
-      tablesContainer.appendChild(buildSection('Tables vides', emptyTables, true));
+      const emptyGrid = emptySection.querySelector('.tables-grid--empty');
+      emptyTables.forEach((tb) => emptyGrid.appendChild(buildTableCard(tb, { empty: true })));
+      tablesContainer.appendChild(emptySection);
     }
+  }
+
+  // --- Appels API
+
+  async function fetchSummary() {
+    const base = getApiBase();
+    if (!base) return { items: [], totals: {} };
+    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { items: [], totals: {} };
+  }
+
+  async function fetchManagerSummary() {
+    const base = getApiBase();
+    if (!base) return { totals: {}, byTable: [], byHour: [], recentSessions: [] };
+    const params = new URLSearchParams();
+    params.set('startDate', managerStartDateInput?.value || historyDateInput?.value || todayKey());
+    params.set('endDate', managerEndDateInput?.value || managerStartDateInput?.value || historyDateInput?.value || todayKey());
+    if (managerTableFilter?.value) params.set('tableId', managerTableFilter.value);
+    const res = await fetch(`${base}/manager-summary?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { totals: {}, byTable: [], byHour: [], recentSessions: [] };
+  }
+
+  async function fetchHistory() {
+    const base = getApiBase();
+    if (!base) return { items: [] };
+    const params = new URLSearchParams();
+    params.set('date', historyDateInput?.value || todayKey());
+    if (historyTableFilter?.value) params.set('tableId', historyTableFilter.value);
+    if (historyTypeFilter?.value) params.set('closureType', historyTypeFilter.value);
+    const res = await fetch(`${base}/history-sessions?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { items: [] };
   }
 
   async function fetchDiagnosticOverview() {

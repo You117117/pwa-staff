@@ -915,6 +915,23 @@
       actions.appendChild(btnPrint);
       actions.appendChild(btnCloseTable);
       panel.appendChild(actions);
+    } else if (isHistoryView && summaryEntry && summaryEntry.closureType === 'anomaly') {
+      const btnResolveAnomaly = document.createElement('button');
+      btnResolveAnomaly.className = 'btn btn-primary';
+      btnResolveAnomaly.style.width = '100%';
+      btnResolveAnomaly.style.fontSize = '14px';
+      btnResolveAnomaly.style.fontWeight = '800';
+      btnResolveAnomaly.style.borderRadius = '14px';
+      btnResolveAnomaly.style.padding = '12px 14px';
+      btnResolveAnomaly.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
+      btnResolveAnomaly.style.color = '#ffffff';
+      btnResolveAnomaly.textContent = 'Traiter anomalie';
+      btnResolveAnomaly.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await handleResolveAnomalyAction();
+      });
+      actions.appendChild(btnResolveAnomaly);
+      panel.appendChild(actions);
     }
 
     if (!allTickets.length) {

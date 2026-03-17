@@ -726,225 +726,192 @@ function detectTablesChangesAndBeep(tables) {
 
   // --- Rendu des tables
 
+  function staffDisplayStatus(rawStatus, tb) {
+    const status = (rawStatus || 'Vide').toString().trim();
+    if (status === 'Nouvelle commande') return 'Commande additionnel';
+    if (status === 'À encoder en caisse') return 'En attente caisse';
+    return status;
+  }
+
+  function staffCardKind(rawStatus) {
+    const status = (rawStatus || 'Vide').toString().trim();
+    if (status === 'Commandée') return 'print';
+    if (status === 'Nouvelle commande') return 'print-additional';
+    if (status === 'En préparation') return 'prep';
+    if (status === 'À encoder en caisse') return 'cash';
+    return 'idle';
+  }
+
+  function staffSortPriority(rawStatus) {
+    const status = (rawStatus || 'Vide').toString().trim();
+    if (status === 'Commandée') return 1;
+    if (status === 'Nouvelle commande') return 2;
+    if (status === 'En préparation') return 3;
+    if (status === 'À encoder en caisse') return 4;
+    return 5;
+  }
+
+  function buildStaffActionBadge(rawStatus) {
+    const status = (rawStatus || 'Vide').toString().trim();
+    let label = '';
+    if (status === 'Commandée' || status === 'Nouvelle commande') {
+      label = 'Imprime le ticket !';
+    } else if (status === 'À encoder en caisse') {
+      label = 'Encode dans la caisse !';
+    } else if (status === 'En préparation') {
+      return null;
+    } else {
+      return null;
+    }
+    const badge = document.createElement('span');
+    badge.className = 'staff-action-badge';
+    badge.textContent = label;
+    return badge;
+  }
+
+  function buildStaffTimeBadge(tb, rawStatus) {
+    const status = (rawStatus || 'Vide').toString().trim();
+    const badge = document.createElement('span');
+    badge.className = 'staff-time-badge';
+    const at = tb && tb.lastTicket && tb.lastTicket.at ? tb.lastTicket.at : null;
+    const time = at ? formatTime(at) : '—';
+    if (status === 'En préparation') {
+      badge.textContent = `En cuisine • ${time}`;
+    } else {
+      badge.textContent = `🕒 ${time}`;
+    }
+    return badge;
+  }
+
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
 
-    if (!tables || tables.length === 0) {
+    const allTables = Array.isArray(tables) ? tables.slice() : [];
+    const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
+    const visible = allTables.filter((tb) => {
+      const id = normId(tb && tb.id);
+      if (!id) return false;
+      if (filterValue !== 'TOUTES' && filterValue !== id) return false;
+      return true;
+    });
+
+    if (!visible.length) {
       if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
     if (tablesEmpty) tablesEmpty.style.display = 'none';
 
-    const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
-    const filtered = tables.filter((tb) => {
-      const id = normId(tb.id);
-      if (!id) return false;
-      return filterValue === 'TOUTES' || filterValue === id;
+    const sorted = visible.sort((a, b) => {
+      const prioDiff = staffSortPriority(a.status) - staffSortPriority(b.status);
+      if (prioDiff !== 0) return prioDiff;
+      const atA = a && a.lastTicket && a.lastTicket.at ? new Date(a.lastTicket.at).getTime() : Number.MAX_SAFE_INTEGER;
+      const atB = b && b.lastTicket && b.lastTicket.at ? new Date(b.lastTicket.at).getTime() : Number.MAX_SAFE_INTEGER;
+      if (atA !== atB) return atA - atB;
+      return String(a.id || '').localeCompare(String(b.id || ''));
     });
 
-    if (!filtered.length) {
-      if (tablesEmpty) {
-        tablesEmpty.textContent = 'Aucune table pour ce filtre';
-        tablesEmpty.style.display = 'block';
-      }
-      return;
-    }
-    if (tablesEmpty) tablesEmpty.textContent = 'Aucune table';
+    const activeTables = sorted.filter((tb) => (tb.status || 'Vide') !== 'Vide');
+    const emptyTables = sorted.filter((tb) => (tb.status || 'Vide') === 'Vide');
 
-    const sortedTables = filtered.slice().sort((a, b) => {
-      const prioDelta = statusPrio(a.status || 'Vide') - statusPrio(b.status || 'Vide');
-      if (prioDelta !== 0) return prioDelta;
-      const aAt = new Date((a.lastTicket && a.lastTicket.at) || a.lastTicketAt || 0).getTime() || 0;
-      const bAt = new Date((b.lastTicket && b.lastTicket.at) || b.lastTicketAt || 0).getTime() || 0;
-      if (aAt !== bAt) return aAt - bAt;
-      return normId(a.id).localeCompare(normId(b.id), 'fr', { numeric: true });
-    });
+    const activeSection = document.createElement('div');
+    activeSection.className = 'staff-active-grid';
 
-    const activeTables = [];
-    const emptyTables = [];
-    sortedTables.forEach((tb) => ((tb.status || 'Vide') === 'Vide' ? emptyTables : activeTables).push(tb));
-
-    const buildCard = (tb, isEmpty = false) => {
+    activeTables.forEach((tb) => {
       const id = normId(tb.id);
-      const status = tb.status || 'Vide';
-      const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
-      const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
+      const rawStatus = (tb.status || 'Vide').toString().trim();
+      const displayStatus = staffDisplayStatus(rawStatus, tb);
+      const kind = staffCardKind(rawStatus);
 
       const card = document.createElement('div');
-      card.className = `table${isEmpty ? ' table-empty-card' : ''}`;
+      card.className = `table staff-table-card staff-card-${kind}`;
       card.setAttribute('data-table', id);
-
-      const bgMap = {
-        'Vide': 'rgba(148,163,184,0.06)',
-        'En cours': 'rgba(59,130,246,0.14)',
-        'Commandée': 'rgba(245,158,11,0.16)',
-        'Nouvelle commande': 'rgba(245,158,11,0.16)',
-        'En préparation': 'rgba(37,99,235,0.16)',
-        'À encoder en caisse': 'rgba(124,58,237,0.16)',
-        'Encodage caisse confirmé': 'rgba(16,185,129,0.16)',
-        'Clôture avec anomalie': 'rgba(239,68,68,0.16)',
-      };
-      card.style.background = bgMap[status] || 'rgba(15,23,42,0.6)';
 
       const head = document.createElement('div');
       head.className = 'card-head';
 
       const chipId = document.createElement('span');
-      chipId.className = 'chip';
-      chipId.style.fontSize = '14px';
-      chipId.style.padding = '8px 14px';
-      chipId.style.fontWeight = '800';
+      chipId.className = 'chip staff-table-id';
       chipId.textContent = id;
       head.appendChild(chipId);
 
       const chipStatus = document.createElement('span');
-      chipStatus.className = 'chip';
-      chipStatus.style.fontSize = '14px';
-      chipStatus.style.padding = '8px 14px';
-      chipStatus.style.fontWeight = '800';
-
-      let uiStatus = status;
-      if (status === 'Nouvelle commande') uiStatus = 'Commande additionnel';
-      if (status === 'À encoder en caisse') uiStatus = 'En attente caisse';
-      chipStatus.textContent = uiStatus;
+      chipStatus.className = 'chip staff-status-badge';
+      chipStatus.textContent = displayStatus;
       head.appendChild(chipStatus);
       card.appendChild(head);
 
-      applyStatusClasses(card, chipStatus, status);
-      if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
+      const actionBadge = buildStaffActionBadge(rawStatus);
+      if (actionBadge) card.appendChild(actionBadge);
 
-      const prev = lastStatusByTable[id];
-      if (prev !== status) {
-        if (typeof maybePlayStatusSound === 'function') if (typeof maybePlayStatusSound === 'function') maybePlayStatusSound(id, status);
-        lastStatusByTable[id] = status;
-      }
+      const timeBadge = buildStaffTimeBadge(tb, rawStatus);
+      card.appendChild(timeBadge);
 
-      const meta = document.createElement('div');
-      meta.className = 'card-meta';
-
-      if (status === 'Commandée' || status === 'Nouvelle commande') {
-        const actionBadge = document.createElement('span');
-        actionBadge.className = 'chip chip-action';
-        actionBadge.textContent = 'Imprime le ticket !';
-        meta.appendChild(actionBadge);
-      } else if (status === 'À encoder en caisse') {
-        const actionBadge = document.createElement('span');
-        actionBadge.className = 'chip chip-action';
-        actionBadge.textContent = 'Encode dans la caisse !';
-        meta.appendChild(actionBadge);
-      } else if (status === 'En préparation') {
-        const kitchenBadge = document.createElement('span');
-        kitchenBadge.className = 'chip';
-        kitchenBadge.textContent = hasLastTicket ? `En cuisine… ${lastTime}` : 'En cuisine…';
-        meta.appendChild(kitchenBadge);
-      } else if (status === 'Vide') {
-        const emptyBadge = document.createElement('span');
-        emptyBadge.className = 'chip muted';
-        emptyBadge.textContent = '—';
-        meta.appendChild(emptyBadge);
-      }
-
-      if (status !== 'En préparation') {
-        const chipTime = document.createElement('span');
-        chipTime.className = 'chip';
-        chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
-        meta.appendChild(chipTime);
-      }
-
-      card.appendChild(meta);
-
-      card.addEventListener('click', async (e) => {
-        if (e.target.closest('button')) return;
-
-        const currentId = window.__currentDetailTableId || null;
-        if (currentId && normId(currentId) === id) {
-          const panel = document.querySelector('#tableDetailPanel');
-          if (panel) {
-            panel.style.display = 'none';
-            panel.innerHTML = '';
-          }
-          window.__currentDetailTableId = null;
-          return;
-        }
-
-        const freshMap = window.__latestTablesById || {};
-        const freshTable = freshMap[id] || null;
-        const freshStatus = (freshTable && freshTable.status) ? freshTable.status : status;
-
-        if (window.showTableDetail) {
-          window.showTableDetail(id, freshStatus);
+      card.addEventListener('click', () => {
+        if (typeof window.openTableDetail === 'function') {
+          window.openTableDetail(id);
+        } else {
+          document.dispatchEvent(new CustomEvent('staff:open-table-detail', { detail: { tableId: id } }));
         }
       });
 
-      return card;
-    };
+      activeSection.appendChild(card);
+    });
 
-    activeTables.forEach((tb) => tablesContainer.appendChild(buildCard(tb, false)));
+    tablesContainer.appendChild(activeSection);
 
     if (emptyTables.length) {
-      const divider = document.createElement('div');
-      divider.className = 'tables-divider';
-      tablesContainer.appendChild(divider);
+      const emptySection = document.createElement('section');
+      emptySection.className = 'staff-empty-section';
 
-      const emptyTitle = document.createElement('div');
-      emptyTitle.className = 'tables-group-title';
+      const emptyTitle = document.createElement('h3');
+      emptyTitle.className = 'staff-empty-title';
       emptyTitle.textContent = 'Tables vides';
-      tablesContainer.appendChild(emptyTitle);
+      emptySection.appendChild(emptyTitle);
 
       const emptyGrid = document.createElement('div');
-      emptyGrid.className = 'tables-empty-grid';
-      emptyTables.forEach((tb) => emptyGrid.appendChild(buildCard(tb, true)));
-      tablesContainer.appendChild(emptyGrid);
+      emptyGrid.className = 'staff-empty-grid';
+
+      emptyTables.forEach((tb) => {
+        const id = normId(tb.id);
+        const card = document.createElement('div');
+        card.className = 'table staff-empty-card';
+        card.setAttribute('data-table', id);
+
+        const row = document.createElement('div');
+        row.className = 'staff-empty-row';
+
+        const chipId = document.createElement('span');
+        chipId.className = 'chip staff-table-id';
+        chipId.textContent = id;
+        row.appendChild(chipId);
+
+        const chipStatus = document.createElement('span');
+        chipStatus.className = 'chip staff-empty-badge';
+        chipStatus.textContent = 'Vide';
+        row.appendChild(chipStatus);
+
+        card.appendChild(row);
+
+        const dash = document.createElement('div');
+        dash.className = 'staff-empty-dash';
+        dash.textContent = '—';
+        card.appendChild(dash);
+
+        card.addEventListener('click', () => {
+          if (typeof window.openTableDetail === 'function') {
+            window.openTableDetail(id);
+          } else {
+            document.dispatchEvent(new CustomEvent('staff:open-table-detail', { detail: { tableId: id } }));
+          }
+        });
+
+        emptyGrid.appendChild(card);
+      });
+
+      emptySection.appendChild(emptyGrid);
+      tablesContainer.appendChild(emptySection);
     }
-  }
-
-  // --- Appels API
-
-  async function (typeof fetchSummary === 'function' ? fetchSummary() : Promise.resolve({items:[], totals:{}})) {
-    const base = getApiBase();
-    if (!base) return { items: [], totals: {} };
-    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { items: [], totals: {} };
-  }
-
-  async function fetchManagerSummary() {
-    const base = getApiBase();
-    if (!base) return { totals: {}, byTable: [], byHour: [], recentSessions: [] };
-    const params = new URLSearchParams();
-    params.set('startDate', managerStartDateInput?.value || historyDateInput?.value || todayKey());
-    params.set('endDate', managerEndDateInput?.value || managerStartDateInput?.value || historyDateInput?.value || todayKey());
-    if (managerTableFilter?.value) params.set('tableId', managerTableFilter.value);
-    const res = await fetch(`${base}/manager-summary?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { totals: {}, byTable: [], byHour: [], recentSessions: [] };
-  }
-
-  async function fetchHistory() {
-    const base = getApiBase();
-    if (!base) return { items: [] };
-    const params = new URLSearchParams();
-    params.set('date', historyDateInput?.value || todayKey());
-    if (historyTableFilter?.value) params.set('tableId', historyTableFilter.value);
-    if (historyTypeFilter?.value) params.set('closureType', historyTypeFilter.value);
-    const res = await fetch(`${base}/history-sessions?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { items: [] };
-  }
-
-  async function fetchDiagnosticOverview() {
-    const base = getApiBase();
-    if (!base) return { totals: {}, breakdown: {} };
-    const params = new URLSearchParams();
-    params.set('date', historyDateInput?.value || todayKey());
-    if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
-    if (diagTypeFilter?.value) params.set('eventType', diagTypeFilter.value);
-    if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
-    params.set('includeAudit', diagIncludeAudit?.checked ? 'true' : 'false');
-    const res = await fetch(`${base}/diagnostic/overview?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { totals: {}, breakdown: {} };
   }
 
   async function fetchDiagnosticEvents() {

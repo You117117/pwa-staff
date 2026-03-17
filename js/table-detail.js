@@ -1,15 +1,6 @@
 // table-detail.js — panneau détail table / historique Bloc 6
 
 (function () {
-  const STATUS_DISPLAY_LABELS = {
-    'Nouvelle commande': 'Commande additionnel',
-    'À encoder en caisse': 'En attente caisse',
-  };
-
-  function displayStatusLabel(label) {
-    return STATUS_DISPLAY_LABELS[label] || label || 'Vide';
-  }
-
   let panel = document.querySelector('#tableDetailPanel');
   if (!panel) {
     panel = document.createElement('div');
@@ -716,7 +707,7 @@
 
     const statusChip = document.createElement('div');
     statusChip.className = 'chip';
-    statusChip.textContent = `Statut : ${displayStatusLabel(currentStatus)}`;
+    statusChip.textContent = `Statut : ${currentStatus}`;
     statusChip.style.marginBottom = '12px';
     panel.appendChild(statusChip);
 

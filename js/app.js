@@ -361,7 +361,7 @@ function detectTablesChangesAndBeep(tables) {
   function leftCardPriority(label){
     switch(label){
       case 'Commandée': return 10;
-      case 'Nouvelle commande': return 20;
+      case 'Nouvelle commande': return 10;
       case 'En préparation': return 30;
       case 'À encoder en caisse': return 40;
       case 'Vide': return 90;
@@ -373,7 +373,7 @@ function detectTablesChangesAndBeep(tables) {
     switch(label){
       case 'Commandée':
       case 'Nouvelle commande':
-        return 'rgba(245,158,11,0.18)';
+        return 'rgba(251,191,36,0.22)';
       case 'En préparation':
         return 'rgba(59,130,246,0.16)';
       case 'À encoder en caisse':
@@ -389,7 +389,8 @@ function detectTablesChangesAndBeep(tables) {
     const action = actionLabelForStatus(label);
     if (!action) return null;
     const badge = document.createElement('span');
-    badge.className = 'chip chip-action chip-action--danger';
+    const isCashAction = label === 'À encoder en caisse';
+    badge.className = `chip chip-action ${isCashAction ? 'chip-action--cash' : 'chip-action--danger'}`;
     badge.textContent = action;
     return badge;
   }
@@ -811,8 +812,11 @@ function detectTablesChangesAndBeep(tables) {
       const id = normId(tb.id);
       const status = tb.status || 'Vide';
       const displayStatus = displayStatusLabel(status);
-      const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
-      const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
+      const ticketTimeSource = status === 'En préparation'
+        ? (tb?.lastTicket?.printedAt || tb?.lastTicket?.at || tb?.lastTicketAt || null)
+        : (tb?.lastTicket?.at || tb?.lastTicketAt || null);
+      const hasLastTicket = !!ticketTimeSource;
+      const lastTime = hasLastTicket ? formatTime(ticketTimeSource) : '—';
 
       const card = document.createElement('div');
       card.className = 'table';

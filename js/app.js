@@ -450,7 +450,7 @@ function detectTablesChangesAndBeep(tables) {
     }
   }
 
-  function startPulseForNewOrder(cardEl, tableId){
+  function startPulseForAttentionStatus(cardEl, tableId){
     // pulse for max 60s then keep red but stop animation (fatigue visuelle)
     cardEl.classList.add('pulse');
     if (pulseTimers[tableId]) clearTimeout(pulseTimers[tableId]);
@@ -848,7 +848,7 @@ function detectTablesChangesAndBeep(tables) {
       card.appendChild(head);
 
       applyStatusClasses(card, chipStatus, status);
-      if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
+      if (status === 'Nouvelle commande' || status === 'Commandée') startPulseForAttentionStatus(card, id);
 
       const prev = lastStatusByTable[id];
       if (prev !== status) {

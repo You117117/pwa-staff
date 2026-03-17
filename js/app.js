@@ -505,36 +505,43 @@ function detectTablesChangesAndBeep(tables) {
       wrapper.setAttribute('aria-label', `Voir le détail de la table ${tableId}`);
 
       const head = document.createElement('div');
-      head.className = 'head';
+      head.className = 'head summaryHeadTop';
 
       const chipTable = document.createElement('span');
       chipTable.className = 'chip';
       chipTable.textContent = t.tableLabel || tableId || t.table || 'Table';
       head.appendChild(chipTable);
 
+      head.appendChild(buildStatusBadge(currentStatus));
+      wrapper.appendChild(head);
+
+      const secondaryRow = document.createElement('div');
+      secondaryRow.className = 'head summaryHeadBottom';
+
       if (t.openTime) {
         const chipOpen = document.createElement('span');
         chipOpen.className = 'chip';
         chipOpen.textContent = `Ouverte : ${t.openTime}`;
-        head.appendChild(chipOpen);
+        secondaryRow.appendChild(chipOpen);
       }
 
       if (t.closedTime) {
         const chipClosed = document.createElement('span');
         chipClosed.className = 'chip';
         chipClosed.textContent = `Clôturée : ${t.closedTime}`;
-        head.appendChild(chipClosed);
+        secondaryRow.appendChild(chipClosed);
       }
 
       if (typeof currentTotal === 'number') {
         const chipTotal = document.createElement('span');
-        chipTotal.className = 'chip';
+        chipTotal.className = 'chip chip-total';
         chipTotal.textContent = `Total : ${currentTotal.toFixed(2)} €`;
-        head.appendChild(chipTotal);
+        secondaryRow.appendChild(chipTotal);
       }
 
-      head.appendChild(buildStatusBadge(currentStatus));
-      wrapper.appendChild(head);
+      if (secondaryRow.childElementCount > 0) {
+        wrapper.appendChild(secondaryRow);
+      }
 
       const meta = document.createElement('div');
       meta.className = 'summaryMeta';

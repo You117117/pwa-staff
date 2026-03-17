@@ -409,3 +409,178 @@ select{
 .summary-section{height:auto;}
 .summary-body{display:block;}
 #summary{max-height:min(60vh, 560px);}
+
+
+/* === Staff board refresh 2026-03-17 === */
+#tables{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+  padding:14px;
+}
+
+.tables-group{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.tables-group + .tables-group{
+  padding-top:14px;
+  border-top:1px solid rgba(137,160,198,0.16);
+}
+
+.tables-group-title{
+  margin:0;
+  font-size:15px;
+  font-weight:800;
+  color:#d9e6ff;
+}
+
+.tables-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  gap:12px;
+}
+
+.tables-grid--empty{
+  grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.table{
+  min-height:118px;
+  padding:14px;
+  gap:12px;
+  border-left-width:6px;
+  box-shadow:0 10px 24px rgba(2,6,23,0.18);
+}
+
+.table--compact{
+  min-height:82px;
+  padding:12px 14px;
+  gap:8px;
+  box-shadow:none;
+}
+
+.table--print{
+  background:rgba(245,158,11,0.14) !important;
+  border-color:rgba(245,158,11,0.20);
+}
+
+.table--prep{
+  background:rgba(37,99,235,0.16) !important;
+  border-color:rgba(96,165,250,0.22);
+}
+
+.table--cash{
+  background:rgba(139,92,246,0.14) !important;
+  border-color:rgba(167,139,250,0.22);
+}
+
+.table--empty{
+  background:rgba(148,163,184,0.05) !important;
+  border-color:rgba(71,85,105,0.45);
+}
+
+.card-head,
+.card-meta{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+}
+
+.chip-table-id{
+  font-size:17px !important;
+  font-weight:900 !important;
+  padding:9px 14px !important;
+  background:#243b69;
+  min-width:58px;
+  justify-content:center;
+}
+
+.chip-status-label{
+  font-size:13px !important;
+  font-weight:800 !important;
+  padding:9px 16px !important;
+}
+
+.chip-time,
+.chip-empty-dash,
+.chip-info{
+  background:rgba(34,49,85,0.9);
+  color:#e8eefc;
+  font-size:13px;
+  font-weight:800;
+  padding:8px 12px;
+}
+
+.chip-info--prep{
+  background:rgba(19,39,79,0.95);
+  color:#f8fbff;
+}
+
+.chip-action--urgent{
+  background:var(--danger) !important;
+  color:#fff !important;
+  font-size:13px;
+  font-weight:900;
+  padding:8px 14px;
+  box-shadow:0 8px 18px rgba(240,62,62,0.28);
+}
+
+.table--compact .chip-status-label{
+  font-size:12px !important;
+  padding:8px 14px !important;
+}
+
+.table--compact .chip-table-id{
+  font-size:15px !important;
+  min-width:52px;
+}
+
+.table--compact .card-meta{
+  margin-top:-2px;
+}
+
+.table--compact .chip-empty-dash{
+  color:#9db1d7;
+}
+
+.status-commandee,
+.status-nouvelle_commande{
+  border-left-color:var(--warn);
+}
+
+.chip.status-commandee,
+.chip.status-nouvelle_commande{
+  background:var(--warn);
+  color:#2b2100;
+}
+
+.status-en_preparation{
+  border-left-color:#38bdf8;
+}
+
+.chip.status-en_preparation{
+  background:#1d4ed8;
+  color:#eff6ff;
+}
+
+.status-a_encoder_caisse{
+  border-left-color:var(--violet);
+}
+
+.chip.status-a_encoder_caisse{
+  background:var(--violet);
+  color:#fff;
+}
+
+.status-vide{
+  border-left-color:#64748b;
+}
+
+.chip.status-vide{
+  background:#374151;
+  color:#f8fafc;
+}

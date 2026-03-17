@@ -323,39 +323,21 @@ function detectTablesChangesAndBeep(tables) {
   const lastStatusByTable = {};   // per table transition tracking
   const pulseTimers = {};         // per table pulse stop timeout
 
-  function statusKey(label){
-    return (STATUS_UI[label] && STATUS_UI[label].key) ? STATUS_UI[label].key : 'vide';
-  }
-  function statusPrio(label){
-    return (STATUS_UI[label] && typeof STATUS_UI[label].prio === 'number') ? STATUS_UI[label].prio : 999;
+  const STATUS_DISPLAY_LABELS = {
+    'Nouvelle commande': 'Commande additionnel',
+    'À encoder en caisse': 'En attente caisse',
+  };
+
+  function displayStatusLabel(label){
+    return STATUS_DISPLAY_LABELS[label] || label || 'Vide';
   }
 
-  function statusClassName(label){
-    return `status-${statusKey(label)}`;
-  }
-
-  function buildStatusBadge(label){
-    const badge = document.createElement('span');
-    badge.className = `chip ${statusClassName(label)}`;
-    badge.textContent = label || 'Vide';
-    return badge;
-  }
-
-  function actionLabelForStatus(label){
-    switch(label){
-      case 'Commandée': return 'Imprimer ticket';
-      case 'Nouvelle commande': return 'Imprimer ajout';
-      case 'À encoder en caisse': return 'Encoder en caisse';
-      case 'Encodage caisse confirmé': return 'Clôturer';
-      default: return '';
-    }
-  }
 
   function buildActionBadge(label){
     const action = actionLabelForStatus(label);
     if (!action) return null;
     const badge = document.createElement('span');
-    badge.className = 'chip chip-action';
+    badge.className = 'chip chip-action chip-action--urgent';
     badge.textContent = action;
     return badge;
   }
@@ -737,81 +719,112 @@ function detectTablesChangesAndBeep(tables) {
     if (tablesEmpty) tablesEmpty.style.display = 'none';
 
     const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
+    const filteredTables = tables
+      .filter((tb) => {
+        const id = normId(tb.id);
+        if (!id) return false;
+        if (filterValue !== 'TOUTES' && filterValue !== id) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const prioDiff = getStatusSortPriority(a.status || 'Vide') - getStatusSortPriority(b.status || 'Vide');
+        if (prioDiff !== 0) return prioDiff;
+        const tsDiff = getTableSortTimestamp(a) - getTableSortTimestamp(b);
+        if (tsDiff !== 0) return tsDiff;
+        return normId(a.id).localeCompare(normId(b.id), 'fr', { numeric: true });
+      });
 
-    tables.forEach((tb) => {
+    const activeTables = filteredTables.filter((tb) => !isEmptyStatus(tb.status || 'Vide'));
+    const emptyTables = filteredTables.filter((tb) => isEmptyStatus(tb.status || 'Vide'));
+
+    const createGroup = (title, compact = false) => {
+      const section = document.createElement('section');
+      section.className = `tables-group${compact ? ' tables-group--empty' : ''}`;
+
+      const heading = document.createElement('h3');
+      heading.className = 'tables-group-title';
+      heading.textContent = title;
+      section.appendChild(heading);
+
+      const grid = document.createElement('div');
+      grid.className = `tables-grid${compact ? ' tables-grid--empty' : ''}`;
+      section.appendChild(grid);
+
+      tablesContainer.appendChild(section);
+      return grid;
+    };
+
+    const activeGrid = createGroup('Tables actives');
+    const emptyGrid = createGroup('Tables vides', true);
+
+    const renderCard = (tb, targetGrid) => {
       const id = normId(tb.id);
-      if (!id) return;
-
-      if (filterValue !== 'TOUTES' && filterValue !== id) return;
-
       const status = tb.status || 'Vide';
+      const theme = getStatusTheme(status);
+      const displayStatus = displayStatusLabel(status);
       const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
-
       const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
 
       const card = document.createElement('div');
-      card.className = 'table';
+      card.className = `table table--${theme}`;
       card.setAttribute('data-table', id);
-      // ✅ UI: couleur plein badge (carte entière) selon statut
-      const __statusLabel = (status || 'Vide').toString().trim();
-      const __bgMap = {
-        'Vide': 'rgba(148,163,184,0.06)',
-        'En cours': 'rgba(59,130,246,0.14)',
-        'Commandée': 'rgba(245,158,11,0.16)',
-        'Nouvelle commande': 'rgba(239,68,68,0.16)',
-        'En préparation': 'rgba(245,158,11,0.16)',
-        'À encoder en caisse': 'rgba(168,85,247,0.16)',
-        'Encodage caisse confirmé': 'rgba(16,185,129,0.16)',
-        'Clôture avec anomalie': 'rgba(239,68,68,0.16)',
-      };
-      card.style.background = __bgMap[__statusLabel] || 'rgba(15,23,42,0.6)';
+
+      if (theme === 'empty') {
+        card.classList.add('table--compact');
+      }
 
       const head = document.createElement('div');
       head.className = 'card-head';
 
       const chipId = document.createElement('span');
-      chipId.className = 'chip';
-      /*__BIGGER_BADGES__*/
-      chipId.style.fontSize = '14px';
-      chipId.style.padding = '8px 14px';
-      chipId.style.fontWeight = '800';
+      chipId.className = 'chip chip-table-id';
       chipId.textContent = id;
       head.appendChild(chipId);
 
       const chipStatus = document.createElement('span');
-      chipStatus.className = 'chip';
-      chipStatus.style.fontSize = '14px';
-      chipStatus.style.padding = '8px 14px';
-      chipStatus.style.fontWeight = '800';
-      chipStatus.textContent = status;
+      chipStatus.className = 'chip chip-status-label';
+      chipStatus.textContent = displayStatus;
       head.appendChild(chipStatus);
-      const actionBadge = buildActionBadge(status);
-      if (actionBadge) head.appendChild(actionBadge);
-
-      const chipTime = document.createElement('span');
-      chipTime.className = 'chip';
-      // Texte demandé : "Commandé à : (heure)"
-      chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
-      head.appendChild(chipTime);
 
       card.appendChild(head);
+
+      const meta = document.createElement('div');
+      meta.className = 'card-meta';
+
+      if (status === 'En préparation') {
+        const prepInfo = document.createElement('span');
+        prepInfo.className = 'chip chip-info chip-info--prep';
+        prepInfo.textContent = hasLastTicket ? `En cuisine • ${lastTime}` : 'En cuisine';
+        meta.appendChild(prepInfo);
+      } else if (status !== 'Vide') {
+        const actionBadge = buildActionBadge(status);
+        if (actionBadge) meta.appendChild(actionBadge);
+
+        const chipTime = document.createElement('span');
+        chipTime.className = 'chip chip-time';
+        chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
+        meta.appendChild(chipTime);
+      } else {
+        const chipEmpty = document.createElement('span');
+        chipEmpty.className = 'chip chip-empty-dash';
+        chipEmpty.textContent = '—';
+        meta.appendChild(chipEmpty);
+      }
+
+      card.appendChild(meta);
 
       applyStatusClasses(card, chipStatus, status);
       if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
 
-      // --- UI: couleurs / pulse / sons (transition) ---
       const prev = lastStatusByTable[id];
       if (prev !== status) {
-        // sound only on transitions to Commandée / Nouvelle commande
         maybePlayStatusSound(id, status);
         lastStatusByTable[id] = status;
       }
 
-
       if (status !== 'Vide') {
         const actions = document.createElement('div');
         actions.className = 'card-actions';
-        // ✅ UI: boutons uniquement dans le détail (on les garde cachés ici pour la délégation)
         actions.style.display = 'none';
 
         const btnPrint = document.createElement('button');
@@ -825,7 +838,6 @@ function detectTablesChangesAndBeep(tables) {
         const payTimer = leftPayTimers[id];
         const printTimer = leftPrintTimers[id];
 
-        // --- Apparence du bouton IMPRESSION (avec éventuel compte à rebours) ---
         if (printTimer) {
           btnPrint.style.backgroundColor = '#f97316';
           const updatePrintLabel = () => {
@@ -866,9 +878,7 @@ function detectTablesChangesAndBeep(tables) {
           btnPrint.style.backgroundColor = '';
         }
 
-        // --- Apparence du bouton Paiement (avec éventuel compte à rebours) ---
         if (payTimer) {
-          // Compte à rebours en cours
           btnPaid.style.backgroundColor = '#f97316';
           const updateLabel = () => {
             const remain = payTimer.until - now();
@@ -880,7 +890,6 @@ function detectTablesChangesAndBeep(tables) {
             btnPaid.textContent = `Annuler (${sec}s)`;
           };
           updateLabel();
-          // Petit interval local juste pour ce bouton (si la carte reste affichée)
           const localInterval = setInterval(() => {
             if (!document.body.contains(btnPaid)) {
               clearInterval(localInterval);
@@ -904,11 +913,9 @@ function detectTablesChangesAndBeep(tables) {
             btnPaid.textContent = `Annuler (${sec}s)`;
           }, 250);
         } else if (isPaid) {
-          // Payée sans compte à rebours actif
           btnPaid.textContent = 'Annuler';
           btnPaid.style.backgroundColor = '#f97316';
         } else {
-          // Pas encore payée, pas de timer
           btnPaid.textContent = 'Paiement confirmé';
           btnPaid.style.backgroundColor = '';
         }
@@ -917,24 +924,14 @@ function detectTablesChangesAndBeep(tables) {
         actions.appendChild(btnPaid);
         card.appendChild(actions);
 
-        // --- Clic IMPRESSION avec compte à rebours 5s ---
         btnPrint.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
-
-          // Si impression déjà en cours pour cette table → on ignore
           if (leftPrintTimers[id]) return;
-
-          // Lance le compte à rebours UI 5s
           const until = now() + 5000;
-          const timer = {
-            until,
-            timeoutId: null,
-            intervalId: null,
-          };
+          const timer = { until, timeoutId: null, intervalId: null };
           leftPrintTimers[id] = timer;
-
           btnPrint.style.backgroundColor = '#f97316';
           const updatePrintLabel = () => {
             const remain = timer.until - now();
@@ -946,7 +943,6 @@ function detectTablesChangesAndBeep(tables) {
             }
           };
           updatePrintLabel();
-
           timer.intervalId = setInterval(() => {
             if (!document.body.contains(btnPrint)) {
               clearInterval(timer.intervalId);
@@ -962,7 +958,6 @@ function detectTablesChangesAndBeep(tables) {
               btnPrint.textContent = `Impression en cours (${sec}s)`;
             }
           }, 250);
-
           timer.timeoutId = setTimeout(() => {
             const current = leftPrintTimers[id];
             if (current === timer) {
@@ -972,8 +967,6 @@ function detectTablesChangesAndBeep(tables) {
             btnPrint.textContent = 'Imprimer maintenant';
             btnPrint.style.backgroundColor = '';
           }, 5000);
-
-          // Appel API /print (comme avant)
           try {
             await fetch(`${base}/print`, {
               method: 'POST',
@@ -990,15 +983,11 @@ function detectTablesChangesAndBeep(tables) {
           }
         });
 
-        // --- Gestion clic Paiement confirmé / Annuler (avec compte à rebours) ---
         btnPaid.addEventListener('click', async (e) => {
           e.stopPropagation();
           const base = getApiBase();
           if (!base) return;
-
           const currentTimer = leftPayTimers[id];
-
-          // 1) Si déjà payée OU si un compte à rebours est en cours → ANNULER PAIEMENT
           if (isPaid || currentTimer) {
             if (currentTimer) {
               clearTimeout(currentTimer.timeoutId);
@@ -1021,8 +1010,6 @@ function detectTablesChangesAndBeep(tables) {
             }
             return;
           }
-
-          // 2) Sinon → PAIEMENT CONFIRMÉ + démarrage du compte à rebours 5s
           try {
             await fetch(`${base}/confirm`, {
               method: 'POST',
@@ -1032,17 +1019,9 @@ function detectTablesChangesAndBeep(tables) {
           } catch (err) {
             console.error('Erreur /confirm', err);
           }
-
-          // On démarre le compte à rebours local de 5s
           const until = now() + 5000;
-          const countdown = {
-            until,
-            timeoutId: null,
-            intervalId: null,
-          };
+          const countdown = { until, timeoutId: null, intervalId: null };
           leftPayTimers[id] = countdown;
-
-          // Mise à jour immédiate du bouton
           btnPaid.style.backgroundColor = '#f97316';
           const updateLabel = () => {
             const remain = countdown.until - now();
@@ -1054,7 +1033,6 @@ function detectTablesChangesAndBeep(tables) {
             }
           };
           updateLabel();
-
           countdown.intervalId = setInterval(() => {
             if (!document.body.contains(btnPaid)) {
               clearInterval(countdown.intervalId);
@@ -1070,13 +1048,9 @@ function detectTablesChangesAndBeep(tables) {
               btnPaid.textContent = `Annuler (${sec}s)`;
             }
           }, 250);
-
-          // Au bout de 5s → clôture automatique de la table
           countdown.timeoutId = setTimeout(async () => {
-            // Si entre-temps on a annulé ou remplacé le timer, on ne fait rien
             if (leftPayTimers[id] !== countdown) return;
             delete leftPayTimers[id];
-
             try {
               const closeResp = await fetch(`${base}/close-table`, {
                 method: 'POST',
@@ -1100,7 +1074,6 @@ function detectTablesChangesAndBeep(tables) {
         });
       }
 
-      // Toggle panneau de droite en recliquant sur la même table
       card.addEventListener('click', async (e) => {
         if (e.target.closest('button')) return;
 
@@ -1124,8 +1097,11 @@ function detectTablesChangesAndBeep(tables) {
         }
       });
 
-      tablesContainer.appendChild(card);
-    });
+      targetGrid.appendChild(card);
+    };
+
+    activeTables.forEach((tb) => renderCard(tb, activeGrid));
+    emptyTables.forEach((tb) => renderCard(tb, emptyGrid));
   }
 
   // --- Appels API

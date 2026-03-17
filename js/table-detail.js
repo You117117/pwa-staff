@@ -130,6 +130,22 @@
     return `Ticket ${tableId} • ${ticketDate} • ${ticketTime}`;
   }
 
+  function makeInfoChip(label, strong = false) {
+    const chip = document.createElement('span');
+    chip.textContent = label;
+    chip.style.display = 'inline-flex';
+    chip.style.alignItems = 'center';
+    chip.style.borderRadius = '999px';
+    chip.style.padding = strong ? '8px 13px' : '7px 12px';
+    chip.style.fontSize = strong ? '14px' : '13px';
+    chip.style.fontWeight = strong ? '800' : '700';
+    chip.style.color = '#f8fafc';
+    chip.style.background = strong ? 'rgba(79,125,243,0.22)' : 'rgba(99,102,241,0.14)';
+    chip.style.border = '1px solid rgba(255,255,255,0.10)';
+    chip.style.lineHeight = '1';
+    return chip;
+  }
+
   function showStaffChoiceModal({
     title = 'Confirmation',
     message = '',
@@ -390,7 +406,7 @@
     const ticketLabel = document.createElement('div');
     ticketLabel.textContent = makeTicketDisplayLabel(tableId, ticket);
     ticketLabel.style.fontSize = '15px';
-    ticketLabel.style.fontWeight = '800';
+    ticketLabel.style.fontWeight = '500';
     ticketLabel.style.color = '#e2e8f0';
     ticketLabel.style.lineHeight = '1.2';
 
@@ -521,9 +537,9 @@
 
     const contextMeta = document.createElement('div');
     contextMeta.style.marginBottom = '10px';
-    contextMeta.style.color = '#e2e8f0';
-    contextMeta.style.fontSize = '14px';
-    contextMeta.style.lineHeight = '1.45';
+    contextMeta.style.display = 'flex';
+    contextMeta.style.flexWrap = 'wrap';
+    contextMeta.style.gap = '8px';
     panel.appendChild(contextMeta);
 
     const info = document.createElement('div');
@@ -800,14 +816,13 @@
     statusChip.style.color = statusStyle.color;
     panel.insertBefore(statusChip, contextMeta);
 
-    const contextBits = [];
     const contextText = contextMeta.textContent.trim();
-    if (contextText) contextBits.push(contextText);
-    if (!isHistoryView) {
-      contextBits.push(`${allTickets.length} ticket${allTickets.length > 1 ? 's' : ''}`);
-    }
-    contextBits.push(`Total : ${formatMoney(total)}`);
-    contextMeta.textContent = contextBits.filter(Boolean).join(' • ');
+    const contextBits = contextText
+      ? contextText.split('·').map((part) => part.trim()).filter(Boolean)
+      : [];
+    contextMeta.innerHTML = '';
+    contextBits.forEach((bit) => contextMeta.appendChild(makeInfoChip(bit)));
+    contextMeta.appendChild(makeInfoChip(`Montant total : ${formatMoney(total)}`, true));
 
     if (isHistoryView) {
       info.textContent = summaryEntry && summaryEntry.closureType === 'anomaly' ? 'Historique avec anomalie' : info.textContent;
@@ -829,30 +844,30 @@
       const btnPrint = document.createElement('button');
       btnPrint.className = 'btn btn-primary';
       btnPrint.style.width = '100%';
-      btnPrint.style.fontSize = '15px';
+      btnPrint.style.fontSize = '14px';
       btnPrint.style.fontWeight = '800';
-      btnPrint.style.borderRadius = '16px';
-      btnPrint.style.padding = '14px 16px';
+      btnPrint.style.borderRadius = '14px';
+      btnPrint.style.padding = '11px 14px';
       btnPrint.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
       btnPrint.style.color = '#ffffff';
 
       const btnPay = document.createElement('button');
       btnPay.className = 'btn btn-primary';
       btnPay.style.width = '100%';
-      btnPay.style.fontSize = '15px';
+      btnPay.style.fontSize = '14px';
       btnPay.style.fontWeight = '800';
-      btnPay.style.borderRadius = '16px';
-      btnPay.style.padding = '14px 16px';
-      btnPay.style.background = 'linear-gradient(135deg, #f6c44a 0%, #f0ac20 100%)';
-      btnPay.style.color = '#111827';
+      btnPay.style.borderRadius = '14px';
+      btnPay.style.padding = '11px 14px';
+      btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
+      btnPay.style.color = '#ffffff';
 
       const btnCloseTable = document.createElement('button');
       btnCloseTable.className = 'btn btn-primary';
       btnCloseTable.style.width = '100%';
-      btnCloseTable.style.fontSize = '15px';
+      btnCloseTable.style.fontSize = '14px';
       btnCloseTable.style.fontWeight = '800';
-      btnCloseTable.style.borderRadius = '16px';
-      btnCloseTable.style.padding = '14px 16px';
+      btnCloseTable.style.borderRadius = '14px';
+      btnCloseTable.style.padding = '11px 14px';
       btnCloseTable.textContent = 'Clôturer la table';
       btnCloseTable.dataset.role = 'close-in-progress-footer';
       btnCloseTable.style.backgroundColor = '#ef4444';
@@ -885,7 +900,8 @@
         btnPay.style.display = hasTickets ? 'block' : 'none';
         if (!hasTickets) {
           btnPay.textContent = 'Encoder dans la caisse';
-          btnPay.style.background = 'linear-gradient(135deg, #f6c44a 0%, #f0ac20 100%)';
+          btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
+          btnPay.style.color = '#ffffff';
           return;
         }
 
@@ -903,7 +919,8 @@
           btnPay.style.backgroundColor = '#f97316';
         } else {
           btnPay.textContent = 'Encoder dans la caisse';
-          btnPay.style.background = 'linear-gradient(135deg, #f6c44a 0%, #f0ac20 100%)';
+          btnPay.style.background = 'linear-gradient(135deg, #4f7df3 0%, #5b7cff 100%)';
+          btnPay.style.color = '#ffffff';
         }
       }
 
@@ -954,28 +971,8 @@
 
     if (!allTickets.length) {
       info.textContent = isHistoryView ? 'Aucune commande enregistrée pour cet historique.' : info.textContent;
-      const totalBoxEmpty = document.createElement('div');
-      totalBoxEmpty.style.marginTop = '6px';
-      totalBoxEmpty.style.marginBottom = '18px';
-      totalBoxEmpty.innerHTML = `
-        <div style="font-size:13px;opacity:.82;margin-bottom:4px;color:#e5e7eb;">Total ${isHistoryView ? '(historique)' : 'session'}</div>
-        <div style="font-size:28px;font-weight:700;color:#f8fafc;">0.00 €</div>
-      `;
-      panel.appendChild(totalBoxEmpty);
     } else {
       allTickets.forEach((ticket) => panel.appendChild(makeTicketCard(ticket, id)));
-      const totalBox = document.createElement('div');
-      totalBox.style.marginTop = '8px';
-      totalBox.style.marginBottom = '18px';
-      totalBox.style.display = 'flex';
-      totalBox.style.justifyContent = 'space-between';
-      totalBox.style.alignItems = 'flex-end';
-      totalBox.style.padding = '4px 2px 0';
-      totalBox.innerHTML = `
-        <div style="font-size:16px;opacity:.9;color:#e5e7eb;">Total ${isHistoryView ? 'historique' : 'session'}</div>
-        <div style="font-size:32px;font-weight:800;color:#f8fafc;">${formatMoney(total)}</div>
-      `;
-      panel.appendChild(totalBox);
     }
   }
 

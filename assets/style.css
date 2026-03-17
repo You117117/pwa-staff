@@ -266,13 +266,14 @@ select{
 .chip.status-cloture_anomalie{background:var(--danger)}
 .chip.status-cloturee{background:#334155; color:#e2e8f0}
 
-/* Pulse ONLY for Nouvelle commande, and only while class .pulse is present */
+/* Pulse for Commandée + Nouvelle commande, and only while class .pulse is present */
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(240,62,62,0.55); }
   70% { box-shadow: 0 0 0 14px rgba(240,62,62,0); }
   100% { box-shadow: 0 0 0 0 rgba(240,62,62,0); }
 }
-.status-nouvelle_commande.pulse{
+.status-nouvelle_commande.pulse,
+.status-commandee.pulse{
   animation:pulse 1s infinite;
 }
 

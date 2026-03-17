@@ -337,7 +337,7 @@ function detectTablesChangesAndBeep(tables) {
   function buildStatusBadge(label){
     const badge = document.createElement('span');
     badge.className = `chip ${statusClassName(label)}`;
-    badge.textContent = label || 'Vide';
+    badge.textContent = displayStatusLabel(label);
     return badge;
   }
 
@@ -573,7 +573,7 @@ function detectTablesChangesAndBeep(tables) {
           <span class="chip">Ouverte : ${item.openTime || '--:--'}</span>
           <span class="chip">Clôturée : ${item.closedTime || '—'}</span>
           <span class="chip">${Number(item.total || 0).toFixed(2)} €</span>
-          <span class="chip ${statusClassName(item.displayStatus || item.status || 'Vide')}">${item.displayStatus || item.status || 'Vide'}</span>
+          <span class="chip ${statusClassName(item.displayStatus || item.status || 'Vide')}">${displayStatusLabel(item.displayStatus || item.status || 'Vide')}</span>
         </div>
         <div class="summaryMeta">${item.ordersCount || 0} ticket(s) • ${item.itemsCount || 0} article(s) • durée ${Math.round(Number(item.durationSeconds || 0) / 60)} min</div>
       `;

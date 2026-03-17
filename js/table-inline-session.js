@@ -71,7 +71,7 @@
           <div class="tis-orders">${renderOrders(orders)}</div>
           <div class="tis-actions">
             <button data-act="print" data-table="${id}">🖨 Imprimer</button>
-            <button data-act="confirm" data-table="${id}">✔ Encoder en caisse</button>
+            <button data-act="confirm" data-table="${id}">✔ Encode dans la caisse !</button>
             <button data-act="refresh" data-table="${id}">🔄 Rafraîchir</button>
           </div>
         </div>`;

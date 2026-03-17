@@ -343,11 +343,45 @@ function detectTablesChangesAndBeep(tables) {
 
   function actionLabelForStatus(label){
     switch(label){
-      case 'Commandée': return 'Imprimer ticket';
-      case 'Nouvelle commande': return 'Imprimer ajout';
-      case 'À encoder en caisse': return 'Encoder en caisse';
-      case 'Encodage caisse confirmé': return 'Clôturer';
+      case 'Commandée': return 'Imprime le ticket !';
+      case 'Nouvelle commande': return 'Imprime le ticket !';
+      case 'À encoder en caisse': return 'Encode dans la caisse !';
       default: return '';
+    }
+  }
+
+  function displayStatusLabel(label){
+    switch(label){
+      case 'Nouvelle commande': return 'Commande additionnel';
+      case 'À encoder en caisse': return 'En attente caisse';
+      default: return label || 'Vide';
+    }
+  }
+
+  function leftCardPriority(label){
+    switch(label){
+      case 'Commandée': return 10;
+      case 'Nouvelle commande': return 20;
+      case 'En préparation': return 30;
+      case 'À encoder en caisse': return 40;
+      case 'Vide': return 90;
+      default: return 80;
+    }
+  }
+
+  function leftCardBg(label){
+    switch(label){
+      case 'Commandée':
+      case 'Nouvelle commande':
+        return 'rgba(245,158,11,0.18)';
+      case 'En préparation':
+        return 'rgba(59,130,246,0.16)';
+      case 'À encoder en caisse':
+        return 'rgba(139,92,246,0.18)';
+      case 'Vide':
+        return 'rgba(148,163,184,0.04)';
+      default:
+        return 'rgba(15,23,42,0.6)';
     }
   }
 
@@ -355,7 +389,7 @@ function detectTablesChangesAndBeep(tables) {
     const action = actionLabelForStatus(label);
     if (!action) return null;
     const badge = document.createElement('span');
-    badge.className = 'chip chip-action';
+    badge.className = 'chip chip-action chip-action--danger';
     badge.textContent = action;
     return badge;
   }
@@ -726,192 +760,438 @@ function detectTablesChangesAndBeep(tables) {
 
   // --- Rendu des tables
 
-  function staffDisplayStatus(rawStatus, tb) {
-    const status = (rawStatus || 'Vide').toString().trim();
-    if (status === 'Nouvelle commande') return 'Commande additionnel';
-    if (status === 'À encoder en caisse') return 'En attente caisse';
-    return status;
-  }
-
-  function staffCardKind(rawStatus) {
-    const status = (rawStatus || 'Vide').toString().trim();
-    if (status === 'Commandée') return 'print';
-    if (status === 'Nouvelle commande') return 'print-additional';
-    if (status === 'En préparation') return 'prep';
-    if (status === 'À encoder en caisse') return 'cash';
-    return 'idle';
-  }
-
-  function staffSortPriority(rawStatus) {
-    const status = (rawStatus || 'Vide').toString().trim();
-    if (status === 'Commandée') return 1;
-    if (status === 'Nouvelle commande') return 2;
-    if (status === 'En préparation') return 3;
-    if (status === 'À encoder en caisse') return 4;
-    return 5;
-  }
-
-  function buildStaffActionBadge(rawStatus) {
-    const status = (rawStatus || 'Vide').toString().trim();
-    let label = '';
-    if (status === 'Commandée' || status === 'Nouvelle commande') {
-      label = 'Imprime le ticket !';
-    } else if (status === 'À encoder en caisse') {
-      label = 'Encode dans la caisse !';
-    } else if (status === 'En préparation') {
-      return null;
-    } else {
-      return null;
-    }
-    const badge = document.createElement('span');
-    badge.className = 'staff-action-badge';
-    badge.textContent = label;
-    return badge;
-  }
-
-  function buildStaffTimeBadge(tb, rawStatus) {
-    const status = (rawStatus || 'Vide').toString().trim();
-    const badge = document.createElement('span');
-    badge.className = 'staff-time-badge';
-    const at = tb && tb.lastTicket && tb.lastTicket.at ? tb.lastTicket.at : null;
-    const time = at ? formatTime(at) : '—';
-    if (status === 'En préparation') {
-      badge.textContent = `En cuisine • ${time}`;
-    } else {
-      badge.textContent = `🕒 ${time}`;
-    }
-    return badge;
-  }
-
   function renderTables(tables) {
     if (!tablesContainer) return;
     tablesContainer.innerHTML = '';
 
-    const allTables = Array.isArray(tables) ? tables.slice() : [];
-    const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
-    const visible = allTables.filter((tb) => {
-      const id = normId(tb && tb.id);
-      if (!id) return false;
-      if (filterValue !== 'TOUTES' && filterValue !== id) return false;
-      return true;
-    });
-
-    if (!visible.length) {
+    if (!tables || tables.length === 0) {
       if (tablesEmpty) tablesEmpty.style.display = 'block';
       return;
     }
     if (tablesEmpty) tablesEmpty.style.display = 'none';
 
-    const sorted = visible.sort((a, b) => {
-      const prioDiff = staffSortPriority(a.status) - staffSortPriority(b.status);
-      if (prioDiff !== 0) return prioDiff;
-      const atA = a && a.lastTicket && a.lastTicket.at ? new Date(a.lastTicket.at).getTime() : Number.MAX_SAFE_INTEGER;
-      const atB = b && b.lastTicket && b.lastTicket.at ? new Date(b.lastTicket.at).getTime() : Number.MAX_SAFE_INTEGER;
-      if (atA !== atB) return atA - atB;
-      return String(a.id || '').localeCompare(String(b.id || ''));
-    });
+    const filterValue = filterSelect ? normId(filterSelect.value) : 'TOUTES';
+    const normalizedTables = tables
+      .filter((tb) => {
+        const id = normId(tb.id);
+        if (!id) return false;
+        if (filterValue !== 'TOUTES' && filterValue !== id) return false;
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        const pa = leftCardPriority(a.status || 'Vide');
+        const pb = leftCardPriority(b.status || 'Vide');
+        if (pa !== pb) return pa - pb;
+        const ta = new Date(a?.lastTicket?.at || a?.lastTicketAt || 0).getTime() || 0;
+        const tbv = new Date(b?.lastTicket?.at || b?.lastTicketAt || 0).getTime() || 0;
+        if (ta !== tbv) return ta - tbv;
+        return normId(a.id).localeCompare(normId(b.id), 'fr', { numeric: true });
+      });
 
-    const activeTables = sorted.filter((tb) => (tb.status || 'Vide') !== 'Vide');
-    const emptyTables = sorted.filter((tb) => (tb.status || 'Vide') === 'Vide');
+    if (!normalizedTables.length) {
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
+      return;
+    }
 
-    const activeSection = document.createElement('div');
-    activeSection.className = 'staff-active-grid';
+    const activeTables = normalizedTables.filter((tb) => (tb.status || 'Vide') !== 'Vide');
+    const emptyTables = normalizedTables.filter((tb) => (tb.status || 'Vide') === 'Vide');
 
-    activeTables.forEach((tb) => {
+    const activeGrid = document.createElement('div');
+    activeGrid.className = 'tables-grid tables-grid--active';
+    const emptySection = document.createElement('div');
+    emptySection.className = 'tables-empty-section';
+    const emptyTitle = document.createElement('div');
+    emptyTitle.className = 'tables-subtitle';
+    emptyTitle.textContent = 'Tables vides';
+    const emptyGrid = document.createElement('div');
+    emptyGrid.className = 'tables-grid tables-grid--empty';
+
+    function appendTableCard(tb, targetGrid) {
       const id = normId(tb.id);
-      const rawStatus = (tb.status || 'Vide').toString().trim();
-      const displayStatus = staffDisplayStatus(rawStatus, tb);
-      const kind = staffCardKind(rawStatus);
+      const status = tb.status || 'Vide';
+      const displayStatus = displayStatusLabel(status);
+      const hasLastTicket = !!(tb.lastTicket && tb.lastTicket.at);
+      const lastTime = hasLastTicket ? formatTime(tb.lastTicket.at) : '—';
 
       const card = document.createElement('div');
-      card.className = `table staff-table-card staff-card-${kind}`;
+      card.className = 'table';
       card.setAttribute('data-table', id);
+      card.style.background = leftCardBg(status);
+      if (status === 'Vide') card.classList.add('table--empty');
 
       const head = document.createElement('div');
       head.className = 'card-head';
 
       const chipId = document.createElement('span');
-      chipId.className = 'chip staff-table-id';
+      chipId.className = 'chip chip-id';
       chipId.textContent = id;
       head.appendChild(chipId);
 
       const chipStatus = document.createElement('span');
-      chipStatus.className = 'chip staff-status-badge';
+      chipStatus.className = 'chip chip-status';
       chipStatus.textContent = displayStatus;
       head.appendChild(chipStatus);
       card.appendChild(head);
 
-      const actionBadge = buildStaffActionBadge(rawStatus);
-      if (actionBadge) card.appendChild(actionBadge);
+      applyStatusClasses(card, chipStatus, status);
+      if (status === 'Nouvelle commande') startPulseForNewOrder(card, id);
 
-      const timeBadge = buildStaffTimeBadge(tb, rawStatus);
-      card.appendChild(timeBadge);
+      const prev = lastStatusByTable[id];
+      if (prev !== status) {
+        maybePlayStatusSound(id, status);
+        lastStatusByTable[id] = status;
+      }
 
-      card.addEventListener('click', () => {
-        if (typeof window.openTableDetail === 'function') {
-          window.openTableDetail(id);
+      const body = document.createElement('div');
+      body.className = 'card-body';
+
+      const actionBadge = buildActionBadge(status);
+      if (actionBadge) body.appendChild(actionBadge);
+
+      const timeRow = document.createElement('div');
+      timeRow.className = 'card-time-row';
+      const chipTime = document.createElement('span');
+      chipTime.className = 'chip chip-time';
+      if (status === 'En préparation') {
+        chipTime.textContent = hasLastTicket ? `En cuisine… ${lastTime}` : 'En cuisine…';
+      } else {
+        chipTime.textContent = hasLastTicket ? `🕒 ${lastTime}` : '—';
+      }
+      timeRow.appendChild(chipTime);
+      body.appendChild(timeRow);
+      card.appendChild(body);
+
+      if (status !== 'Vide') {
+        const actions = document.createElement('div');
+        actions.className = 'card-actions';
+        actions.style.display = 'none';
+
+        const btnPrint = document.createElement('button');
+        btnPrint.className = 'btn btn-primary btn-print';
+        btnPrint.textContent = 'Imprimer maintenant';
+
+        const btnPaid = document.createElement('button');
+        btnPaid.className = 'btn btn-primary btn-paid';
+
+        const isPaid = status === 'Encodage caisse confirmé';
+        const payTimer = leftPayTimers[id];
+        const printTimer = leftPrintTimers[id];
+
+        if (printTimer) {
+          btnPrint.style.backgroundColor = '#f97316';
+          const updatePrintLabel = () => {
+            const remain = printTimer.until - now();
+            if (remain <= 0) {
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
+          };
+          updatePrintLabel();
+          const localPrintInterval = setInterval(() => {
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(localPrintInterval);
+              return;
+            }
+            const cur = leftPrintTimers[id];
+            if (!cur) {
+              clearInterval(localPrintInterval);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const remain = cur.until - now();
+            if (remain <= 0) {
+              clearInterval(localPrintInterval);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPrint.textContent = `Impression en cours (${sec}s)`;
+          }, 250);
         } else {
-          document.dispatchEvent(new CustomEvent('staff:open-table-detail', { detail: { tableId: id } }));
+          btnPrint.textContent = 'Imprimer maintenant';
+          btnPrint.style.backgroundColor = '';
         }
-      });
 
-      activeSection.appendChild(card);
-    });
+        if (payTimer) {
+          btnPaid.style.backgroundColor = '#f97316';
+          const updateLabel = () => {
+            const remain = payTimer.until - now();
+            if (remain <= 0) {
+              btnPaid.textContent = 'Paiement confirmé';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler (${sec}s)`;
+          };
+          updateLabel();
+          const localInterval = setInterval(() => {
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(localInterval);
+              return;
+            }
+            const currentTimer = leftPayTimers[id];
+            if (!currentTimer) {
+              clearInterval(localInterval);
+              btnPaid.textContent = isPaid ? 'Annuler' : 'Paiement confirmé';
+              btnPaid.style.backgroundColor = isPaid ? '#f97316' : '';
+              return;
+            }
+            const remain = currentTimer.until - now();
+            if (remain <= 0) {
+              clearInterval(localInterval);
+              btnPaid.textContent = 'Paiement confirmé';
+              btnPaid.style.backgroundColor = '';
+              return;
+            }
+            const sec = Math.max(1, Math.ceil(remain / 1000));
+            btnPaid.textContent = `Annuler (${sec}s)`;
+          }, 250);
+        } else if (isPaid) {
+          btnPaid.textContent = 'Annuler';
+          btnPaid.style.backgroundColor = '#f97316';
+        } else {
+          btnPaid.textContent = 'Paiement confirmé';
+          btnPaid.style.backgroundColor = '';
+        }
 
-    tablesContainer.appendChild(activeSection);
+        actions.appendChild(btnPrint);
+        actions.appendChild(btnPaid);
+        card.appendChild(actions);
 
-    if (emptyTables.length) {
-      const emptySection = document.createElement('section');
-      emptySection.className = 'staff-empty-section';
-
-      const emptyTitle = document.createElement('h3');
-      emptyTitle.className = 'staff-empty-title';
-      emptyTitle.textContent = 'Tables vides';
-      emptySection.appendChild(emptyTitle);
-
-      const emptyGrid = document.createElement('div');
-      emptyGrid.className = 'staff-empty-grid';
-
-      emptyTables.forEach((tb) => {
-        const id = normId(tb.id);
-        const card = document.createElement('div');
-        card.className = 'table staff-empty-card';
-        card.setAttribute('data-table', id);
-
-        const row = document.createElement('div');
-        row.className = 'staff-empty-row';
-
-        const chipId = document.createElement('span');
-        chipId.className = 'chip staff-table-id';
-        chipId.textContent = id;
-        row.appendChild(chipId);
-
-        const chipStatus = document.createElement('span');
-        chipStatus.className = 'chip staff-empty-badge';
-        chipStatus.textContent = 'Vide';
-        row.appendChild(chipStatus);
-
-        card.appendChild(row);
-
-        const dash = document.createElement('div');
-        dash.className = 'staff-empty-dash';
-        dash.textContent = '—';
-        card.appendChild(dash);
-
-        card.addEventListener('click', () => {
-          if (typeof window.openTableDetail === 'function') {
-            window.openTableDetail(id);
-          } else {
-            document.dispatchEvent(new CustomEvent('staff:open-table-detail', { detail: { tableId: id } }));
+        btnPrint.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const base = getApiBase();
+          if (!base) return;
+          if (leftPrintTimers[id]) return;
+          const until = now() + 5000;
+          const timer = { until, timeoutId: null, intervalId: null };
+          leftPrintTimers[id] = timer;
+          btnPrint.style.backgroundColor = '#f97316';
+          const updatePrintLabel = () => {
+            const remain = timer.until - now();
+            if (remain <= 0) {
+              btnPrint.textContent = 'Imprimer maintenant';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPrint.textContent = `Impression en cours (${sec}s)`;
+            }
+          };
+          updatePrintLabel();
+          timer.intervalId = setInterval(() => {
+            if (!document.body.contains(btnPrint)) {
+              clearInterval(timer.intervalId);
+              return;
+            }
+            const remain = timer.until - now();
+            if (remain <= 0) {
+              clearInterval(timer.intervalId);
+              btnPrint.textContent = 'Imprimer maintenant';
+              btnPrint.style.backgroundColor = '';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPrint.textContent = `Impression en cours (${sec}s)`;
+            }
+          }, 250);
+          timer.timeoutId = setTimeout(() => {
+            const current = leftPrintTimers[id];
+            if (current === timer) delete leftPrintTimers[id];
+            clearInterval(timer.intervalId);
+            btnPrint.textContent = 'Imprimer maintenant';
+            btnPrint.style.backgroundColor = '';
+          }, 5000);
+          try {
+            await fetch(`${base}/print`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /print', err);
+          } finally {
+            await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
           }
         });
 
-        emptyGrid.appendChild(card);
+        btnPaid.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const base = getApiBase();
+          if (!base) return;
+          const currentTimer = leftPayTimers[id];
+          if (isPaid || currentTimer) {
+            if (currentTimer) {
+              clearTimeout(currentTimer.timeoutId);
+              clearInterval(currentTimer.intervalId);
+              delete leftPayTimers[id];
+            }
+            try {
+              await fetch(`${base}/cancel-confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id }),
+              });
+            } catch (err) {
+              console.error('Erreur /cancel-confirm', err);
+            } finally {
+              await refreshTables();
+              if (window.__currentDetailTableId === id && window.showTableDetail) {
+                window.showTableDetail(id);
+              }
+            }
+            return;
+          }
+          try {
+            await fetch(`${base}/confirm`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ table: id }),
+            });
+          } catch (err) {
+            console.error('Erreur /confirm', err);
+          }
+          const until = now() + 5000;
+          const countdown = { until, timeoutId: null, intervalId: null };
+          leftPayTimers[id] = countdown;
+          btnPaid.style.backgroundColor = '#f97316';
+          const updateLabel = () => {
+            const remain = countdown.until - now();
+            if (remain <= 0) {
+              btnPaid.textContent = 'Paiement confirmé';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPaid.textContent = `Annuler (${sec}s)`;
+            }
+          };
+          updateLabel();
+          countdown.intervalId = setInterval(() => {
+            if (!document.body.contains(btnPaid)) {
+              clearInterval(countdown.intervalId);
+              return;
+            }
+            const remain = countdown.until - now();
+            if (remain <= 0) {
+              clearInterval(countdown.intervalId);
+              btnPaid.textContent = 'Paiement confirmé';
+              btnPaid.style.backgroundColor = '';
+            } else {
+              const sec = Math.max(1, Math.ceil(remain / 1000));
+              btnPaid.textContent = `Annuler (${sec}s)`;
+            }
+          }, 250);
+          countdown.timeoutId = setTimeout(async () => {
+            if (leftPayTimers[id] !== countdown) return;
+            delete leftPayTimers[id];
+            try {
+              const closeResp = await fetch(`${base}/close-table`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ table: id, closureType: 'normal' }),
+              });
+              const closeJson = await closeResp.json().catch(() => ({}));
+              if (!closeResp.ok || closeJson?.ok === false) {
+                throw new Error(closeJson?.error || `http_${closeResp.status}`);
+              }
+            } catch (err) {
+              console.error('Erreur /close-table', err);
+              alert(`Impossible de clôturer la table : ${err.message || err}`);
+            } finally {
+              await refreshTables();
+              if (window.__currentDetailTableId === id && window.showTableDetail) {
+                window.showTableDetail(id);
+              }
+            }
+          }, 5000);
+        });
+      }
+
+      card.addEventListener('click', async (e) => {
+        if (e.target.closest('button')) return;
+        const currentId = window.__currentDetailTableId || null;
+        if (currentId && normId(currentId) === id) {
+          const panel = document.querySelector('#tableDetailPanel');
+          if (panel) {
+            panel.style.display = 'none';
+            panel.innerHTML = '';
+          }
+          window.__currentDetailTableId = null;
+          return;
+        }
+        const freshMap = window.__latestTablesById || {};
+        const freshTable = freshMap[id] || null;
+        const freshStatus = (freshTable && freshTable.status) ? freshTable.status : status;
+        if (window.showTableDetail) {
+          window.showTableDetail(id, freshStatus);
+        }
       });
 
+      targetGrid.appendChild(card);
+    }
+
+    activeTables.forEach((tb) => appendTableCard(tb, activeGrid));
+    emptyTables.forEach((tb) => appendTableCard(tb, emptyGrid));
+
+    if (activeTables.length) tablesContainer.appendChild(activeGrid);
+    if (emptyTables.length) {
+      emptySection.appendChild(emptyTitle);
       emptySection.appendChild(emptyGrid);
       tablesContainer.appendChild(emptySection);
     }
+  }
+
+  // --- Appels API
+
+  async function fetchSummary() {
+    const base = getApiBase();
+    if (!base) return { items: [], totals: {} };
+    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { items: [], totals: {} };
+  }
+
+  async function fetchManagerSummary() {
+    const base = getApiBase();
+    if (!base) return { totals: {}, byTable: [], byHour: [], recentSessions: [] };
+    const params = new URLSearchParams();
+    params.set('startDate', managerStartDateInput?.value || historyDateInput?.value || todayKey());
+    params.set('endDate', managerEndDateInput?.value || managerStartDateInput?.value || historyDateInput?.value || todayKey());
+    if (managerTableFilter?.value) params.set('tableId', managerTableFilter.value);
+    const res = await fetch(`${base}/manager-summary?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { totals: {}, byTable: [], byHour: [], recentSessions: [] };
+  }
+
+  async function fetchHistory() {
+    const base = getApiBase();
+    if (!base) return { items: [] };
+    const params = new URLSearchParams();
+    params.set('date', historyDateInput?.value || todayKey());
+    if (historyTableFilter?.value) params.set('tableId', historyTableFilter.value);
+    if (historyTypeFilter?.value) params.set('closureType', historyTypeFilter.value);
+    const res = await fetch(`${base}/history-sessions?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { items: [] };
+  }
+
+  async function fetchDiagnosticOverview() {
+    const base = getApiBase();
+    if (!base) return { totals: {}, breakdown: {} };
+    const params = new URLSearchParams();
+    params.set('date', historyDateInput?.value || todayKey());
+    if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
+    if (diagTypeFilter?.value) params.set('eventType', diagTypeFilter.value);
+    if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
+    params.set('includeAudit', diagIncludeAudit?.checked ? 'true' : 'false');
+    const res = await fetch(`${base}/diagnostic/overview?${params.toString()}`, { cache: 'no-store' });
+    const data = await res.json();
+    return data || { totals: {}, breakdown: {} };
   }
 
   async function fetchDiagnosticEvents() {

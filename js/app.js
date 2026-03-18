@@ -3,6 +3,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   // Sélecteurs
   const apiInput = document.querySelector('#apiUrl');
+  const staffTokenInput = document.querySelector('#staffApiToken');
   const btnSaveApi = document.querySelector('#btnSaveApi');
   const btnRefreshTables = document.querySelector('#btnRefreshTables');
   const btnRefreshSummary = document.querySelector('#btnRefreshSummary');
@@ -25,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const SSE_FALLBACK_REFRESH_MS = 60000;
   const LS_KEY_API = 'staff-api';
+  const LS_KEY_TOKEN = 'staff-api-token';
   let latestTablesById = {};
   window.__latestSummaryData = window.__latestSummaryData || { items: [], totals: {} };
   const refreshLocks = {
@@ -78,7 +80,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     disconnectStaffSse();
 
-    const url = `${base}/events/stream`;
+    const url = buildStaffSseUrl('/events/stream');
+    if (!url) return;
     const es = new EventSource(url);
     staffEventSource = es;
 
@@ -252,6 +255,48 @@ function detectTablesChangesAndBeep(tables) {
     }
   }
 
+  function getStaffToken() {
+    const raw = staffTokenInput ? staffTokenInput.value.trim() : '';
+    if (raw) return raw;
+    try {
+      return String(localStorage.getItem(LS_KEY_TOKEN) || '').trim();
+    } catch {
+      return '';
+    }
+  }
+
+  function buildStaffHeaders(extraHeaders = {}) {
+    const headers = { ...extraHeaders };
+    const token = getStaffToken();
+    if (token) headers['x-staff-token'] = token;
+    return headers;
+  }
+
+  async function staffFetch(path, options = {}) {
+    const base = getApiBase();
+    if (!base) throw new Error('API non configurée');
+    const finalOptions = { ...options };
+    finalOptions.headers = buildStaffHeaders(options.headers || {});
+    return fetch(`${base}${path}`, finalOptions);
+  }
+
+  function buildStaffSseUrl(path) {
+    const base = getApiBase();
+    if (!base) return '';
+    const url = new URL(`${base}${path}`);
+    const token = getStaffToken();
+    if (token) url.searchParams.set('staff_token', token);
+    return url.toString();
+  }
+
+  window.__staffApi = {
+    getApiBase,
+    getStaffToken,
+    buildStaffHeaders,
+    staffFetch,
+    buildStaffSseUrl,
+  };
+
   function formatTime(dateString) {
     if (!dateString) return '--:--';
     const d = new Date(dateString);
@@ -263,19 +308,23 @@ function detectTablesChangesAndBeep(tables) {
 
   function loadApiFromStorage() {
     try {
-      const v = localStorage.getItem(LS_KEY_API);
-      if (v && apiInput) apiInput.value = v;
+      const apiValue = localStorage.getItem(LS_KEY_API);
+      const tokenValue = localStorage.getItem(LS_KEY_TOKEN);
+      if (apiValue && apiInput) apiInput.value = apiValue;
+      if (tokenValue && staffTokenInput) staffTokenInput.value = tokenValue;
     } catch {}
   }
 
   function saveApiToStorage() {
-    if (!apiInput) return;
-    const v = apiInput.value.trim();
+    const apiValue = apiInput ? apiInput.value.trim() : '';
+    const tokenValue = staffTokenInput ? staffTokenInput.value.trim() : '';
     try {
-      if (v) {
-        localStorage.setItem(LS_KEY_API, v);
-        localStorage.setItem('API_URL', v);
+      if (apiValue) {
+        localStorage.setItem(LS_KEY_API, apiValue);
+        localStorage.setItem('API_URL', apiValue);
       }
+      if (tokenValue) localStorage.setItem(LS_KEY_TOKEN, tokenValue);
+      else localStorage.removeItem(LS_KEY_TOKEN);
     } catch {}
   }
 
@@ -793,7 +842,7 @@ function detectTablesChangesAndBeep(tables) {
             btnPrint.style.backgroundColor = '';
           }, 5000);
           try {
-            await fetch(`${base}/print`, {
+            await staffFetch('/print', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ table: id }),
@@ -820,7 +869,7 @@ function detectTablesChangesAndBeep(tables) {
               delete leftPayTimers[id];
             }
             try {
-              await fetch(`${base}/cancel-confirm`, {
+              await staffFetch('/cancel-confirm', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id }),
@@ -836,7 +885,7 @@ function detectTablesChangesAndBeep(tables) {
             return;
           }
           try {
-            await fetch(`${base}/confirm`, {
+            await staffFetch('/confirm', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ table: id }),
@@ -877,7 +926,7 @@ function detectTablesChangesAndBeep(tables) {
             if (leftPayTimers[id] !== countdown) return;
             delete leftPayTimers[id];
             try {
-              const closeResp = await fetch(`${base}/close-table`, {
+              const closeResp = await staffFetch('/close-table', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ table: id, closureType: 'normal' }),
@@ -938,7 +987,7 @@ function detectTablesChangesAndBeep(tables) {
   async function fetchSummary() {
     const base = getApiBase();
     if (!base) return { items: [], totals: {} };
-    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    const res = await staffFetch('/summary', { cache: 'no-store' });
     const data = await res.json();
     return data || { items: [], totals: {} };
   }
@@ -946,7 +995,7 @@ function detectTablesChangesAndBeep(tables) {
   async function fetchTables() {
     const base = getApiBase();
     if (!base) return { tables: [] };
-    const res = await fetch(`${base}/tables`, { cache: 'no-store' });
+    const res = await staffFetch('/tables', { cache: 'no-store' });
     const data = await res.json();
     return data || { tables: [] };
   }

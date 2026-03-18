@@ -50,6 +50,28 @@
     }
   };
 
+
+  const getStaffToken = () => {
+    const input = document.querySelector('#staffApiToken');
+    const direct = input ? input.value.trim() : '';
+    if (direct) return direct;
+    try {
+      return String(localStorage.getItem('staff-api-token') || '').trim();
+    } catch {
+      return '';
+    }
+  };
+
+  const staffFetch = (path, options = {}) => {
+    if (window.__staffApi && typeof window.__staffApi.staffFetch === 'function') {
+      return window.__staffApi.staffFetch(path, options);
+    }
+    const headers = { ...(options.headers || {}) };
+    const token = getStaffToken();
+    if (token) headers['x-staff-token'] = token;
+    return fetch(`${getApiBase()}${path}`, { ...options, headers });
+  };
+
   function formatTime(dateValue) {
     if (!dateValue) return '--:--';
     const d = new Date(dateValue);
@@ -430,7 +452,7 @@
   }
 
   async function fetchSummary(base) {
-    const res = await fetch(`${base}/summary`, { cache: 'no-store' });
+    const res = await staffFetch('/summary', { cache: 'no-store' });
     return await res.json();
   }
 
@@ -598,7 +620,7 @@
       if (!answer || answer === 'no') return;
 
       try {
-        const closeRes = await fetch(`${apiBase}/close-in-progress`, {
+        const closeRes = await staffFetch('/close-in-progress', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: id }),
@@ -646,7 +668,7 @@
 
       if (closureType === 'normal') {
         try {
-          const confirmRes = await fetch(`${apiBase}/confirm`, {
+          const confirmRes = await staffFetch('/confirm', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ table: id }),
@@ -682,7 +704,7 @@
                 posConfirmed: true,
               };
 
-        const closeRes = await fetch(`${apiBase}/close-table`, {
+        const closeRes = await staffFetch('/close-table', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(closePayload),
@@ -721,7 +743,7 @@
       if (!answer || answer === 'no') return;
 
       try {
-        const resp = await fetch(`${apiBase}/resolve-anomaly`, {
+        const resp = await staffFetch('/resolve-anomaly', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

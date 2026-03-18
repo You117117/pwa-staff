@@ -21,34 +21,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const summarySection = document.querySelector('#summarySection');
   const summaryBody = document.querySelector('#summaryBody');
 
-  const historyList = document.querySelector('#historyList');
-  const historyEmpty = document.querySelector('#historyEmpty');
-  const historyDateInput = document.querySelector('#historyDate');
-  const historyTableFilter = document.querySelector('#historyTableFilter');
-  const historyTypeFilter = document.querySelector('#historyTypeFilter');
-  const btnRefreshHistory = document.querySelector('#btnRefreshHistory');
-
-  const managerKpis = document.querySelector('#managerKpis');
-  const managerByTable = document.querySelector('#managerByTable');
-  const managerByHour = document.querySelector('#managerByHour');
-  const managerRecentSessions = document.querySelector('#managerRecentSessions');
-  const managerEmpty = document.querySelector('#managerEmpty');
-  const managerStartDateInput = document.querySelector('#managerStartDate');
-  const managerEndDateInput = document.querySelector('#managerEndDate');
-  const managerTableFilter = document.querySelector('#managerTableFilter');
-  const btnRefreshManager = document.querySelector('#btnRefreshManager');
-
-  const diagnosticKpis = document.querySelector('#diagnosticKpis');
-  const diagnosticBreakdown = document.querySelector('#diagnosticBreakdown');
-  const diagnosticErrors = document.querySelector('#diagnosticErrors');
-  const diagnosticList = document.querySelector('#diagnosticList');
-  const diagnosticEmpty = document.querySelector('#diagnosticEmpty');
-  const diagSeverityFilter = document.querySelector('#diagSeverityFilter');
-  const diagTypeFilter = document.querySelector('#diagTypeFilter');
-  const diagTableFilter = document.querySelector('#diagTableFilter');
-  const diagSessionFilter = document.querySelector('#diagSessionFilter');
-  const diagIncludeAudit = document.querySelector('#diagIncludeAudit');
-  const btnRefreshDiagnostic = document.querySelector('#btnRefreshDiagnostic');
   const btnHealth = document.querySelector('#btnHealth');
 
   const SSE_FALLBACK_REFRESH_MS = 60000;
@@ -58,9 +30,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const refreshLocks = {
     tables: null,
     summary: null,
-    history: null,
-    manager: null,
-    diagnostic: null,
   };
   let lastHeavyRefreshAt = 0;
   let staffEventSource = null;
@@ -491,24 +460,6 @@ function detectTablesChangesAndBeep(tables) {
 
 // --- Résumé du jour
 
-  function renderKpiGrid(container, cards = []) {
-    if (!container) return;
-    container.innerHTML = '';
-    cards.forEach((card) => {
-      const el = document.createElement('div');
-      el.className = 'kpiCard';
-      const label = document.createElement('div');
-      label.className = 'kpiLabel';
-      label.textContent = card.label;
-      const value = document.createElement('div');
-      value.className = 'kpiValue';
-      value.textContent = card.value;
-      el.appendChild(label);
-      el.appendChild(value);
-      container.appendChild(el);
-    });
-  }
-
   function renderSummary(summaryData) {
     if (!summaryContainer) return;
     summaryContainer.innerHTML = '';
@@ -586,212 +537,6 @@ function detectTablesChangesAndBeep(tables) {
       });
 
       summaryContainer.appendChild(wrapper);
-    });
-  }
-
-  function renderHistory(historyData) {
-    if (!historyList) return;
-    historyList.innerHTML = '';
-    const items = Array.isArray(historyData?.items) ? historyData.items : [];
-    if (!items.length) {
-      if (historyEmpty) historyEmpty.style.display = 'block';
-      return;
-    }
-    if (historyEmpty) historyEmpty.style.display = 'none';
-
-    items.forEach((item) => {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'summaryItem summaryItem--clickable';
-      row.innerHTML = `
-        <div class="head">
-          <span class="chip">${item.tableLabel || item.table || 'Table'}</span>
-          <span class="chip">Ouverte : ${item.openTime || '--:--'}</span>
-          <span class="chip">Clôturée : ${item.closedTime || '—'}</span>
-          <span class="chip">${Number(item.total || 0).toFixed(2)} €</span>
-          <span class="chip ${statusClassName(item.displayStatus || item.status || 'Vide')}">${displayStatusLabel(item.displayStatus || item.status || 'Vide')}</span>
-        </div>
-        <div class="summaryMeta">${item.ordersCount || 0} ticket(s) • ${item.itemsCount || 0} article(s) • durée ${Math.round(Number(item.durationSeconds || 0) / 60)} min</div>
-      `;
-      row.addEventListener('click', () => {
-        if (window.showTableDetail) {
-          window.showTableDetail(normId(item.table), item.displayStatus || item.status || 'Vide', { summaryEntry: item, historyMode: true });
-        }
-      });
-      historyList.appendChild(row);
-    });
-  }
-
-  function normalizeManagerCollection(value) {
-    if (Array.isArray(value)) return value;
-    if (!value || typeof value !== 'object') return [];
-    const values = Object.values(value).filter(Boolean);
-    const looksLikeSingleRow = ['table', 'hour', 'sessionId', 'id', 'grossTotal', 'sessionsCount'].some((key) => Object.prototype.hasOwnProperty.call(value, key));
-    if (looksLikeSingleRow) return [value];
-    return values;
-  }
-
-  function renderManager(managerData) {
-    const totals = managerData?.totals || {};
-    renderKpiGrid(managerKpis, [
-      { label: 'CA période', value: `${Number(totals.grossTotal || 0).toFixed(2)} €` },
-      { label: 'Sessions', value: String(totals.sessionsCount || 0) },
-      { label: 'Actives', value: String(totals.activeCount || 0) },
-      { label: 'Clôtures OK', value: String(totals.closedNormalCount || 0) },
-      { label: 'Anomalies', value: String(totals.closedAnomalyCount || 0) },
-      { label: 'Panier moyen', value: `${Number(totals.averageBasket || 0).toFixed(2)} €` },
-      { label: 'Durée moyenne', value: durationMinutesLabel(totals.averageDurationSeconds || 0) },
-      { label: 'Période', value: managerData?.period?.days > 1 ? `${managerData.period.days} j` : '1 j' },
-    ]);
-
-    const byTable = normalizeManagerCollection(managerData?.byTable);
-    const byHour = normalizeManagerCollection(managerData?.byHour);
-    const recentSessions = normalizeManagerCollection(managerData?.recentSessions);
-    const hasData = Boolean((totals.sessionsCount || 0) > 0 || byTable.length || byHour.length || recentSessions.length);
-
-    if (managerEmpty) managerEmpty.style.display = hasData ? 'none' : 'block';
-    if (!hasData) {
-      renderListState(managerByTable, 'Aucune table sur la période.');
-      renderListState(managerByHour, 'Aucun flux horaire.');
-      renderListState(managerRecentSessions, 'Aucune session récente.');
-      return;
-    }
-
-    if (managerByTable) {
-      managerByTable.innerHTML = '';
-      byTable.slice(0, 8).forEach((row) => {
-        const item = document.createElement('div');
-        item.className = 'summaryItem managerRow';
-        item.innerHTML = `
-          <div class="head">
-            <span class="chip">${row.table}</span>
-            <span class="chip">${row.sessionsCount} session(s)</span>
-            <span class="chip">${Number(row.grossTotal || 0).toFixed(2)} €</span>
-            ${row.anomaliesCount ? `<span class="chip chip-severity chip-severity--warn">${row.anomaliesCount} anomalie(s)</span>` : ''}
-          </div>
-          <div class="summaryMeta">Panier moyen ${Number(row.averageBasket || 0).toFixed(2)} € • durée ${durationMinutesLabel(row.averageDurationSeconds || 0)}</div>
-        `;
-        managerByTable.appendChild(item);
-      });
-      if (!byTable.length) renderListState(managerByTable, 'Aucune table sur la période.');
-    }
-
-    if (managerByHour) {
-      managerByHour.innerHTML = '';
-      byHour.slice(0, 12).forEach((row) => {
-        const item = document.createElement('div');
-        item.className = 'summaryItem managerRow';
-        item.innerHTML = `
-          <div class="head">
-            <span class="chip">${row.hour}h</span>
-            <span class="chip">${row.sessionsCount} session(s)</span>
-            <span class="chip">${Number(row.grossTotal || 0).toFixed(2)} €</span>
-          </div>
-          <div class="summaryMeta">${row.anomaliesCount || 0} anomalie(s) sur ce créneau</div>
-        `;
-        managerByHour.appendChild(item);
-      });
-      if (!byHour.length) renderListState(managerByHour, 'Aucun flux horaire.');
-    }
-
-    if (managerRecentSessions) {
-      managerRecentSessions.innerHTML = '';
-      recentSessions.forEach((item) => {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'summaryItem summaryItem--clickable';
-        row.innerHTML = `
-          <div class="head">
-            <span class="chip">${item.tableLabel || item.table || 'Table'}</span>
-            <span class="chip">Ouverte : ${item.openTime || '--:--'}</span>
-            <span class="chip">Clôturée : ${item.closedTime || '—'}</span>
-            <span class="chip">${Number(item.total || 0).toFixed(2)} €</span>
-            ${buildStatusBadge(item.displayStatus || item.status || 'Vide').outerHTML}
-          </div>
-          <div class="summaryMeta">${item.ordersCount || 0} ticket(s) • ${item.itemsCount || 0} article(s) • durée ${durationMinutesLabel(item.durationSeconds || 0)}</div>
-        `;
-        row.addEventListener('click', () => {
-          if (window.showTableDetail) {
-            window.showTableDetail(normId(item.table), item.displayStatus || item.status || 'Vide', { summaryEntry: item, historyMode: true });
-          }
-        });
-        managerRecentSessions.appendChild(row);
-      });
-      if (!recentSessions.length) renderListState(managerRecentSessions, 'Aucune session récente.');
-    }
-  }
-
-  function renderDiagnostic(overviewData, eventsData) {
-    renderKpiGrid(diagnosticKpis, [
-      { label: 'Événements', value: String(overviewData?.totals?.total || 0) },
-      { label: 'Infos', value: String(overviewData?.totals?.infoCount || 0) },
-      { label: 'Warnings', value: String(overviewData?.totals?.warnCount || 0) },
-      { label: 'Erreurs', value: String(overviewData?.totals?.errorCount || 0) },
-    ]);
-
-    const byCategory = overviewData?.breakdown?.byCategory || {};
-    renderKpiGrid(diagnosticBreakdown, [
-      { label: 'Métier', value: String(byCategory.business || 0) },
-      { label: 'Technique', value: String(byCategory.technical || 0) },
-      { label: 'Audit', value: String(byCategory.audit || 0) },
-      { label: 'Système', value: String(byCategory.system || 0) },
-    ]);
-
-    if (diagnosticErrors) {
-      diagnosticErrors.innerHTML = '';
-      const errors = Array.isArray(overviewData?.recentErrors) ? overviewData.recentErrors : [];
-      if (errors.length) {
-        errors.forEach((item) => {
-          const row = document.createElement('div');
-          row.className = 'summaryItem diagnosticItem diagnostic-error';
-          row.innerHTML = `
-            <div class="head">
-              <span class="chip">${item.tableCode || 'GLOBAL'}</span>
-              <span class="chip">${item.eventCode || 'ERROR'}</span>
-              <span class="chip chip-severity chip-severity--error">ERROR</span>
-            </div>
-            <div class="summaryMeta">${item.message || 'Erreur'} • ${formatTime(item.createdAt)}</div>
-          `;
-          diagnosticErrors.appendChild(row);
-        });
-      }
-    }
-
-    if (!diagnosticList) return;
-    diagnosticList.innerHTML = '';
-    const items = Array.isArray(eventsData?.items) ? eventsData.items : [];
-    if (!items.length) {
-      if (diagnosticEmpty) diagnosticEmpty.style.display = 'block';
-      return;
-    }
-    if (diagnosticEmpty) diagnosticEmpty.style.display = 'none';
-
-    items.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = `summaryItem diagnosticItem diagnostic-${(item.severity || 'info').toLowerCase()}`;
-      const top = document.createElement('div');
-      top.className = 'head';
-      top.innerHTML = `
-        <span class="chip">${item.tableCode || 'GLOBAL'}</span>
-        <span class="chip">${item.eventCode || item.eventType || 'EVENT'}</span>
-        <span class="chip">${item.category || 'system'}</span>
-        ${item.sessionId ? `<span class="chip chip-light">Session ${String(item.sessionId).slice(0, 8)}</span>` : ''}
-        ${item.ticketId ? `<span class="chip chip-light">Ticket ${String(item.ticketId).slice(0, 8)}</span>` : ''}
-        <span class="chip">${item.source || 'api'}</span>
-        <span class="chip chip-severity chip-severity--${(item.severity || 'info').toLowerCase()}">${(item.severity || 'info').toUpperCase()}</span>
-      `;
-      const msg = document.createElement('div');
-      msg.className = 'summaryMeta';
-      msg.textContent = `${item.message || 'Sans message'} • ${formatTime(item.createdAt)}`;
-      row.appendChild(top);
-      row.appendChild(msg);
-      if (item.payload && Object.keys(item.payload).length) {
-        const payload = document.createElement('pre');
-        payload.className = 'diagnosticPayload';
-        payload.textContent = JSON.stringify(item.payload, null, 2);
-        row.appendChild(payload);
-      }
-      diagnosticList.appendChild(row);
     });
   }
 
@@ -1198,60 +943,6 @@ function detectTablesChangesAndBeep(tables) {
     return data || { items: [], totals: {} };
   }
 
-  async function fetchManagerSummary() {
-    const base = getApiBase();
-    if (!base) return { totals: {}, byTable: [], byHour: [], recentSessions: [] };
-    const params = new URLSearchParams();
-    params.set('startDate', managerStartDateInput?.value || historyDateInput?.value || todayKey());
-    params.set('endDate', managerEndDateInput?.value || managerStartDateInput?.value || historyDateInput?.value || todayKey());
-    if (managerTableFilter?.value) params.set('tableId', managerTableFilter.value);
-    const res = await fetch(`${base}/manager-summary?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { totals: {}, byTable: [], byHour: [], recentSessions: [] };
-  }
-
-  async function fetchHistory() {
-    const base = getApiBase();
-    if (!base) return { items: [] };
-    const params = new URLSearchParams();
-    params.set('date', historyDateInput?.value || todayKey());
-    if (historyTableFilter?.value) params.set('tableId', historyTableFilter.value);
-    if (historyTypeFilter?.value) params.set('closureType', historyTypeFilter.value);
-    const res = await fetch(`${base}/history-sessions?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { items: [] };
-  }
-
-  async function fetchDiagnosticOverview() {
-    const base = getApiBase();
-    if (!base) return { totals: {}, breakdown: {} };
-    const params = new URLSearchParams();
-    params.set('date', historyDateInput?.value || todayKey());
-    if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
-    if (diagTypeFilter?.value) params.set('eventType', diagTypeFilter.value);
-    if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
-    params.set('includeAudit', diagIncludeAudit?.checked ? 'true' : 'false');
-    const res = await fetch(`${base}/diagnostic/overview?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { totals: {}, breakdown: {} };
-  }
-
-  async function fetchDiagnosticEvents() {
-    const base = getApiBase();
-    if (!base) return { items: [] };
-    const params = new URLSearchParams();
-    params.set('date', historyDateInput?.value || todayKey());
-    if (diagSeverityFilter?.value) params.set('severity', diagSeverityFilter.value);
-    if (diagTypeFilter?.value) params.set('eventType', diagTypeFilter.value);
-    if (diagTableFilter?.value) params.set('tableId', diagTableFilter.value);
-    if (diagSessionFilter?.value) params.set('sessionId', diagSessionFilter.value.trim());
-    params.set('includeAudit', diagIncludeAudit?.checked ? 'true' : 'false');
-    params.set('limit', '25');
-    const res = await fetch(`${base}/diagnostic/events?${params.toString()}`, { cache: 'no-store' });
-    const data = await res.json();
-    return data || { items: [] };
-  }
-
   async function fetchTables() {
     const base = getApiBase();
     if (!base) return { tables: [] };
@@ -1309,15 +1000,8 @@ function detectTablesChangesAndBeep(tables) {
       }
     });
   }
-  async function refreshHistory() { return null; }
-  async function refreshManager() { return null; }
-  async function refreshDiagnostic() { return null; }
   window.refreshTables = refreshTables;
   window.refreshSummary = refreshSummary;
-  window.refreshHistory = refreshHistory;
-  window.refreshManager = refreshManager;
-  window.refreshDiagnostic = refreshDiagnostic;
-
 
   if (supportTrigger) {
     let clickCount = 0;
@@ -1381,8 +1065,6 @@ function detectTablesChangesAndBeep(tables) {
       updateSummaryVisibility(isCollapsed);
     });
   }
-
-
 
   if (btnHealth) {
     btnHealth.addEventListener('click', async () => {

@@ -280,6 +280,30 @@ function detectTablesChangesAndBeep(tables) {
     return fetch(`${base}${path}`, finalOptions);
   }
 
+  function extractApiErrorMessage(payload, fallback = 'Erreur API') {
+    if (!payload || typeof payload !== 'object') return fallback;
+    return payload.message || payload.error || payload.code || fallback;
+  }
+
+  async function parseApiResponse(res, fallbackMessage = 'Erreur API') {
+    let payload = null;
+    try {
+      payload = await res.json();
+    } catch (_err) {
+      payload = null;
+    }
+
+    if (!res.ok) {
+      throw new Error(extractApiErrorMessage(payload, `${fallbackMessage} (HTTP ${res.status})`));
+    }
+
+    if (payload && typeof payload === 'object' && payload.ok === false) {
+      throw new Error(extractApiErrorMessage(payload, fallbackMessage));
+    }
+
+    return payload || {};
+  }
+
   function buildStaffSseUrl(path) {
     const base = getApiBase();
     if (!base) return '';
@@ -885,13 +909,20 @@ function detectTablesChangesAndBeep(tables) {
             return;
           }
           try {
-            await staffFetch('/confirm', {
+            const confirmResp = await staffFetch('/confirm', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ table: id }),
             });
+            await parseApiResponse(confirmResp, "Impossible de confirmer l'encodage caisse");
           } catch (err) {
             console.error('Erreur /confirm', err);
+            alert(`Impossible de confirmer l'encodage caisse : ${err.message || err}`);
+            await refreshTables();
+            if (window.__currentDetailTableId === id && window.showTableDetail) {
+              window.showTableDetail(id);
+            }
+            return;
           }
           const until = now() + 5000;
           const countdown = { until, timeoutId: null, intervalId: null };
@@ -988,7 +1019,7 @@ function detectTablesChangesAndBeep(tables) {
     const base = getApiBase();
     if (!base) return { items: [], totals: {} };
     const res = await staffFetch('/summary', { cache: 'no-store' });
-    const data = await res.json();
+    const data = await parseApiResponse(res, 'Impossible de charger le résumé');
     return data || { items: [], totals: {} };
   }
 
@@ -996,7 +1027,7 @@ function detectTablesChangesAndBeep(tables) {
     const base = getApiBase();
     if (!base) return { tables: [] };
     const res = await staffFetch('/tables', { cache: 'no-store' });
-    const data = await res.json();
+    const data = await parseApiResponse(res, 'Impossible de charger les tables');
     return data || { tables: [] };
   }
 
@@ -1021,6 +1052,8 @@ function detectTablesChangesAndBeep(tables) {
       renderTables(tables);
     } catch (err) {
       console.error('Erreur refreshTables', err);
+      if (tablesContainer) tablesContainer.innerHTML = '';
+      if (tablesEmpty) tablesEmpty.style.display = 'block';
     }
   
     });
@@ -1046,6 +1079,8 @@ function detectTablesChangesAndBeep(tables) {
         renderSummary(summaryData);
       } catch (err) {
         console.error('Erreur refreshSummary', err);
+        if (summaryContainer) summaryContainer.innerHTML = '';
+        if (summaryEmpty) summaryEmpty.style.display = 'block';
       }
     });
   }
@@ -1121,7 +1156,7 @@ function detectTablesChangesAndBeep(tables) {
       if (!base) return;
       try {
         const res = await fetch(`${base}/health`, { cache: 'no-store' });
-        const data = await res.json();
+        const data = await parseApiResponse(res, 'Healthcheck indisponible');
         alert(`Health OK: ${JSON.stringify(data)}`);
       } catch (err) {
         alert(`Health KO: ${err.message || err}`);

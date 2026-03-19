@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     summary: null,
   };
   let lastHeavyRefreshAt = 0;
+  let summaryRefreshPending = false;
   let staffEventSource = null;
   let staffSseReconnectTimer = null;
   let staffSseConnected = false;
@@ -47,19 +48,37 @@ document.addEventListener('DOMContentLoaded', () => {
     return refreshLocks[key];
   }
 
+  function isSummaryOpen() {
+    return !!(summarySection && !summarySection.classList.contains('collapsed'));
+  }
+
   function refreshHeavyPanels() {
+    return Promise.resolve(refreshSummaryIfNeeded());
+  }
+
+  function refreshSummaryIfNeeded({ force = false } = {}) {
+    if (!force && !isSummaryOpen()) {
+      summaryRefreshPending = true;
+      return Promise.resolve();
+    }
+    summaryRefreshPending = false;
     return Promise.resolve(refreshSummary());
   }
 
   async function refreshStaffSnapshot() {
-    await Promise.all([refreshTables(), refreshSummary()]);
+    await Promise.all([refreshTables(), refreshSummaryIfNeeded()]);
   }
 
   function scheduleStaffRealtimeRefresh(reason = 'changed') {
     const nowTs = Date.now();
     if (nowTs - lastStaffRealtimeRefreshAt < 800) return;
     lastStaffRealtimeRefreshAt = nowTs;
-    refreshStaffSnapshot().catch((err) => console.error('Erreur refresh temps réel staff', reason, err));
+
+    const job = reason === 'summary_updated'
+      ? refreshSummaryIfNeeded()
+      : Promise.all([refreshTables(), refreshSummaryIfNeeded()]);
+
+    Promise.resolve(job).catch((err) => console.error('Erreur refresh temps réel staff', reason, err));
   }
 
   function disconnectStaffSse() {
@@ -1124,7 +1143,7 @@ function detectTablesChangesAndBeep(tables) {
     btnSaveApi.addEventListener('click', () => {
       saveApiToStorage();
       refreshTables();
-      refreshSummary();
+      refreshSummaryIfNeeded();
       connectStaffSse();
       closeSupportPanel();
     });
@@ -1138,7 +1157,7 @@ function detectTablesChangesAndBeep(tables) {
 
   if (btnRefreshSummary) {
     btnRefreshSummary.addEventListener('click', () => {
-      refreshSummary();
+      refreshSummaryIfNeeded({ force: true });
     });
   }
 
@@ -1146,7 +1165,11 @@ function detectTablesChangesAndBeep(tables) {
     updateSummaryVisibility(false);
     btnToggleSummary.addEventListener('click', () => {
       const isCollapsed = summarySection ? summarySection.classList.contains('collapsed') : true;
-      updateSummaryVisibility(isCollapsed);
+      const nextIsOpen = isCollapsed;
+      updateSummaryVisibility(nextIsOpen);
+      if (nextIsOpen && summaryRefreshPending) {
+        refreshSummaryIfNeeded({ force: true });
+      }
     });
   }
 
@@ -1165,12 +1188,14 @@ function detectTablesChangesAndBeep(tables) {
   }
 
   loadApiFromStorage();
-  refreshStaffSnapshot();
+  refreshTables();
+  refreshSummaryIfNeeded();
   connectStaffSse();
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      refreshStaffSnapshot();
+      refreshTables();
+      refreshSummaryIfNeeded();
       if (!staffSseConnected) connectStaffSse();
     }
   });
@@ -1180,7 +1205,8 @@ function detectTablesChangesAndBeep(tables) {
   });
 
   setInterval(() => {
-    refreshStaffSnapshot();
+    refreshTables();
+    refreshSummaryIfNeeded();
     if (!staffSseConnected) connectStaffSse();
   }, SSE_FALLBACK_REFRESH_MS);
 });
